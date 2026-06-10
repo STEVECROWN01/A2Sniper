@@ -1,41 +1,34 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 
-// Whitelist des IPs fondateurs (À configurer en production via variables d'environnement)
-const FOUNDER_IPS = (process.env.FOUNDER_IPS || '127.0.0.1,::1').split(',');
+const FOUNDER_IPS = (process.env.FOUNDER_IPS || '').split(',').filter(Boolean);
+const ADMIN_SECRET_TOKEN = process.env.ADMIN_SECRET_TOKEN || '';
 
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  // Protection de la route cachée
+  // Admin route protection
   if (pathname.startsWith('/admin-dawes-stevens-2026')) {
+    // Skip login page
+    if (pathname === '/admin-dawes-stevens-2026/login') {
+      return NextResponse.next();
+    }
+
+    // Check IP - use exact match instead of substring
+    const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 
+               request.headers.get('x-real-ip')?.trim() || 
+               'unknown';
     
-    // 1. Vérification de l'IP
-    // Note: X-Forwarded-For est utilisé si l'app est derrière un proxy (Vercel, Nginx)
-    const ip = request.ip || request.headers.get('x-forwarded-for') || '127.0.0.1';
-    const isIpAllowed = FOUNDER_IPS.some(allowedIp => ip.includes(allowedIp.trim()));
-
-    // 2. Vérification du JWT (Cookie)
-    const token = request.cookies.get('admin_token')?.value;
-    const isValidToken = token === process.env.ADMIN_SECRET_TOKEN; // Sécurité de base, en prod vérifier le JWT réel
-
-    if (!isIpAllowed || !isValidToken) {
-      // Si on n'est pas déjà sur la page de login, on redirige
-      if (pathname !== '/admin-dawes-stevens-2026/login') {
-        const url = request.nextUrl.clone();
-        url.pathname = '/admin-dawes-stevens-2026/login';
-        return NextResponse.redirect(url);
-      }
+    // Exact IP match only (not substring)
+    const isIpAllowed = FOUNDER_IPS.length > 0 && FOUNDER_IPS.some(allowedIp => ip === allowedIp.trim());
+    
+    // Check admin token cookie
+    const token = request.cookies.get('admin_token')?.value || '';
+    const isValidToken = token === ADMIN_SECRET_TOKEN && ADMIN_SECRET_TOKEN.length > 0;
+    
+    if (!isIpAllowed && !isValidToken) {
+      return NextResponse.redirect(new URL('/admin-dawes-stevens-2026/login', request.url));
     }
-
-    // Si on est déjà authentifié et on essaie d'aller sur le login, on redirige vers le dashboard
-    if (isValidToken && pathname === '/admin-dawes-stevens-2026/login') {
-      const url = request.nextUrl.clone();
-      url.pathname = '/admin-dawes-stevens-2026';
-      return NextResponse.redirect(url);
-    }
-
-    return NextResponse.next();
   }
 
   return NextResponse.next();

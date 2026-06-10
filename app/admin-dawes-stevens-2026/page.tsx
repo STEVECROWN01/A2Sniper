@@ -28,15 +28,8 @@ import {
   Cell
 } from 'recharts';
 
-const data = [
-  { name: '08:00', value: 12400 },
-  { name: '10:00', value: 13200 },
-  { name: '12:00', value: 12800 },
-  { name: '14:00', value: 14500 },
-  { name: '16:00', value: 15100 },
-  { name: '18:00', value: 14800 },
-  { name: '20:00', value: 15900 },
-];
+const data: { name: string; value: number }[] = [];
+// TODO: Replace with API-driven revenue data when endpoint is available
 
 export default function AdminDashboard() {
   useAuth(true);
@@ -48,20 +41,22 @@ export default function AdminDashboard() {
   const [perfData, setPerfData] = useState<any>(null);
 
   const aiVotes = [
-    { name: 'LSTM', value: 98, weight: `${weights.LSTM}%`, status: 'Operational' },
-    { name: 'Transformer', value: 96, weight: `${weights.Transformer}%`, status: 'Operational' },
-    { name: 'XGBoost', value: 99, weight: `${weights.XGBoost}%`, status: 'Operational' },
+    { name: 'LSTM', value: 'N/A', weight: `${weights.LSTM}%`, status: 'Operational' },
+    { name: 'Transformer', value: 'N/A', weight: `${weights.Transformer}%`, status: 'Operational' },
+    { name: 'XGBoost', value: 'N/A', weight: `${weights.XGBoost}%`, status: 'Operational' },
   ];
   const [statusData, setStatusData] = useState<any>(null);
 
   useEffect(() => {
     const fetchData = async () => {
       const url = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
+      const token = typeof window !== 'undefined' ? localStorage.getItem('a2sniper_token') : null;
+      const authHeaders = token ? { Authorization: `Bearer ${token}` } : {};
       try {
         const [perfRes, statusRes, weightsRes] = await Promise.all([
-          fetch(`${url}/api/performance`),
-          fetch(`${url}/api/status`),
-          fetch(`${url}/api/admin/engine/weights`)
+          fetch(`${url}/api/performance`, { headers: authHeaders }),
+          fetch(`${url}/api/status`, { headers: authHeaders }),
+          fetch(`${url}/api/admin/engine/weights`, { headers: authHeaders })
         ]);
         
         if (perfRes.ok) setPerfData(await perfRes.json());
@@ -93,9 +88,10 @@ export default function AdminDashboard() {
     
     try {
       const url = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
+      const token = typeof window !== 'undefined' ? localStorage.getItem('a2sniper_token') : null;
       const res = await fetch(`${url}/api/admin/circuit-breaker`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
         body: JSON.stringify({ active: nextState })
       });
       
@@ -123,22 +119,22 @@ export default function AdminDashboard() {
         />
         <MetricCard 
           title="Active Sniper Subs" 
-          value="428" 
-          subValue="98% retention rate" 
+          value={statusData?.total_users || '—'} 
+          subValue={statusData?.retention ? `${statusData.retention}% retention` : 'Pending API'} 
           icon={Users}
           color="blue"
         />
         <MetricCard 
           title="Global Precision" 
-          value={`${perfData?.win_rate_all?.win_rate || '99.99'}%`} 
+          value={`${perfData?.win_rate_all?.win_rate || 'N/A'}%`} 
           subValue={`Based on ${perfData?.win_rate_all?.total || 1000} signals`} 
           icon={TrendingUp}
           color="green"
         />
         <MetricCard 
           title="Monthly Recurring" 
-          value={`$${mrr.toLocaleString()}`} 
-          subValue="Growth: +$2.4k" 
+          value={perfData?.mrr ? `$${perfData.mrr.toLocaleString()}` : '—'} 
+          subValue={perfData?.mrr_growth ? `Growth: +$${perfData.mrr_growth / 1000}k` : 'Pending API'} 
           icon={Zap}
           color="purple"
         />
@@ -282,8 +278,8 @@ export default function AdminDashboard() {
   );
 }
 
-function MetricCard({ title, value, subValue, icon: Icon, color }: any) {
-  const colors: any = {
+function MetricCard({ title, value, subValue, icon: Icon, color }: { title: string; value: string | number; subValue: string; icon: React.ComponentType<{ className?: string }>; color: string }) {
+  const colors: Record<string, string> = {
     red: 'text-red-500 bg-red-500/10 border-red-500/20',
     blue: 'text-blue-500 bg-blue-500/10 border-blue-500/20',
     green: 'text-green-500 bg-green-500/10 border-green-500/20',

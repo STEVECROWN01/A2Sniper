@@ -8,9 +8,8 @@ import { useAuth } from '@/hooks/use-auth';
 
 export default function DashboardPage() {
   useAuth();
-  const { user, signals, fetchSignals, fetchPerformance } = useAppStore();
-  const [currentTime, setCurrentTime] = useState(new Date());
-  const [gaugeValue, setGaugeValue] = useState(82);
+  const { user, signals, fetchSignals, fetchPerformance, liveStatus } = useAppStore();
+  const [gaugeValue, setGaugeValue] = useState(0);
   const [isRefreshing, setIsRefreshing] = useState(false);
   
   const totalTrades = signals.filter(s => s.is_win !== null).length;
@@ -29,12 +28,10 @@ export default function DashboardPage() {
     ? signals.slice(0, 10).reduce((sum, s) => sum + s.winrate, 0) / Math.min(10, signals.length)
     : 0;
 
+  // Update gauge dynamically when winRate changes
   useEffect(() => {
-    const timer = setInterval(() => {
-      setCurrentTime(new Date());
-    }, 1000);
-    return () => clearInterval(timer);
-  }, []);
+    setGaugeValue(winRate > 0 ? winRate : 0);
+  }, [winRate]);
 
   useEffect(() => {
     fetchSignals();
@@ -71,6 +68,7 @@ export default function DashboardPage() {
     a.href = url;
     a.download = `a2sniper-export-${new Date().toISOString().split('T')[0]}.json`;
     a.click();
+    URL.revokeObjectURL(url);
   };
 
   const TechnicalGauge = () => {
@@ -159,7 +157,7 @@ export default function DashboardPage() {
         {/* Quick Stats */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6 mb-10">
           {[
-            { label: 'Win Rate Global', value: `${winRate > 0 ? winRate.toFixed(1) : '99.9'}%`, icon: Target, color: 'text-[#D4AF37] bg-[#D4AF37]/10' },
+            { label: 'Win Rate Global', value: `${winRate > 0 ? winRate.toFixed(1) : 'N/A'}%`, icon: Target, color: 'text-[#D4AF37] bg-[#D4AF37]/10' },
             { label: 'Signaux Actifs', value: activeSignals, icon: Zap, color: 'text-yellow-500 bg-yellow-500/10' },
             { label: 'Profit Jour', value: `$${todayProfit.toFixed(0)}`, icon: DollarSign, color: 'text-green-500 bg-green-500/10' },
             { label: 'Volume 24h', value: todaySignals.length, icon: BarChart3, color: 'text-purple-500 bg-purple-500/10' }
@@ -208,7 +206,7 @@ export default function DashboardPage() {
                     </div>
                     <div className="bg-[#050507] p-4 rounded-2xl border border-white/5">
                       <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest mb-1">Intégrité des Données</p>
-                      <p className="text-md font-black text-green-500">WebSocket Pocket Option Connecté</p>
+                      <p className={`text-md font-black ${liveStatus === 'LIVE' ? 'text-green-500' : 'text-gray-500'}`}>{liveStatus === 'LIVE' ? 'WebSocket Pocket Option Connecté' : 'WebSocket Déconnecté'}</p>
                     </div>
                   </div>
                 </div>
@@ -256,9 +254,9 @@ export default function DashboardPage() {
                <h3 className="font-black text-lg uppercase tracking-wider mb-2 text-transparent bg-clip-text bg-gradient-to-r from-[#D4AF37] to-[#F3E5AB]">Compte Founders</h3>
                <p className="text-xs text-gray-400 font-bold mb-6">Tous les moteurs de sniping sont pleinement opérationnels.</p>
                <div className="space-y-4">
-                 <div className="flex justify-between text-xs font-bold text-gray-400"><span>Uptime Système:</span> <span className="text-white">99.99%</span></div>
-                 <div className="flex justify-between text-xs font-bold text-gray-400"><span>Délai Exécution:</span> <span className="text-white">24ms</span></div>
-                 <div className="flex justify-between text-xs font-bold text-gray-400"><span>Version Moteur:</span> <span className="text-[#D4AF37]">OTC EXPERT v3.0</span></div>
+                 <div className="flex justify-between text-xs font-bold text-gray-400"><span>Uptime Système:</span> <span className="text-white">Pending API</span></div>
+                 <div className="flex justify-between text-xs font-bold text-gray-400"><span>Délai Exécution:</span> <span className="text-white">Pending API</span></div>
+                 <div className="flex justify-between text-xs font-bold text-gray-400"><span>Version Moteur:</span> <span className="text-[#D4AF37]">Pending API</span></div>
                </div>
             </div>
 

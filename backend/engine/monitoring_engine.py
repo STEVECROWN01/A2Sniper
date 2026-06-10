@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 
 class MonitoringEngine:
-    DEGRADATION_THRESHOLD = 0.90   # 90% win rate minimum
+    DEGRADATION_THRESHOLD = 0.55   # 55% win rate minimum (realistic for binary options)
     DEGRADATION_WINDOW = 50        # Sur 50 signaux
     CIRCUIT_BREAKER_LOSSES = 3     # 3 pertes consécutives
     CIRCUIT_BREAKER_PAUSE = 30     # 30 minutes de pause
@@ -61,7 +61,7 @@ class MonitoringEngine:
         self._check_degradation()
 
     def _check_degradation(self):
-        """Alerte si win rate < 90% sur 50 signaux."""
+        """Alerte si win rate < 55% sur 50 signaux."""
         resolved = [s for s in self.signal_history if s['is_win'] is not None]
         if len(resolved) < self.DEGRADATION_WINDOW:
             return

@@ -8,6 +8,7 @@ Conformité, Sécurité & RGPD — CDC A2Sniper 3.0
 import hashlib
 import json
 import logging
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -16,9 +17,34 @@ RESTRICTED_COUNTRIES = [
     'US', 'CA', 'BE', 'IL', 'SY', 'SD', 'IR', 'KP', 'RU'
 ]
 
+# File path for persisting hash chain state
+HASH_CHAIN_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'compliance_hash_chain.json')
+
+
 class ComplianceManager:
     def __init__(self):
         self.previous_hash = "0000000000000000000000000000000000000000000000000000000000000000"
+        # Load persisted hash chain state
+        self._load_state()
+
+    def _load_state(self):
+        """Load previous_hash from persistent file."""
+        try:
+            if os.path.exists(HASH_CHAIN_FILE):
+                with open(HASH_CHAIN_FILE, 'r') as f:
+                    data = json.load(f)
+                    self.previous_hash = data.get('previous_hash', self.previous_hash)
+                    logger.info("[COMPLIANCE] Hash chain state loaded from file")
+        except Exception as e:
+            logger.warning(f"[COMPLIANCE] Could not load hash chain state: {e}")
+
+    def _save_state(self):
+        """Persist current hash chain state to file."""
+        try:
+            with open(HASH_CHAIN_FILE, 'w') as f:
+                json.dump({'previous_hash': self.previous_hash}, f)
+        except Exception as e:
+            logger.warning(f"[COMPLIANCE] Could not save hash chain state: {e}")
 
     def generate_immutable_log(self, signal_data: dict) -> str:
         """
@@ -44,6 +70,9 @@ class ComplianceManager:
         # Chaînage
         self.previous_hash = current_hash
         
+        # Persist the new state
+        self._save_state()
+        
         return current_hash
 
     def check_geographic_restriction(self, country_code: str) -> dict:
@@ -61,16 +90,47 @@ class ComplianceManager:
             
         return {'allowed': True}
 
-    def process_gdpr_deletion(self, user_id: str) -> bool:
+    async def process_gdpr_deletion(self, user_id: str, session=None) -> bool:
         """
         Droit à l'oubli (RGPD).
-        En pratique, cela anonymise les données liées à l'utilisateur dans la DB,
-        mais conserve les trades globaux pour les statistiques d'audit (sans PII).
+        Anonymizes user data in the database, preserving trade statistics for audit.
         """
         logger.info(f"[COMPLIANCE] Requête RGPD (Droit à l'oubli) traitée pour l'utilisateur {user_id}")
-        # Logique DB à implémenter :
-        # UPDATE users SET email = 'deleted_X', name = 'deleted', tg_id = null WHERE id = user_id;
-        return True
+        
+        if session is None:
+            logger.warning("[COMPLIANCE] No DB session provided for GDPR deletion")
+            return False
+            
+        try:
+            from db import User, UserSubscription, PasswordResetOTP
+            from sqlalchemy import delete, update
+            
+            # Delete password reset OTPs
+            await session.execute(delete(PasswordResetOTP).where(PasswordResetOTP.email.in_(
+                __import__('sqlalchemy').select(User.email).where(User.id == user_id)
+            )))
+            
+            # Delete subscription
+            await session.execute(delete(UserSubscription).where(UserSubscription.user_id == user_id))
+            
+            # Anonymize user record (preserve for audit but remove PII)
+            await session.execute(
+                update(User)
+                .where(User.id == user_id)
+                .values(
+                    email=f"deleted_{user_id[:8]}@gdpr-deleted.a2sniper",
+                    hashed_password="GDPR_DELETED",
+                    full_name="Deleted User (GDPR)",
+                    is_active=False
+                )
+            )
+            
+            await session.commit()
+            logger.info(f"[COMPLIANCE] GDPR deletion completed for user {user_id}")
+            return True
+        except Exception as e:
+            logger.error(f"[COMPLIANCE] GDPR deletion failed for user {user_id}: {e}")
+            return False
 
     def get_mandatory_disclaimer(self) -> str:
         """Disclaimer légal obligatoire sur la plateforme."""

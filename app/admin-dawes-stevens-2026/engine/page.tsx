@@ -4,8 +4,10 @@ import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { Brain, Activity, Save, Sliders, Info, ShieldAlert } from 'lucide-react';
 import { toast } from 'sonner';
+import { useAuth } from '@/hooks/use-auth';
 
 export default function AdminEnginePage() {
+  useAuth(true);
   const [weights, setWeights] = useState({
     lstm: 0.4,
     transformer: 0.35,
@@ -17,7 +19,10 @@ export default function AdminEnginePage() {
   const fetchWeights = async () => {
     try {
       const url = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
-      const res = await fetch(`${url}/api/admin/engine/weights`);
+      const token = typeof window !== 'undefined' ? localStorage.getItem('a2sniper_token') : null;
+      const res = await fetch(`${url}/api/admin/engine/weights`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
       if (res.ok) {
         setWeights(await res.json());
       }
@@ -34,9 +39,10 @@ export default function AdminEnginePage() {
     setIsSaving(true);
     try {
       const url = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
+      const token = typeof window !== 'undefined' ? localStorage.getItem('a2sniper_token') : null;
       const res = await fetch(`${url}/api/admin/engine/weights`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
         body: JSON.stringify(weights)
       });
       if (res.ok) {

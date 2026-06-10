@@ -7,9 +7,11 @@ import { SignalCard } from '@/components/ui/signal-card';
 import { useAppStore } from '@/lib/store';
 import { tradingPairs } from '@/lib/mock-data';
 import { toast } from 'sonner';
-import { validateSSID } from '../../(public)/signals/page';
+import { validateSSID } from '@/lib/validate-ssid';
+import { useAuth } from '@/hooks/use-auth';
 
 export default function AdminSignalsPage() {
+  useAuth(true);
   const { signals, liveStatus, connectMarket, disconnectMarket, fetchMarketStatus, marketInfo } = useAppStore();
   const [ssid, setSsid] = useState('');
 
@@ -27,7 +29,7 @@ export default function AdminSignalsPage() {
       const matchesSearch = signal.pair.toLowerCase().includes(searchTerm.toLowerCase());
       const matchesPair = selectedPair === 'ALL' || signal.pair === selectedPair;
       const matchesStatus = selectedStatus === 'ALL' || 
-                           (selectedStatus === 'EXPIRED' ? (signal.status === 'WON' || signal.status === 'LOST') : signal.status === selectedStatus);
+                           (selectedStatus === 'EXPIRED' ? (new Date(signal.timestamp).getTime() < Date.now() && signal.status === 'ACTIVE') : signal.status === selectedStatus);
       const matchesDirection = selectedDirection === 'ALL' || signal.direction === selectedDirection;
       const matchesWinrate = signal.winrate >= minWinrate;
       
@@ -113,10 +115,31 @@ export default function AdminSignalsPage() {
   };
 
   const handleDeleteSignal = async (id: string) => {
-    if (!confirm(`Are you sure you want to delete signal ${id}?`)) return;
+    toast.custom((t) => (
+      <div className="bg-white rounded-lg shadow-lg p-4 flex flex-col gap-3">
+        <p className="text-sm font-bold text-gray-900">Delete signal {id}?</p>
+        <div className="flex gap-2">
+          <button
+            className="px-3 py-1.5 bg-red-600 text-white rounded-md text-xs font-bold hover:bg-red-700"
+            onClick={() => { toast.dismiss(t); confirmDelete(id); }}
+          >Delete</button>
+          <button
+            className="px-3 py-1.5 bg-gray-200 text-gray-700 rounded-md text-xs font-bold hover:bg-gray-300"
+            onClick={() => toast.dismiss(t)}
+          >Cancel</button>
+        </div>
+      </div>
+    ));
+  };
+
+  const confirmDelete = async (id: string) => {
     try {
       const url = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
-      const res = await fetch(`${url}/api/admin/signals/${id}`, { method: 'DELETE' });
+      const token = typeof window !== 'undefined' ? localStorage.getItem('a2sniper_token') : null;
+      const res = await fetch(`${url}/api/admin/signals/${id}`, {
+        method: 'DELETE',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
       if (res.ok) {
         toast.success("Signal deleted successfully.");
         const store = useAppStore.getState();
@@ -238,7 +261,7 @@ export default function AdminSignalsPage() {
                   value={ssid}
                   onChange={(e) => setSsid(e.target.value)}
                   placeholder='42["auth",{"session":"...", ...}]'
-                  className="w-full h-32 px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent text-xs font-mono mb-4 resize-none overflow-hidden"
+                  className="w-full h-32 px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent text-xs font-mono mb-4 resize-none overflow-auto"
                 />
                 {(() => {
                   const validation = validateSSID(ssid);

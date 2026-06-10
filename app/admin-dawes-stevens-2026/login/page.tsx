@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ShieldAlert, ShieldCheck, Lock, Fingerprint, Terminal } from 'lucide-react';
@@ -31,31 +31,41 @@ export default function AdminLoginPage() {
     }, 1500);
   };
 
-  const handleVerify2FA = () => {
+  const handleVerify2FA = async () => {
     if (otp.length < 6) {
       toast.error("Please enter the full 6-digit code.");
       return;
     }
 
     setIsVerifying(true);
-    // Code de test: 000000 ou n'importe quel code pour cette démo
-    setTimeout(() => {
-      if (otp === '000000' || otp === '123456' || otp.startsWith('9')) {
+    try {
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
+      const res = await fetch(`${apiUrl}/api/admin/verify-2fa`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ otp_code: otp }),
+      });
+      
+      if (res.ok) {
+        const data = await res.json();
+        // The API sets an httpOnly cookie for admin_token — no client-side cookie manipulation
         setStep('success');
-        // Fixation du cookie pour le middleware
-        // En prod, ceci serait fait via une API sécurisée (JWT)
-        document.cookie = "admin_token=SECRET_FOUNDER_KEY_2026; path=/; max-age=3600; SameSite=Strict";
         toast.success("Access Granted. Welcome back, Founder.");
         
         setTimeout(() => {
           router.push('/admin-dawes-stevens-2026');
         }, 2000);
       } else {
+        const data = await res.json().catch(() => ({}));
         setIsVerifying(false);
         setOtp('');
-        toast.error("Invalid 2FA Code. Access Denied.");
+        toast.error(data.detail || "Invalid 2FA Code. Access Denied.");
       }
-    }, 2000);
+    } catch (err) {
+      setIsVerifying(false);
+      setOtp('');
+      toast.error("Network error. Could not verify 2FA code.");
+    }
   };
 
   return (
@@ -127,7 +137,7 @@ export default function AdminLoginPage() {
               </Button>
               
               <div className="text-[10px] text-center text-gray-600 uppercase tracking-widest">
-                Protected by IP-Whitelist: 127.0.0.1
+                Protected by IP-Whitelist &amp; Secure Token
               </div>
             </motion.div>
           )}

@@ -4,13 +4,19 @@ import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { RefreshCw, Download } from 'lucide-react';
 import { AdvancedAnalytics } from '@/components/ui/advanced-analytics';
+import { useAppStore } from '@/lib/store';
+import { useAuth } from '@/hooks/use-auth';
 
 export default function AnalyticsPage() {
+  useAuth();
+  const { signals, fetchSignals, fetchPerformance } = useAppStore();
   const [selectedTimeframe, setSelectedTimeframe] = useState('24H');
   const [isRefreshing, setIsRefreshing] = useState(false);
 
   const handleRefresh = () => {
     setIsRefreshing(true);
+    fetchSignals();
+    fetchPerformance();
     setTimeout(() => {
       setIsRefreshing(false);
     }, 1500);
@@ -20,7 +26,14 @@ export default function AnalyticsPage() {
     const data = {
       timeframe: selectedTimeframe,
       exportDate: new Date().toISOString(),
-      analytics: 'Advanced analytics data would be here'
+      totalSignals: signals.length,
+      signals: signals.slice(0, 50).map(s => ({
+        pair: s.pair,
+        direction: s.direction,
+        winrate: s.winrate,
+        status: s.status,
+        timestamp: s.timestamp
+      }))
     };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -79,7 +92,7 @@ export default function AnalyticsPage() {
         </div>
       </div>
 
-      <AdvancedAnalytics />
+      <AdvancedAnalytics timeframe={selectedTimeframe} />
     </div>
   );
 }

@@ -7,8 +7,12 @@ Pipeline complet : OTC Engine → SMC → Indicateurs → Patterns → Chartist 
 import asyncio
 import logging
 import os
+import random
+import json
+from collections import deque
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone, timedelta
-from fastapi import FastAPI, HTTPException, Request, Security
+from fastapi import FastAPI, HTTPException, Request, Security, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import select
 from dotenv import load_dotenv
@@ -35,20 +39,6 @@ from db import init_db, SignalRecord, AsyncSessionLocal, User, UserSubscription,
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(name)s] %(levelname)s: %(message)s')
 logger = logging.getLogger('A2Sniper')
 
-app = FastAPI(title="A2Sniper 3.0", version="3.0.0")
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        "http://localhost:8000",
-        "http://127.0.0.1:8000"
-    ],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
 # ═══════════ INSTANCES GLOBALES ═══════════
 # 8 paires OTC obligatoires CDC
 OTC_PAIRS = [
@@ -74,14 +64,24 @@ RATE_LIMIT_REQUESTS = 2000 # Augmenté pour permettre le polling du dashboard
 RATE_LIMIT_WINDOW = 3600 # 1 hour
 rate_limit_data = {}
 
-@app.middleware("http")
-async def rate_limit_middleware(request, call_next):
-    # Désactivé temporairement pour stabiliser le dashboard
-    return await call_next(request)
+
+# Admin authentication dependency
+async def require_admin(credentials: HTTPAuthorizationCredentials = Security(security)):
+    """Verify the user is an admin. Must be used on all admin endpoints."""
+    token = credentials.credentials
+    payload = decode_token(token)
+    user_id = payload.get("sub")
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(select(User).where(User.id == user_id))
+        user = result.scalar_one_or_none()
+        if not user or not user.is_admin:
+            raise HTTPException(status_code=403, detail="Admin access required")
+    return payload
 
 
 # Stockage des signaux émis
-generated_signals = []
+generated_signals = deque(maxlen=1000)  # Bounded to prevent memory leak
+signal_counter_lock = asyncio.Lock()
 signal_counter = 0
 
 # Limites par plan
@@ -111,7 +111,7 @@ async def analyze_pair_internal(pair: str, force: bool = False) -> dict:
 
     payout = po_scanner.get_payout(pair)
     if payout is None:
-        payout = 92 # défaut
+        payout = 80 # défaut
 
     # Si pas de force, on exige un payout >= 70%
     if not force and payout < 70:
@@ -276,14 +276,11 @@ async def analyze_pair_internal(pair: str, force: bool = False) -> dict:
 
     score_result = ses.evaluate_signal(scoring_context)
     
-    # Si non forcé et winrate trop bas, on rejette. Si forcé, on garantit au moins 70% winrate
+    # Si non forcé et winrate trop bas, on rejette. Si forcé, on utilise le vrai winrate
     winrate = score_result['winrate']
+    # Force mode: use the real calculated winrate (no fabrication)
     if force and winrate < 70.0:
-        import random
-        winrate = round(random.uniform(73.5, 87.5), 2)
-        score_result['winrate'] = winrate
-        score_result['classification'] = 'CONFIRMÉ' if winrate < 80 else 'PREMIUM'
-        score_result['recommended_stake'] = '1% du capital' if winrate < 80 else '2% du capital'
+        logger.warning(f"[{pair}] Force mode: winrate {winrate}% is low but using real value (no fabrication)")
 
     if not force and winrate < ses.WINRATE_THRESHOLD:
         logger.info(f"[{pair}] Winrate {winrate}% < seuil")
@@ -311,12 +308,13 @@ async def analyze_pair_internal(pair: str, force: bool = False) -> dict:
 
     # Construire le signal
     global signal_counter
-    signal_counter += 1
+    async with signal_counter_lock:
+        signal_counter += 1
+        sig_count = signal_counter
     now = datetime.now(timezone.utc)
     current_price = float(df_m1['close'].iloc[-1])
 
     # Expirations CDC
-    import random
     expiration = random.choice([2, 5, 10, 15, 25, 30])
 
     signal = {
@@ -477,12 +475,28 @@ async def resolution_loop():
                     if now >= expiry_time:
                         current_price = await po_scanner.get_current_price(s.pair)
                         if current_price:
-                            is_win = (current_price > s.entry_price) if s.direction == 'CALL' else (current_price < s.entry_price)
+                            if s.direction == 'CALL':
+                                is_win = current_price > s.entry_price
+                            elif s.direction == 'PUT':
+                                is_win = current_price < s.entry_price
+                            else:
+                                is_win = None  # Unknown direction
+                            # Tie (equal price) is treated as no result
+                            if current_price == s.entry_price:
+                                logger.info(f"Tie detected for {s.id}: entry={s.entry_price}, exit={current_price}")
+                                continue
                             s.is_win = is_win
                             
                             # Record result in monitoring engine and risk manager
                             monitor.record_result(s.id, is_win)
-                            risk_mgr.record_trade_result(is_win, float(s.analysis_details.get('recommended_stake', '1%').replace('% du capital', '').replace('%', '')) if s.analysis_details else 1.0)
+                            stake_val = 1.0
+                            if s.analysis_details and s.analysis_details.get('recommended_stake'):
+                                try:
+                                    stake_str = str(s.analysis_details['recommended_stake']).replace('% du capital', '').replace('%', '').strip()
+                                    stake_val = float(stake_str) if stake_str else 1.0
+                                except (ValueError, TypeError):
+                                    stake_val = 1.0
+                            risk_mgr.record_trade_result(is_win, stake_val)
                             
                             logger.info(f"🏁 SIGNAL RÉSOLU RÉEL: {s.id} ({s.pair}) -> {'GAGNÉ' if is_win else 'PERDU'} (Entry: {s.entry_price}, Exit: {current_price})")
                         else:
@@ -496,9 +510,53 @@ async def resolution_loop():
             await asyncio.sleep(10)
 
 
+# ═══════════ LIFESPAN (replaces deprecated on_event) ═══════════
+
+@asynccontextmanager
+async def lifespan(app):
+    # Startup
+    await init_db()
+    
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(select(SignalRecord).order_by(SignalRecord.timestamp.asc()))
+        historical_signals = result.scalars().all()
+        for s in historical_signals:
+            monitor.record_signal(s.id, s.pair, s.direction, s.winrate, is_win=s.is_win)
+            monitor.signal_history[-1]['timestamp'] = s.timestamp.replace(tzinfo=timezone.utc) if s.timestamp.tzinfo is None else s.timestamp
+
+    logger.info(f"Database initialized. Loaded {len(historical_signals)} signals into monitoring history.")
+    logger.info("Waiting for real market connection to start analysis.")
+    
+    asyncio.create_task(trading_loop())
+    asyncio.create_task(resolution_loop())
+    asyncio.create_task(telegram_bot.start_polling())
+    
+    yield  # Application runs here
+    
+    # Shutdown cleanup could go here
+
+
+app = FastAPI(title="A2Sniper 3.0", version="3.0.0", lifespan=lifespan)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:8000",
+        "http://127.0.0.1:8000"
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
 @app.post("/api/signals/request")
-async def request_live_signal(request: Request):
-    """Génère un signal en direct à la demande pour une paire."""
+async def request_live_signal(request: Request, credentials: HTTPAuthorizationCredentials = Security(security)):
+    """Génère un signal en direct à la demande pour une paire. Requires authentication."""
+    # Verify auth
+    payload = decode_token(credentials.credentials)
+    
     try:
         data = await request.json()
     except Exception:
@@ -507,6 +565,10 @@ async def request_live_signal(request: Request):
     pair = data.get("pair")
     if not pair:
         raise HTTPException(status_code=400, detail="Paire requise")
+    
+    # Validate pair is in OTC_PAIRS
+    if pair not in OTC_PAIRS:
+        raise HTTPException(status_code=400, detail=f"Paire invalide. Paires supportées: {', '.join(OTC_PAIRS)}")
         
     if not po_scanner.is_connected:
         raise HTTPException(status_code=400, detail="Le scanner A2Sniper n'est pas connecté au marché réel.")
@@ -546,9 +608,7 @@ async def get_signals(pair: str = None, limit: int = 100):
                 "is_win": s.is_win,
                 "hash_signature": s.hash_signature
             }
-            # Fusionner les détails d'analyse s'ils existent
-            if s.analysis_details:
-                d.update(s.analysis_details)
+            # Don't merge full analysis_details to avoid leaking proprietary strategy logic
             output.append(d)
             
         return {
@@ -559,7 +619,7 @@ async def get_signals(pair: str = None, limit: int = 100):
 
 
 @app.delete("/api/admin/signals/{signal_id}")
-async def delete_signal(signal_id: str):
+async def delete_signal(signal_id: str, admin_payload = Depends(require_admin)):
     async with AsyncSessionLocal() as session:
         from sqlalchemy import delete
         await session.execute(delete(SignalRecord).where(SignalRecord.id == signal_id))
@@ -576,6 +636,10 @@ async def register(request: Request):
     
     if not email or not password:
         raise HTTPException(status_code=400, detail="Email et mot de passe requis")
+        
+    from auth import validate_password_strength, MIN_PASSWORD_LENGTH
+    if not validate_password_strength(password):
+        raise HTTPException(status_code=400, detail=f"Le mot de passe doit contenir au moins {MIN_PASSWORD_LENGTH} caractères, dont 1 majuscule et 1 chiffre")
         
     async with AsyncSessionLocal() as session:
         # Vérifier si l'utilisateur existe déjà
@@ -637,15 +701,16 @@ async def auth_google(request: Request):
     
     if not access_token:
         raise HTTPException(status_code=400, detail="Access token requis")
-        
-    import urllib.request
-    import json
+    
+    import httpx
     try:
-        # Verify access token and get user profile info from Google API
-        url = f"https://www.googleapis.com/oauth2/v3/userinfo?access_token={access_token}"
-        req = urllib.request.Request(url)
-        with urllib.request.urlopen(req) as response:
-            user_info = json.loads(response.read().decode())
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(
+                "https://www.googleapis.com/oauth2/v3/userinfo",
+                params={"access_token": access_token}
+            )
+            resp.raise_for_status()
+            user_info = resp.json()
     except Exception as e:
         logger.error(f"Google Token Verification Error: {e}")
         raise HTTPException(status_code=400, detail="Token Google invalide ou expiré")
@@ -695,26 +760,17 @@ async def auth_google(request: Request):
             }
         }
 
-import random
-import json
-import urllib.request
-import urllib.error
 
-def send_otp_email(recipient_email: str, otp_code: str):
+async def send_otp_email(recipient_email: str, otp_code: str):
     resend_api_key = os.getenv("RESEND_API_KEY")
-    resend_from_email = os.getenv("RESEND_FROM_EMAIL", "noreply@academiahelm.com")
+    resend_from_email = os.getenv("RESEND_FROM_EMAIL", "noreply@a2sniper.ai")
     
     if not resend_api_key:
         logger.warning("RESEND_API_KEY non configurée. Impossible d'envoyer l'email.")
         return False
-        
+    
+    import httpx
     try:
-        url = "https://api.resend.com/emails"
-        headers = {
-            "Authorization": f"Bearer {resend_api_key}",
-            "Content-Type": "application/json"
-        }
-        
         html_content = f"""
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e5e7eb; border-radius: 8px; background-color: #ffffff;">
             <div style="text-align: center; margin-bottom: 20px;">
@@ -729,9 +785,6 @@ def send_otp_email(recipient_email: str, otp_code: str):
                 </div>
                 <p style="font-size: 14px; color: #6b7280; margin-bottom: 0;">Ce code est valable pendant 15 minutes. Si vous n'avez pas demandé cette réinitialisation, veuillez ignorer cet email.</p>
             </div>
-            <div style="text-align: center; margin-top: 20px; font-size: 12px; color: #9ca3af;">
-                <p>&copy; 2026 A2Sniper. Tous droits réservés.</p>
-            </div>
         </div>
         """
         
@@ -742,17 +795,21 @@ def send_otp_email(recipient_email: str, otp_code: str):
             "html": html_content
         }
         
-        data = json.dumps(payload).encode("utf-8")
-        req = urllib.request.Request(url, data=data, headers=headers, method="POST")
-        
-        with urllib.request.urlopen(req) as response:
-            res_body = response.read().decode("utf-8")
-            logger.info(f"Email envoyé via Resend à {recipient_email}. Réponse: {res_body}")
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                "https://api.resend.com/emails",
+                json=payload,
+                headers={
+                    "Authorization": f"Bearer {resend_api_key}",
+                    "Content-Type": "application/json"
+                }
+            )
+            resp.raise_for_status()
+            logger.info(f"Email envoyé via Resend à {recipient_email[:3]}***")
             return True
             
-    except urllib.error.HTTPError as e:
-        err_body = e.read().decode("utf-8") if e.fp else ""
-        logger.error(f"Erreur HTTP lors de l'envoi de l'email via Resend : {e.code} - {err_body}")
+    except httpx.HTTPStatusError as e:
+        logger.error(f"Erreur HTTP lors de l'envoi de l'email via Resend : {e.response.status_code}")
         return False
     except Exception as e:
         logger.error(f"Erreur générale lors de l'envoi de l'email via Resend : {e}")
@@ -771,9 +828,8 @@ async def forgot_password(request: Request):
         user = result.scalar_one_or_none()
         
         if not user:
-            # Pour des raisons de sécurité, ne pas indiquer que l'email n'existe pas, 
-            # mais ici pour faciliter le dev/UX on peut renvoyer une erreur.
-            raise HTTPException(status_code=404, detail="Aucun compte trouvé avec cet email")
+            # Don't reveal whether email exists (security best practice)
+            return {"status": "success", "message": "Si l'email existe, un code OTP y a été envoyé."}
             
         # Generate 6-digit OTP
         otp_code = str(random.randint(100000, 999999))
@@ -793,17 +849,13 @@ async def forgot_password(request: Request):
         session.add(new_otp)
         await session.commit()
         
-        # Simuler l'envoi d'email en l'affichant dans la console (pour le debug)
-        logger.info(f"========== DEBUG OTP ==========")
-        logger.info(f"OTP pour {email} : {otp_code}")
-        logger.info(f"===============================")
+        # Log OTP generation (without revealing the code)
+        logger.info(f"OTP generated for {email[:3]}***@{email.split('@')[-1] if '@' in email else '***'} (expires in 15 min)")
         
         # Envoi de l'email réel
-        email_sent = send_otp_email(email, otp_code)
+        email_sent = await send_otp_email(email, otp_code)
         
         if not email_sent:
-            # Si l'email n'a pas pu être envoyé (ex: pas configuré), on peut quand même 
-            # renvoyer un succès pour ne pas bloquer le dev, mais on avertit.
             logger.warning("Le code a été généré mais l'email n'a pas pu être envoyé.")
         
     return {"status": "success", "message": "Si l'email existe, un code OTP y a été envoyé."}
@@ -816,7 +868,15 @@ async def verify_otp(request: Request):
     
     if not email or not otp_code:
         raise HTTPException(status_code=400, detail="Email et code OTP requis")
-        
+    
+    # Brute force protection: max 5 attempts per email
+    from db import otp_attempt_tracker
+    now = datetime.now(timezone.utc)
+    if email in otp_attempt_tracker:
+        tracker = otp_attempt_tracker[email]
+        if tracker["count"] >= 5 and (now - tracker["last_attempt"]).total_seconds() < 300:
+            raise HTTPException(status_code=429, detail="Too many OTP attempts. Please try again in 5 minutes.")
+    
     async with AsyncSessionLocal() as session:
         result = await session.execute(
             select(PasswordResetOTP)
@@ -826,13 +886,21 @@ async def verify_otp(request: Request):
         otp_record = result.scalar_one_or_none()
         
         if not otp_record:
+            # Track failed attempt
+            if email not in otp_attempt_tracker:
+                otp_attempt_tracker[email] = {"count": 0, "last_attempt": now}
+            otp_attempt_tracker[email]["count"] += 1
+            otp_attempt_tracker[email]["last_attempt"] = now
             raise HTTPException(status_code=400, detail="Code OTP invalide")
             
-        # Gérer la timezone en s'assurant que now est bien timezone-aware
-        now = datetime.now(timezone.utc)
+        # Reset tracker on successful verification
+        if email in otp_attempt_tracker:
+            del otp_attempt_tracker[email]
+            
+        now_utc = datetime.now(timezone.utc)
         expires_at = otp_record.expires_at.replace(tzinfo=timezone.utc) if otp_record.expires_at.tzinfo is None else otp_record.expires_at
         
-        if now > expires_at:
+        if now_utc > expires_at:
             raise HTTPException(status_code=400, detail="Ce code OTP a expiré")
             
         return {"status": "success", "message": "Code OTP vérifié avec succès"}
@@ -864,6 +932,11 @@ async def reset_password(request: Request):
         
         if now > expires_at:
             raise HTTPException(status_code=400, detail="Ce code OTP a expiré")
+        
+        # Validate new password strength
+        from auth import validate_password_strength, MIN_PASSWORD_LENGTH
+        if not validate_password_strength(new_password):
+            raise HTTPException(status_code=400, detail=f"Le mot de passe doit contenir au moins {MIN_PASSWORD_LENGTH} caractères, dont 1 majuscule et 1 chiffre")
             
         # Mettre à jour le mot de passe
         result = await session.execute(select(User).where(User.email == email))
@@ -919,7 +992,7 @@ async def get_status():
 
 
 @app.post("/api/admin/circuit-breaker")
-async def toggle_circuit_breaker(request: Request):
+async def toggle_circuit_breaker(request: Request, admin_payload = Depends(require_admin)):
     """Contrôle global du système (Shutdown d'urgence)."""
     data = await request.json()
     active = data.get("active", False)
@@ -936,18 +1009,29 @@ async def toggle_circuit_breaker(request: Request):
 # --- NEW ADMIN ENDPOINTS ---
 
 @app.get("/api/admin/users")
-async def admin_get_users():
+async def admin_get_users(admin_payload = Depends(require_admin)):
     async with AsyncSessionLocal() as session:
         from db import UserSubscription
         result = await session.execute(select(UserSubscription))
         users = result.scalars().all()
-        return {"users": [u.__dict__ for u in users]}
+        safe_users = []
+        for u in users:
+            safe_users.append({
+                "user_id": u.user_id,
+                "plan_name": u.plan_name,
+                "active_until": u.active_until.isoformat() if u.active_until else None,
+                "telegram_chat_id": u.telegram_chat_id,
+            })
+        return {"users": safe_users}
 
 
 @app.post("/api/admin/users/{user_id}/plan")
-async def admin_update_user_plan(user_id: str, request: Request):
+async def admin_update_user_plan(user_id: str, request: Request, admin_payload = Depends(require_admin)):
     data = await request.json()
     plan = data.get("plan")
+    from db import VALID_PLANS
+    if plan not in VALID_PLANS:
+        raise HTTPException(status_code=400, detail=f"Invalid plan. Must be one of: {VALID_PLANS}")
     async with AsyncSessionLocal() as session:
         from db import UserSubscription
         result = await session.execute(select(UserSubscription).where(UserSubscription.user_id == user_id))
@@ -955,11 +1039,13 @@ async def admin_update_user_plan(user_id: str, request: Request):
         if user:
             user.plan_name = plan
             await session.commit()
+        else:
+            raise HTTPException(status_code=404, detail="User subscription not found")
     return {"status": "success"}
 
 
 @app.get("/api/admin/engine/weights")
-async def admin_get_weights():
+async def admin_get_weights(admin_payload = Depends(require_admin)):
     return {
         "lstm": voting_model.weights.get('LSTM', 0.4),
         "transformer": voting_model.weights.get('Transformer', 0.35),
@@ -969,12 +1055,23 @@ async def admin_get_weights():
 
 
 @app.post("/api/admin/engine/weights")
-async def admin_update_weights(request: Request):
+async def admin_update_weights(request: Request, admin_payload = Depends(require_admin)):
     data = await request.json()
-    voting_model.weights['LSTM'] = data.get('lstm', 0.4)
-    voting_model.weights['Transformer'] = data.get('transformer', 0.35)
-    voting_model.weights['XGBoost'] = data.get('xgboost', 0.25)
-    voting_model.threshold = data.get('threshold', 0.95)
+    lstm_w = data.get('lstm', 0.4)
+    transformer_w = data.get('transformer', 0.35)
+    xgboost_w = data.get('xgboost', 0.25)
+    threshold = data.get('threshold', 0.6)
+    
+    weight_sum = lstm_w + transformer_w + xgboost_w
+    if abs(weight_sum - 1.0) > 0.05:
+        raise HTTPException(status_code=400, detail=f"Weights must sum to ~1.0 (current sum: {weight_sum:.2f})")
+    if threshold < 0 or threshold > 1:
+        raise HTTPException(status_code=400, detail="Threshold must be between 0 and 1")
+    
+    voting_model.weights['LSTM'] = lstm_w
+    voting_model.weights['Transformer'] = transformer_w
+    voting_model.weights['XGBoost'] = xgboost_w
+    voting_model.threshold = threshold
     return {"status": "success"}
 
 
@@ -1029,25 +1126,23 @@ async def get_market_status():
     }
 
 
-@app.on_event("startup")
-async def startup():
-    # Initialisation DB
-    await init_db()
+@app.middleware("http")
+async def rate_limit_middleware(request, call_next):
+    client_ip = request.client.host if request.client else "unknown"
+    now = datetime.now(timezone.utc).timestamp()
     
-    # Charger l'historique réel pour le monitoring
-    async with AsyncSessionLocal() as session:
-        result = await session.execute(select(SignalRecord).order_by(SignalRecord.timestamp.asc()))
-        historical_signals = result.scalars().all()
-        for s in historical_signals:
-            monitor.record_signal(
-                s.id, s.pair, s.direction, s.winrate, is_win=s.is_win
-            )
-            # Mettre à jour les timestamp historiques si nécessaire
-            monitor.signal_history[-1]['timestamp'] = s.timestamp.replace(tzinfo=timezone.utc) if s.timestamp.tzinfo is None else s.timestamp
-
-    logger.info(f"Database initialized. Loaded {len(historical_signals)} signals into monitoring history.")
-    logger.info("Waiting for real market connection to start analysis.")
-                
-    asyncio.create_task(trading_loop())
-    asyncio.create_task(resolution_loop())
-    asyncio.create_task(telegram_bot.start_polling())
+    # Skip rate limiting for health check endpoints
+    if request.url.path in ["/api/status", "/api/market/status"]:
+        return await call_next(request)
+    
+    if client_ip not in rate_limit_data:
+        rate_limit_data[client_ip] = []
+    
+    # Clean old entries
+    rate_limit_data[client_ip] = [t for t in rate_limit_data[client_ip] if now - t < RATE_LIMIT_WINDOW]
+    
+    if len(rate_limit_data[client_ip]) >= RATE_LIMIT_REQUESTS:
+        raise HTTPException(status_code=429, detail="Rate limit exceeded. Please try again later.")
+    
+    rate_limit_data[client_ip].append(now)
+    return await call_next(request)

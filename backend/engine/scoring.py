@@ -3,12 +3,14 @@ Sniper Entry System (SES) — CDC A2Sniper 3.0
 Scoring de confluence 0-13 normalisé sur 0-10.
 Seuil minimum : 8/10 (CDC Section 1.2)
 """
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 class SniperEntrySystem:
     # Winrate minimum pour validation Sniper (ex: 70%)
     WINRATE_THRESHOLD = 70
+    # Maximum realistic winrate cap (85% for binary options)
+    MAX_REALISTIC_WINRATE = 85.0
 
     def __init__(self):
         pass
@@ -110,17 +112,17 @@ class SniperEntrySystem:
         bonus_points = points * 5.5
         final_winrate = round(base_winrate + bonus_points, 2)
         
-        # Limiter entre 0% et 99.99%
-        final_winrate = max(0.0, min(99.99, final_winrate))
+        # Cap winrate at realistic maximum (85%)
+        final_winrate = max(0.0, min(self.MAX_REALISTIC_WINRATE, final_winrate))
 
         # PAYOUT (Doit être récupéré du scanner en temps réel)
-        payout = context.get('payout', 92)  # 92% par défaut si non fourni
+        payout = context.get('payout', 80)  # 80% par défaut si non fourni
 
         # Classification
-        if final_winrate >= 90:
+        if final_winrate >= 80:
             classification = 'SNIPER SHOT'
             notification = f'⚡🎯 SNIPER SHOT — Winrate {final_winrate}%'
-        elif final_winrate >= 80:
+        elif final_winrate >= 75:
             classification = 'PREMIUM'
             notification = '🔥 Signal Premium'
         elif final_winrate >= 70:
@@ -137,14 +139,14 @@ class SniperEntrySystem:
             'classification': classification,
             'notification': notification,
             'is_valid': final_winrate >= self.WINRATE_THRESHOLD,
-            'is_sniper': final_winrate >= 90,
+            'is_sniper': final_winrate >= 80,
             'recommended_stake': self._get_stake(final_winrate),
         }
 
     def _get_stake(self, winrate: float) -> str:
-        if winrate >= 90:
+        if winrate >= 80:
             return '3% du capital'
-        elif winrate >= 80:
+        elif winrate >= 75:
             return '2% du capital'
         elif winrate >= 70:
             return '1% du capital'
@@ -158,13 +160,13 @@ class SniperEntrySystem:
         stake = self._get_stake(winrate)
 
         header = "⚡ A2SNIPER PRO — SNIPER MODE"
-        if winrate >= 95:
+        if winrate >= 80:
             header = "⚡🎯 SNIPER SHOT DETECTÉ"
 
         return f"""{header}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 📊 Paire      : {signal_data.get('pair', 'N/A')}
-🕐 Heure      : {datetime.now().strftime('%H:%M:%S')} GMT
+🕐 Heure      : {datetime.now(timezone.utc).strftime('%H:%M:%S')} UTC
 📈 Direction  : {dir_icon}
 ⏱️ Expiration : {signal_data.get('expiration', 5)} minutes
 🎯 Winrate    : {winrate}% (DATA RÉELLE)

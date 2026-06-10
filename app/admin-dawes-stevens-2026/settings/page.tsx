@@ -4,8 +4,10 @@ import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { Settings, Shield, Power, Bell, Globe, Lock, Cpu, Save } from 'lucide-react';
 import { toast } from 'sonner';
+import { useAuth } from '@/hooks/use-auth';
 
 export default function AdminSettingsPage() {
+  useAuth(true);
   const [isSuspended, setIsSuspended] = useState(false);
   const [config, setConfig] = useState({
     maintenanceMode: false,
@@ -19,7 +21,10 @@ export default function AdminSettingsPage() {
   const fetchStatus = async () => {
     try {
       const url = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
-      const res = await fetch(`${url}/api/status`);
+      const token = typeof window !== 'undefined' ? localStorage.getItem('a2sniper_token') : null;
+      const res = await fetch(`${url}/api/status`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
       if (res.ok) {
         const data = await res.json();
         setIsSuspended(data.status === 'suspended');
@@ -37,9 +42,10 @@ export default function AdminSettingsPage() {
     const nextState = !isSuspended;
     try {
       const url = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
+      const token = typeof window !== 'undefined' ? localStorage.getItem('a2sniper_token') : null;
       const res = await fetch(`${url}/api/admin/circuit-breaker`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
         body: JSON.stringify({ active: nextState })
       });
       if (res.ok) {
@@ -51,8 +57,23 @@ export default function AdminSettingsPage() {
     }
   };
 
-  const saveConfig = () => {
-    toast.success("System configuration saved successfully.");
+  const saveConfig = async () => {
+    try {
+      const url = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
+      const token = typeof window !== 'undefined' ? localStorage.getItem('a2sniper_token') : null;
+      const res = await fetch(`${url}/api/admin/config`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify(config)
+      });
+      if (res.ok) {
+        toast.success("System configuration saved successfully.");
+      } else {
+        toast.error("Failed to save configuration.");
+      }
+    } catch (err) {
+      toast.error("Failed to save configuration.");
+    }
   };
 
   return (

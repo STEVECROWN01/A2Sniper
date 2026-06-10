@@ -25,7 +25,13 @@ import { toast } from 'sonner';
 export default function RiskManagerPage() {
   const [initialCapital, setInitialCapital] = useState(1000);
   const [payout, setPayout] = useState(92);
-  const [trades, setTrades] = useState<any[]>(Array(10).fill({ result: '', amount: 0, return: 0 }));
+  const [trades, setTrades] = useState<any[]>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('a2sniper_risk_trades');
+      if (saved) { try { return JSON.parse(saved); } catch {} }
+    }
+    return Array(10).fill({ result: '', amount: 0, return: 0 });
+  });
   const [sessionCounter, setSessionCounter] = useState(0);
 
   const results = useMemo(() => {
@@ -62,20 +68,48 @@ export default function RiskManagerPage() {
 
   const handleUpdateTrade = (idx: number, field: string, val: any) => {
     const newTrades = [...trades];
+    // Validate negative amounts
+    if (field === 'amount' && val < 0) {
+      toast.error('Le montant ne peut pas être négatif.');
+      return;
+    }
     newTrades[idx] = { ...newTrades[idx], [field]: val };
     setTrades(newTrades);
+    localStorage.setItem('a2sniper_risk_trades', JSON.stringify(newTrades));
   };
 
   const addTradeRow = () => {
-    setTrades([...trades, { result: '', amount: 0, return: 0 }]);
+    const newTrades = [...trades, { result: '', amount: 0, return: 0 }];
+    setTrades(newTrades);
+    localStorage.setItem('a2sniper_risk_trades', JSON.stringify(newTrades));
   };
 
   const clearSession = () => {
-    if (confirm("Voulez-vous vraiment réinitialiser la session actuelle ?")) {
-      setTrades(Array(10).fill({ result: '', amount: 0, return: 0 }));
-      setSessionCounter(0);
-      toast.success("Session réinitialisée");
-    }
+    toast.custom((t) => (
+      <div className="bg-[#0a0a0c] border border-red-500/30 p-6 rounded-2xl shadow-xl max-w-sm">
+        <p className="text-white font-bold mb-4">Voulez-vous vraiment réinitialiser la session actuelle ?</p>
+        <div className="flex gap-3">
+          <button
+            onClick={() => {
+              setTrades(Array(10).fill({ result: '', amount: 0, return: 0 }));
+              setSessionCounter(0);
+              localStorage.removeItem('a2sniper_risk_trades');
+              toast.success("Session réinitialisée");
+              toast.dismiss(t);
+            }}
+            className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg font-bold text-xs hover:bg-red-700 transition-colors"
+          >
+            Confirmer
+          </button>
+          <button
+            onClick={() => toast.dismiss(t)}
+            className="flex-1 px-4 py-2 bg-gray-800 text-gray-300 rounded-lg font-bold text-xs hover:bg-gray-700 transition-colors"
+          >
+            Annuler
+          </button>
+        </div>
+      </div>
+    ), { duration: Infinity });
   };
 
   return (
@@ -103,10 +137,10 @@ export default function RiskManagerPage() {
               >
                 <RefreshCw className="w-4 h-4" /> RESET
               </button>
-              <button className="px-4 py-2 bg-[#121216] hover:bg-[#1a1a1f] border border-gray-800 rounded-xl text-xs font-black text-white flex items-center gap-2 transition-all">
+              <button onClick={() => toast.info('Sauvegarde — fonctionnalité à venir.')} className="px-4 py-2 bg-[#121216] hover:bg-[#1a1a1f] border border-gray-800 rounded-xl text-xs font-black text-white flex items-center gap-2 transition-all">
                 <Save className="w-4 h-4 text-[#D4AF37]" /> SAUVEGARDER
               </button>
-              <button className="px-6 py-2 bg-[#D4AF37] hover:bg-[#c5a059] rounded-xl text-xs font-black text-black flex items-center gap-2 transition-all shadow-lg shadow-[#D4AF37]/20">
+              <button onClick={() => toast.info('Export PDF — fonctionnalité à venir.')} className="px-6 py-2 bg-[#D4AF37] hover:bg-[#c5a059] rounded-xl text-xs font-black text-black flex items-center gap-2 transition-all shadow-lg shadow-[#D4AF37]/20">
                 <Download className="w-4 h-4 text-black" /> EXPORTER PDF
               </button>
             </div>
@@ -276,7 +310,7 @@ export default function RiskManagerPage() {
                   Sniper Stake Helper
                 </h3>
                 <p className="text-xs text-gray-400 font-bold mb-6 leading-relaxed">
-                  Basé sur un Winrate Assistant de <span className="text-green-400">99.99%</span>, la mise suggérée pour une croissance optimale :
+                  Basé sur votre Winrate actuel de <span className="text-green-400">{results.winRate > 0 ? results.winRate.toFixed(1) : 'N/A'}%</span>, la mise suggérée pour une croissance optimale :
                 </p>
                 <div className="bg-black/60 p-6 rounded-2xl border border-[#D4AF37]/30 text-center relative z-10">
                   <p className="text-[10px] font-black text-[#D4AF37] uppercase tracking-[0.2em] mb-1">Stake Conseillé</p>

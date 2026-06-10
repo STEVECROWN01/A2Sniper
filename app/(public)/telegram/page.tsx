@@ -29,7 +29,7 @@ export default function TelegramPage() {
   ];
 
   const highlights = [
-    { label: "Précision Assistant", value: "99.99%", color: "text-green-400" },
+    { label: "Précision Assistant", value: "N/A", color: "text-green-400" },
     { label: "Latence", value: "< 150ms", color: "text-[#D4AF37]" },
     { label: "Actifs", value: "8 OTC Pairs", color: "text-indigo-400" },
     { label: "Disponibilité", value: "24/7", color: "text-purple-400" }
@@ -72,10 +72,15 @@ export default function TelegramPage() {
                     Connectez-vous au flux de signaux le plus puissant du marché. 
                     Données réelles, analyses institutionnelles et exécution instantanée.
                   </p>
-                  <button className="inline-flex py-4 px-8 bg-gradient-to-r from-[#D4AF37] to-[#C5A059] hover:from-[#C5A059] hover:to-[#D4AF37] rounded-2xl text-xs font-black text-white uppercase tracking-[0.3em] transition-all shadow-[0_0_30px_rgba(212,175,55,0.2)] items-center justify-center gap-3 active:scale-95 group">
+                  <a
+                    href="https://t.me/A2SniperBot"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex py-4 px-8 bg-gradient-to-r from-[#D4AF37] to-[#C5A059] hover:from-[#C5A059] hover:to-[#D4AF37] rounded-2xl text-xs font-black text-white uppercase tracking-[0.3em] transition-all shadow-[0_0_30px_rgba(212,175,55,0.2)] items-center justify-center gap-3 active:scale-95 group"
+                  >
                     Rejoindre le Terminal Telegram
                     <ChevronRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
-                  </button>
+                  </a>
                 </motion.div>
               </div>
 

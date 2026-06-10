@@ -26,7 +26,7 @@ interface AppState {
   updateUserStats: (stats: UserStats) => void;
   togglePair: (pair: string) => void;
   setAuthenticated: (auth: boolean) => void;
-  setUser: (user: any) => void;
+  setUser: (user: AppState['user']) => void;
   addSignal: (signal: Signal) => void;
   updateSignalStatus: (id: string, status: Signal['status'], result?: { result_price: number; profit_loss: number }) => void;
   fetchSignals: () => Promise<void>;
@@ -76,11 +76,24 @@ export const useAppStore = create<AppState>((set, get) => ({
     )
   })),
 
+  // Helper to get auth headers
+  getAuthHeaders: () => {
+    const token = typeof window !== 'undefined' ? localStorage.getItem('a2sniper_token') : null;
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    return headers;
+  },
+
+  // Helper to get API base URL
+  getApiUrl: () => process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000',
+
   fetchSignals: async () => {
     try {
-      const url = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
+      const url = get().getApiUrl();
       const startTime = Date.now();
-      const res = await fetch(`${url}/api/signals`);
+      const res = await fetch(`${url}/api/signals`, {
+        headers: get().getAuthHeaders()
+      });
       if (res.ok) {
         // Calculate clock offset from HTTP Date header
         const serverDateStr = res.headers.get('Date');
@@ -117,8 +130,10 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   fetchPerformance: async () => {
     try {
-      const url = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
-      const res = await fetch(`${url}/api/performance`);
+      const url = get().getApiUrl();
+      const res = await fetch(`${url}/api/performance`, {
+        headers: get().getAuthHeaders()
+      });
       if (res.ok) {
         const data = await res.json();
         set((state) => ({
@@ -136,10 +151,10 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   connectMarket: async (ssid: string) => {
     try {
-      const url = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
+      const url = get().getApiUrl();
       const res = await fetch(`${url}/api/market/connect`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: get().getAuthHeaders(),
         body: JSON.stringify({ ssid })
       });
       const data = await res.json();
@@ -156,10 +171,10 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   requestSignal: async (pair: string) => {
     try {
-      const url = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
+      const url = get().getApiUrl();
       const res = await fetch(`${url}/api/signals/request`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: get().getAuthHeaders(),
         body: JSON.stringify({ pair })
       });
       const data = await res.json();
@@ -187,8 +202,11 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   disconnectMarket: async () => {
     try {
-      const url = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
-      await fetch(`${url}/api/market/disconnect`, { method: 'POST' });
+      const url = get().getApiUrl();
+      await fetch(`${url}/api/market/disconnect`, { 
+        method: 'POST',
+        headers: get().getAuthHeaders()
+      });
       set({ liveStatus: 'DISCONNECTED', marketInfo: null });
     } catch (err) {
       console.error('Failed to disconnect market', err);
@@ -197,8 +215,10 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   fetchMarketStatus: async () => {
     try {
-      const url = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
-      const res = await fetch(`${url}/api/market/status`);
+      const url = get().getApiUrl();
+      const res = await fetch(`${url}/api/market/status`, {
+        headers: get().getAuthHeaders()
+      });
       if (res.ok) {
         const data = await res.json();
         set({ 
@@ -215,10 +235,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   initialize: async () => {
-    const token = localStorage.getItem('a2sniper_token');
+    const token = typeof window !== 'undefined' ? localStorage.getItem('a2sniper_token') : null;
     if (token) {
       try {
-        const url = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
+        const url = get().getApiUrl();
         const res = await fetch(`${url}/api/auth/me`, {
           headers: { 'Authorization': `Bearer ${token}` }
         });
@@ -240,7 +260,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   logout: () => {
-    localStorage.removeItem('a2sniper_token');
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('a2sniper_token');
+    }
     set({ user: null, isAuthenticated: false });
   }
 }));

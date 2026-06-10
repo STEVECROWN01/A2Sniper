@@ -88,7 +88,14 @@ export function TelegramBotSimulator() {
   const [isClearing, setIsClearing] = useState(false);
   const [clearProgress, setClearProgress] = useState(0);
 
-  // SSID Input State
+  // Debounced SSID localStorage write
+  const ssidWriteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const debouncedSsidWrite = (value: string) => {
+    if (ssidWriteTimer.current) clearTimeout(ssidWriteTimer.current);
+    ssidWriteTimer.current = setTimeout(() => {
+      localStorage.setItem('a2sniper_last_ssid', value);
+    }, 500);
+  };
   const [ssidInput, setSsidInput] = useState('');
   const [ssidError, setSsidError] = useState<string | null>(null);
   const [isConnecting, setIsConnecting] = useState(false);
@@ -155,7 +162,7 @@ export function TelegramBotSimulator() {
         setClearProgress(0);
         toast.success("Chat vidé avec succès", { duration: 3000 });
         
-        // 2. Start the exact 2-second delay where the chat is completely empty
+        // 2. Start the 5-second delay where the chat is completely empty (matching initial analysis time)
         setTimeout(() => {
           const currentLiveStatus = useAppStore.getState().liveStatus;
           
@@ -195,13 +202,18 @@ export function TelegramBotSimulator() {
     }
   };
 
+  // Message ID counter to avoid collisions
+  const messageIdCounter = useRef(0);
+
   const addMessage = (content: string, sender: 'user' | 'bot', type: 'text' | 'signal' | 'performance' | 'pairs_list' | 'ssid_input' = 'text', pair_data?: any) => {
+    messageIdCounter.current += 1;
     const newMessage: Message = {
-      id: Date.now().toString(),
+      id: `msg_${Date.now()}_${messageIdCounter.current}`,
       content,
       sender,
       timestamp: new Date(),
-      type
+      type,
+      pair_data
     };
     setMessages(prev => [...prev, newMessage]);
   };
@@ -527,7 +539,7 @@ export function TelegramBotSimulator() {
                           value={ssidInput}
                           onChange={(e) => { 
                             setSsidInput(e.target.value); 
-                            localStorage.setItem('a2sniper_last_ssid', e.target.value);
+                            debouncedSsidWrite(e.target.value);
                             if (ssidError) setSsidError(null); 
                           }}
                           placeholder="Collez le message WS ici..." 

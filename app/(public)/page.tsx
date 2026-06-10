@@ -6,6 +6,7 @@ import { TrendingUp, Zap, Shield, Target, Users, Star, Check, ArrowRight, Play, 
 import { pricingPlans } from '@/lib/mock-data';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { toast } from 'sonner';
 
 export default function HomePage() {
   const router = useRouter();
@@ -61,7 +62,7 @@ export default function HomePage() {
   ];
 
   const stats = [
-    { value: "99.99%", label: "Consensus IA" },
+    { value: "N/A", label: "Consensus IA" },
     { value: "50+", label: "Alertes quotidiennes" },
     { value: "10K+", label: "Membres Founders" },
     { value: "24/7", label: "Surveillance flux live" }
@@ -77,11 +78,7 @@ export default function HomePage() {
   const handleSubscribeNewsletter = useCallback((e: React.FormEvent) => {
     e.preventDefault();
     if (email.trim()) {
-      const notification = document.createElement('div');
-      notification.className = 'fixed top-4 right-4 bg-[#D4AF37] text-black px-6 py-3 rounded-lg shadow-lg z-50 font-bold';
-      notification.textContent = `Merci ${email} ! Inscription à la newsletter confirmée.`;
-      document.body.appendChild(notification);
-      setTimeout(() => document.body.removeChild(notification), 3000);
+      toast.success(`Merci ${email} ! Inscription à la newsletter confirmée.`);
       setEmail('');
     }
   }, [email]);
@@ -447,7 +444,7 @@ export default function HomePage() {
           </div>
           
           <div className="border-t border-white/5 mt-12 pt-8 text-center text-xs text-gray-600 font-bold uppercase tracking-widest">
-            <p>&copy; 2026 A2Sniper. Tous droits réservés.</p>
+            <p>&copy; {new Date().getFullYear()} A2Sniper. Tous droits réservés.</p>
           </div>
         </div>
       </footer>

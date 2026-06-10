@@ -118,8 +118,10 @@ export class BacktestEngine {
     // Calcul de la taille de position
     const positionSize = balance * config.riskPerTrade;
     
-    // Utilisation du résultat réel du signal si disponible
-    const isWin = signal.is_win !== undefined ? signal.is_win : (Math.random() < (signal.winrate / 100));
+    // Utilisation du résultat réel du signal si disponible, sinon déterministe basé sur winrate
+    const isWin = signal.is_win !== undefined 
+      ? signal.is_win 
+      : signal.winrate >= 85; // Seuil déterministe au lieu de Math.random
     
     // Utilisation des prix réels si disponibles
     const entryPrice = signal.entry_price;
@@ -172,7 +174,7 @@ export class BacktestEngine {
     const avgWin = winningTrades.length > 0 ? totalProfit / winningTrades.length : 0;
     const avgLoss = losingTrades.length > 0 ? totalLoss / losingTrades.length : 0;
     
-    const profitFactor = totalLoss > 0 ? totalProfit / totalLoss : 0;
+    const profitFactor = totalLoss > 0 ? totalProfit / totalLoss : totalProfit > 0 ? Infinity : 0;
     
     // Calcul du ratio de Sharpe (simplifié)
     const returns = trades.map(t => t.netProfit / initialBalance);

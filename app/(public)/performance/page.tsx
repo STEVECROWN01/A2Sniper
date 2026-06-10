@@ -99,10 +99,10 @@ export default function PerformancePage() {
               className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4"
             >
               <div>
-                <h1 className="text-2xl font-bold text-gray-900 mb-2">
+                <h1 className="text-2xl font-bold text-white mb-2">
                   Analyse de Performance
                 </h1>
-                <p className="text-gray-600">
+                <p className="text-gray-400">
                   Analyse détaillée de vos résultats de trading
                 </p>
               </div>
@@ -111,7 +111,7 @@ export default function PerformancePage() {
                 <select
                   value={selectedTimeframe}
                   onChange={(e) => setSelectedTimeframe(e.target.value)}
-                  className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#D4AF37] focus:border-transparent"
+                  className="px-4 py-2 bg-[#050507] border border-[#1a1a2e] rounded-lg focus:ring-2 focus:ring-[#D4AF37] focus:border-transparent text-white"
                 >
                   <option value="1D">1 Jour</option>
                   <option value="7D">7 Jours</option>
@@ -183,21 +183,21 @@ export default function PerformancePage() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5, delay: 0.3 }}
-            className="bg-white rounded-xl shadow-lg border border-gray-100 p-6 mb-8"
+            className="bg-[#0A0B0E] rounded-xl border border-[#1a1a2e] p-6 mb-8"
           >
-            <h3 className="text-lg font-semibold text-gray-900 mb-6">
+            <h3 className="text-lg font-semibold text-white mb-6">
               Performance par paire de devises
             </h3>
             <div className="overflow-x-auto">
               <table className="w-full">
                 <thead>
-                  <tr className="border-b border-gray-200">
-                    <th className="text-left py-3 px-4 font-medium text-gray-900">Paire</th>
-                    <th className="text-left py-3 px-4 font-medium text-gray-900">Trades</th>
-                    <th className="text-left py-3 px-4 font-medium text-gray-900">Taux de réussite</th>
-                    <th className="text-left py-3 px-4 font-medium text-gray-900">Profit</th>
-                    <th className="text-left py-3 px-4 font-medium text-gray-900">Gagnés</th>
-                    <th className="text-left py-3 px-4 font-medium text-gray-900">Perdus</th>
+                  <tr className="border-b border-[#1a1a2e]">
+                    <th className="text-left py-3 px-4 font-medium text-white">Paire</th>
+                    <th className="text-left py-3 px-4 font-medium text-white">Trades</th>
+                    <th className="text-left py-3 px-4 font-medium text-white">Taux de réussite</th>
+                    <th className="text-left py-3 px-4 font-medium text-white">Profit</th>
+                    <th className="text-left py-3 px-4 font-medium text-white">Gagnés</th>
+                    <th className="text-left py-3 px-4 font-medium text-white">Perdus</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -207,7 +207,7 @@ export default function PerformancePage() {
                       initial={{ opacity: 0, x: -20 }}
                       animate={{ opacity: 1, x: 0 }}
                       transition={{ duration: 0.3, delay: index * 0.1 }}
-                      className="border-b border-gray-100 hover:bg-gray-50"
+                      className="border-b border-[#1a1a2e] hover:bg-white/[0.02]"
                     >
                       <td className="py-4 px-4">
                         <div className="flex items-center space-x-3">
@@ -216,10 +216,10 @@ export default function PerformancePage() {
                               {stat.pair.split('/')[0]}
                             </span>
                           </div>
-                          <span className="font-medium text-gray-900">{stat.pair}</span>
+                          <span className="font-medium text-white">{stat.pair}</span>
                         </div>
                       </td>
-                      <td className="py-4 px-4 text-gray-900">{stat.totalTrades}</td>
+                      <td className="py-4 px-4 text-gray-300">{stat.totalTrades}</td>
                       <td className="py-4 px-4">
                         <div className="flex items-center space-x-2">
                           <span className={`font-medium ${
@@ -229,7 +229,7 @@ export default function PerformancePage() {
                           }`}>
                             {stat.winRate.toFixed(1)}%
                           </span>
-                          <div className="w-20 bg-gray-200 rounded-full h-2">
+                          <div className="w-20 bg-[#1a1a2e] rounded-full h-2">
                             <div 
                               className={`h-2 rounded-full ${
                                 stat.winRate >= 80 ? 'bg-green-500' :
@@ -249,12 +249,12 @@ export default function PerformancePage() {
                         </span>
                       </td>
                       <td className="py-4 px-4">
-                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-500/10 text-green-400">
                           {stat.won}
                         </span>
                       </td>
                       <td className="py-4 px-4">
-                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">
+                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-500/10 text-red-400">
                           {stat.lost}
                         </span>
                       </td>
@@ -272,28 +272,13 @@ export default function PerformancePage() {
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.5, delay: 0.4 }}
-              className="bg-white rounded-xl shadow-lg border border-gray-100 p-6"
+              className="bg-[#0A0B0E] rounded-xl border border-[#1a1a2e] p-6"
             >
-              <h3 className="text-lg font-semibold text-gray-900 mb-4">
+              <h3 className="text-lg font-semibold text-white mb-4">
                 Performance mensuelle
               </h3>
               <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <span className="text-gray-600">Janvier 2026</span>
-                  <span className="text-green-600 font-medium">+$1,247</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-gray-600">Février 2026</span>
-                  <span className="text-green-600 font-medium">+$1,863</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-gray-600">Mars 2026</span>
-                  <span className="text-green-600 font-medium">+$2,156</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-gray-600">Avril 2026</span>
-                  <span className="text-green-600 font-medium">+$1,924</span>
-                </div>
+                <p className="text-gray-500 text-xs italic">Données mensuelles non disponibles — en attente de l'API.</p>
               </div>
             </motion.div>
 
@@ -302,28 +287,13 @@ export default function PerformancePage() {
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.5, delay: 0.5 }}
-              className="bg-white rounded-xl shadow-lg border border-gray-100 p-6"
+              className="bg-[#0A0B0E] rounded-xl border border-[#1a1a2e] p-6"
             >
-              <h3 className="text-lg font-semibold text-gray-900 mb-4">
+              <h3 className="text-lg font-semibold text-white mb-4">
                 Métriques de risque
               </h3>
               <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <span className="text-gray-600">Drawdown max</span>
-                  <span className="text-red-600 font-medium">-12.5%</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-gray-600">Ratio gain/perte</span>
-                  <span className="text-green-600 font-medium">1.8:1</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-gray-600">Série gagnante</span>
-                  <span className="text-[#D4AF37] font-medium">8 trades</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-gray-600">Série perdante</span>
-                  <span className="text-red-600 font-medium">3 trades</span>
-                </div>
+                <p className="text-gray-500 text-xs italic">Données de risque non disponibles — en attente de l'API.</p>
               </div>
             </motion.div>
           </div>

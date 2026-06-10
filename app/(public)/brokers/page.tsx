@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { ExternalLink, Star, DollarSign, TrendingUp, Shield, Users } from 'lucide-react';
 import { supportedBrokers } from '@/lib/mock-data';
+import { toast } from 'sonner';
 
 export default function BrokersPage() {
   const [selectedBroker, setSelectedBroker] = useState<string | null>(null);
@@ -12,14 +13,10 @@ export default function BrokersPage() {
     setSelectedBroker(brokerName);
     
     // Notification
-    const notification = document.createElement('div');
-    notification.className = 'fixed top-4 right-4 bg-[#D4AF37] text-black px-6 py-3 rounded-lg shadow-lg z-50 font-bold';
-    notification.textContent = `Redirection vers ${brokerName}...`;
-    document.body.appendChild(notification);
+    toast.success(`Redirection vers ${brokerName}...`);
     
     setTimeout(() => {
-      window.open(url, '_blank');
-      document.body.removeChild(notification);
+      window.open(url, '_blank', 'noopener,noreferrer');
       setSelectedBroker(null);
     }, 1500);
   };

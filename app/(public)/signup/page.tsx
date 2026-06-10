@@ -8,6 +8,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useAppStore } from '@/lib/store';
 import { useGoogleAuth } from '@/hooks/use-google-auth';
+import { toast } from 'sonner';
 
 export default function SignupPage() {
   const router = useRouter();
@@ -66,12 +67,8 @@ export default function SignupPage() {
       });
       const data = await res.json();
       if (res.ok) {
-        const notification = document.createElement('div');
-        notification.className = 'fixed top-4 right-4 bg-green-500 text-white px-6 py-3 rounded-lg shadow-lg z-50 font-bold';
-        notification.textContent = 'Compte créé ! Redirection vers la connexion...';
-        document.body.appendChild(notification);
+        toast.success('Compte créé ! Redirection vers la connexion...');
         setTimeout(() => {
-          document.body.removeChild(notification);
           router.push('/login');
         }, 2000);
       } else {
@@ -86,7 +83,9 @@ export default function SignupPage() {
 
   const handleGoogleSignup = () => {
     setError('');
+    setIsGoogleLoading(true);
     signInWithGoogle();
+    // setIsGoogleLoading(false) will be handled by the callback page
   };
 
   return (

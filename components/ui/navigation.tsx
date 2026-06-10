@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -47,6 +47,20 @@ export function Navigation() {
   const pathname = usePathname();
   const router = useRouter();
 
+  // Click-outside handler for dropdowns
+  const dropdownRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setShowNotifications(false);
+        setShowUserMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  // TODO: Replace with API data from /api/notifications
   const notifications = [
     { id: 1, title: 'Nouveau signal EUR/USD', time: '2 min', type: 'signal' },
     { id: 2, title: 'Performance mise à jour', time: '5 min', type: 'performance' },
@@ -56,8 +70,8 @@ export function Navigation() {
   const handleLogout = useCallback(() => {
     logout();
     setShowUserMenu(false);
-    window.location.href = '/';
-  }, [logout]);
+    router.push('/');
+  }, [logout, router]);
 
   const handleSearch = useCallback((e: React.FormEvent) => {
     e.preventDefault();
@@ -174,7 +188,7 @@ export function Navigation() {
         </div>
 
         {/* Right: Actions */}
-        <div className="flex items-center space-x-2">
+        <div className="flex items-center space-x-2" ref={dropdownRef}>
           
           {/* Notifications */}
           <div className="relative">

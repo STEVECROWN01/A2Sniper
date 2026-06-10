@@ -81,8 +81,10 @@ export function SignalCard({ signal }: SignalCardProps) {
 📍 Timestamp: ${signal.timestamp.toLocaleString('fr-FR')}
 #${signal.pair.replace('/', '').replace(' OTC', '')} #${signal.direction} #${signal.expiration}MIN`;
 
-    navigator.clipboard.writeText(signalText);
-    toast.success('Signal copié dans le presse-papiers !');
+    navigator.clipboard.writeText(signalText).then(
+      () => toast.success('Signal copié dans le presse-papiers !'),
+      () => toast.error('Impossible de copier le signal. Vérifiez les permissions du presse-papiers.')
+    );
   };
 
   const handleTrade = () => {
@@ -91,8 +93,11 @@ export function SignalCard({ signal }: SignalCardProps) {
   };
 
   const handleMarkResult = (result: 'WON' | 'LOST') => {
-    const profitLoss = result === 'WON' ? 50 + Math.random() * 100 : -(20 + Math.random() * 50);
-    const resultPrice = signal.entry_price + (Math.random() - 0.5) * 0.01;
+    // TODO: Replace with actual API call to record signal result
+    // For now, use placeholder values instead of fake random profit/loss
+    const payout = signal.payout || 85;
+    const profitLoss = result === 'WON' ? payout : -100;
+    const resultPrice = signal.entry_price; // No random price variation
     
     updateSignalStatus(signal.id, result, { result_price: resultPrice, profit_loss: profitLoss });
     toast.success(`Signal marqué comme ${result === 'WON' ? 'gagné' : 'perdu'} !`);

@@ -8,11 +8,9 @@ const inter = Inter({ subsets: ['latin'] });
 
 export const metadata: Metadata = {
   title: 'A2Sniper - Plateforme de Trading Algorithmique',
-  description: "Plateforme de trading algorithmique propulsée par l'Assistant. Signaux Sniper OTC avec 99,99% de précision.",
+  description: "Plateforme de trading algorithmique propulsée par l'Assistant. Signaux Sniper OTC avec consensus multi-modèles.",
   icons: {
     icon: '/A2Sniper-logo.jpeg',
-    shortcut: '/A2Sniper-logo.jpeg',
-    apple: '/A2Sniper-logo.jpeg',
   }
 };
 
@@ -30,4 +28,4 @@ export default function RootLayout({
       </body>
     </html>
   );
-}
+}

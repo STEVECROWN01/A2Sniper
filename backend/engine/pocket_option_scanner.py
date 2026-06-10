@@ -1,5 +1,6 @@
 import json
 import logging
+import asyncio
 import pandas as pd
 from typing import Optional
 from pocketoptionapi_async.client import AsyncPocketOptionClient
@@ -14,6 +15,8 @@ class PocketOptionScanner:
         self.client: Optional[AsyncPocketOptionClient] = None
         self.is_demo = True
         self.ssid = None
+        self._health_check_task = None
+
     def get_asset_symbol(self, pair: str) -> str:
         """
         Convertit un nom de paire lisible (ex: 'EUR/USD OTC' ou 'EUR/USD')
@@ -86,6 +89,9 @@ class PocketOptionScanner:
             
             if success:
                 logger.info(f"✅ CONNECTÉ AU MARCHÉ POCKET OPTION — Mode: {mode_label}")
+                # Start health check loop
+                if self._health_check_task is None or self._health_check_task.done():
+                    self._health_check_task = asyncio.create_task(self._health_check_loop())
                 return True
             else:
                 logger.error(f"❌ ÉCHEC DE L'AUTHENTIFICATION POCKET OPTION — Mode: {mode_label} (SSID potentiellement expiré)")
@@ -100,6 +106,10 @@ class PocketOptionScanner:
         """
         Déconnecte proprement le client.
         """
+        if self._health_check_task and not self._health_check_task.done():
+            self._health_check_task.cancel()
+            self._health_check_task = None
+            
         if self.client:
             try:
                 await self.client.disconnect()
@@ -142,4 +152,28 @@ class PocketOptionScanner:
         if not self.is_connected:
             return None
         asset = self.get_asset_symbol(pair)
-        return self.client.get_payout(asset)
+        try:
+            return self.client.get_payout(asset)
+        except Exception as e:
+            logger.error(f"Erreur lors de la récupération du payout ({pair}): {e}")
+            return None
+
+    async def _health_check_loop(self):
+        """Periodic health check to verify the connection is still alive."""
+        while True:
+            try:
+                await asyncio.sleep(60)  # Check every 60 seconds
+                if self.client:
+                    is_still_connected = self.client.is_connected
+                    if not is_still_connected:
+                        logger.warning("[SCANNER] Health check: connection lost")
+                    else:
+                        logger.debug("[SCANNER] Health check: connection OK")
+                else:
+                    logger.warning("[SCANNER] Health check: client is None")
+                    break
+            except asyncio.CancelledError:
+                logger.info("[SCANNER] Health check loop cancelled")
+                break
+            except Exception as e:
+                logger.error(f"[SCANNER] Health check error: {e}")

@@ -37,10 +37,11 @@ export interface MarketData {
 }
 
 export class TechnicalAnalysis {
-  // Calcul RSI (Relative Strength Index)
+  // Calcul RSI (Relative Strength Index) - Wilder's smoothing
   static calculateRSI(prices: number[], period: number = 14): number {
     if (prices.length < period + 1) return 50;
     
+    // Initial average gain/loss (simple average)
     let gains = 0;
     let losses = 0;
     
@@ -50,8 +51,17 @@ export class TechnicalAnalysis {
       else losses -= change;
     }
     
-    const avgGain = gains / period;
-    const avgLoss = losses / period;
+    let avgGain = gains / period;
+    let avgLoss = losses / period;
+    
+    // Wilder's smoothing for remaining data points
+    for (let i = period + 1; i < prices.length; i++) {
+      const change = prices[i] - prices[i - 1];
+      const currentGain = change > 0 ? change : 0;
+      const currentLoss = change < 0 ? -change : 0;
+      avgGain = (avgGain * (period - 1) + currentGain) / period;
+      avgLoss = (avgLoss * (period - 1) + currentLoss) / period;
+    }
     
     if (avgLoss === 0) return 100;
     
@@ -61,19 +71,32 @@ export class TechnicalAnalysis {
 
   // Calcul MACD (Moving Average Convergence Divergence)
   static calculateMACD(prices: number[], fastPeriod: number = 12, slowPeriod: number = 26, signalPeriod: number = 9) {
-    const emaFast = this.calculateEMA(prices, fastPeriod);
-    const emaSlow = this.calculateEMA(prices, slowPeriod);
-    const macd = emaFast - emaSlow;
+    if (prices.length < slowPeriod + signalPeriod) {
+      return { macd: 0, signal: 0, histogram: 0 };
+    }
     
-    // Calcul de la ligne de signal (EMA du MACD)
-    const macdHistory = [macd]; // Simplifié pour la démo
-    const signal = this.calculateEMA(macdHistory, signalPeriod);
+    const fastEMA = this.calculateEMAArray(prices, fastPeriod);
+    const slowEMA = this.calculateEMAArray(prices, slowPeriod);
+    
+    // Calculate MACD line as array
+    const macdLine: number[] = [];
+    const startIdx = slowPeriod - 1;
+    for (let i = startIdx; i < prices.length; i++) {
+      macdLine.push(fastEMA[i] - slowEMA[i]);
+    }
+    
+    // Calculate signal line from MACD line
+    const signalLine = this.calculateEMAArray(macdLine, signalPeriod);
+    
+    const lastIdx = macdLine.length - 1;
+    const macd = macdLine[lastIdx];
+    const signal = signalLine[lastIdx];
     const histogram = macd - signal;
     
     return { macd, signal, histogram };
   }
 
-  // Calcul EMA (Exponential Moving Average)
+  // Calcul EMA (Exponential Moving Average) - returns single value
   static calculateEMA(prices: number[], period: number): number {
     if (prices.length === 0) return 0;
     
@@ -87,8 +110,27 @@ export class TechnicalAnalysis {
     return ema;
   }
 
+  // Calcul EMA array - returns EMA for each price point (needed for MACD)
+  static calculateEMAArray(prices: number[], period: number): number[] {
+    if (prices.length === 0) return [];
+    
+    const multiplier = 2 / (period + 1);
+    const emaArray: number[] = [prices[0]];
+    
+    for (let i = 1; i < prices.length; i++) {
+      emaArray.push((prices[i] * multiplier) + (emaArray[i - 1] * (1 - multiplier)));
+    }
+    
+    return emaArray;
+  }
+
   // Calcul Bollinger Bands
   static calculateBollingerBands(prices: number[], period: number = 20, stdDev: number = 2) {
+    if (prices.length < period) {
+      const sma = prices.reduce((sum, price) => sum + price, 0) / prices.length;
+      return { upper: sma, middle: sma, lower: sma };
+    }
+    
     const sma = prices.slice(-period).reduce((sum, price) => sum + price, 0) / period;
     
     const variance = prices.slice(-period).reduce((sum, price) => {
@@ -147,18 +189,21 @@ export class TechnicalAnalysis {
   static calculateStochastic(highs: number[], lows: number[], closes: number[], kPeriod: number = 14, dPeriod: number = 3) {
     if (closes.length < kPeriod) return { k: 50, d: 50 };
     
-    const recentHighs = highs.slice(-kPeriod);
-    const recentLows = lows.slice(-kPeriod);
-    const currentClose = closes[closes.length - 1];
+    const kValues: number[] = [];
+    for (let i = kPeriod - 1; i <= closes.length - 1; i++) {
+      const highSlice = highs.slice(i - kPeriod + 1, i + 1);
+      const lowSlice = lows.slice(i - kPeriod + 1, i + 1);
+      const highestHigh = Math.max(...highSlice);
+      const lowestLow = Math.min(...lowSlice);
+      const range = highestHigh - lowestLow;
+      const k = range === 0 ? 50 : ((closes[i] - lowestLow) / range) * 100;
+      kValues.push(k);
+    }
     
-    const highestHigh = Math.max(...recentHighs);
-    const lowestLow = Math.min(...recentLows);
-    
-    const k = ((currentClose - lowestLow) / (highestHigh - lowestLow)) * 100;
-    
-    // Calcul de %D (moyenne mobile de %K)
-    const kValues = [k]; // Simplifié pour la démo
-    const d = kValues.slice(-dPeriod).reduce((sum, val) => sum + val, 0) / Math.min(dPeriod, kValues.length);
+    // %D is the SMA of %K values
+    const dValues = kValues.slice(-dPeriod);
+    const d = dValues.reduce((sum, val) => sum + val, 0) / dValues.length;
+    const k = kValues[kValues.length - 1];
     
     return { k, d };
   }

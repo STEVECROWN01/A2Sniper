@@ -17,7 +17,7 @@ logger = logging.getLogger('TelegramBot')
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', '')
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID', '@A2Sniper_BinaryTrader')
 
-# Simulation : en production, remplacer par python-telegram-bot réel
+
 class TelegramSignalBot:
     def __init__(self, scanner=None):
         self.scanner = scanner
@@ -44,6 +44,7 @@ class TelegramSignalBot:
             '/disclaimer': self.cmd_disclaimer,
             '/risk': self.cmd_risk_manager,
             '/journal': self.cmd_trading_journal,
+            '/unsubscribe': self.cmd_unsubscribe,
         }
         self.signal_history = []
 
@@ -63,12 +64,30 @@ class TelegramSignalBot:
         }
 
     # ═══════════ ACL ═══════════
-    def _check_access(self, user_id: str, required_plan: str = 'Standard') -> bool:
+    async def _check_access(self, user_id: str, required_plan: str = 'Standard') -> bool:
+        """Check access level - syncs with database."""
+        await self._sync_user_plan(user_id)
         plan = self.user_plans.get(user_id, 'Standard')
         plan_hierarchy = {'Standard': 0, 'Premium': 1, 'Pro': 2}
         return plan_hierarchy.get(plan, 0) >= plan_hierarchy.get(required_plan, 0)
 
-    def _get_plan(self, user_id: str) -> str:
+    async def _sync_user_plan(self, user_id: str):
+        """Sync user plan from database."""
+        try:
+            from db import AsyncSessionLocal, UserSubscription
+            from sqlalchemy import select
+            async with AsyncSessionLocal() as session:
+                result = await session.execute(
+                    select(UserSubscription).where(UserSubscription.user_id == user_id)
+                )
+                sub = result.scalar_one_or_none()
+                if sub:
+                    self.user_plans[user_id] = sub.plan_name
+        except Exception as e:
+            logger.warning(f"[TELEGRAM] Could not sync plan for {user_id}: {e}")
+
+    async def _get_plan(self, user_id: str) -> str:
+        await self._sync_user_plan(user_id)
         return self.user_plans.get(user_id, 'Standard')
 
     # ═══════════ ENVOI DE SIGNAL ═══════════
@@ -117,7 +136,7 @@ class TelegramSignalBot:
         self.user_settings.setdefault(user_id, {
             'pairs': ['EUR/USD OTC'],
             'timeframe': 'M5',
-            'min_winrate': 85,
+            'min_winrate': 70,
             'session_filter': 'ALL',
             'live_signals': False,
         })
@@ -136,13 +155,31 @@ Pour commencer :
 
     async def cmd_signals(self, user_id: str, args: list = None) -> str:
         """2. /signals — 10 derniers signaux reçus"""
-        recent = self.signal_history[-10:]
-        if not recent:
+        # Query from database for real signal history
+        try:
+            from db import AsyncSessionLocal, SignalRecord
+            from sqlalchemy import select
+            async with AsyncSessionLocal() as session:
+                result = await session.execute(
+                    select(SignalRecord).order_by(SignalRecord.timestamp.desc()).limit(10)
+                )
+                db_signals = result.scalars().all()
+        except Exception as e:
+            logger.error(f"Error querying signals: {e}")
+            db_signals = []
+        
+        if not db_signals and not self.signal_history:
             return "📭 Aucun signal récent. Activez /live pour recevoir des signaux."
 
-        lines = ["📊 DERNIERS SIGNAUX REÇUS\n━━━━━━━━━━━━━━━━━━━━━"]
-        for i, s in enumerate(reversed(recent), 1):
-            lines.append(f"{i}. {s['timestamp'][:19]}")
+        lines = ["📊 DERNIERS SIGNAUX\n━━━━━━━━━━━━━━━━━━━━━"]
+        if db_signals:
+            for i, s in enumerate(db_signals, 1):
+                ts = s.timestamp.strftime('%Y-%m-%d %H:%M') if s.timestamp else 'N/A'
+                result_icon = '✅' if s.is_win == True else '❌' if s.is_win == False else '⏳'
+                lines.append(f"{i}. {result_icon} {s.pair} | {s.direction} | WR:{s.winrate}% | {ts}")
+        else:
+            for i, s in enumerate(reversed(self.signal_history[-10:]), 1):
+                lines.append(f"{i}. {s['timestamp'][:19]}")
         lines.append("\nTapez /live pour recevoir les signaux en temps réel.")
         return "\n".join(lines)
 
@@ -164,88 +201,158 @@ Pour commencer :
         return "⏸️ SIGNAUX LIVE DÉSACTIVÉS\nLe bot restera silencieux. Utilisez /live pour reprendre."
 
     async def cmd_performance(self, user_id: str, args: list = None) -> str:
-        """4. /performance — Statistiques de succès réelles"""
-        total = len(self.signal_history)
+        """4. /performance — Statistiques de succès réelles (from database)"""
+        try:
+            from db import AsyncSessionLocal, SignalRecord
+            from sqlalchemy import select, func
+            async with AsyncSessionLocal() as session:
+                # Get total signals
+                total_result = await session.execute(select(func.count(SignalRecord.id)))
+                total_signals = total_result.scalar() or 0
+                
+                # Get resolved signals
+                resolved_result = await session.execute(
+                    select(SignalRecord).where(SignalRecord.is_win != None)
+                )
+                resolved = resolved_result.scalars().all()
+                
+                wins = sum(1 for s in resolved if s.is_win)
+                losses = len(resolved) - wins
+                win_rate = round(wins / len(resolved) * 100, 1) if resolved else 0
+                
+                # Average payout
+                payout_result = await session.execute(
+                    select(func.avg(SignalRecord.payout)).where(SignalRecord.is_win != None)
+                )
+                avg_payout = round(payout_result.scalar() or 0, 1)
+                
+                # Best pair
+                pair_stats = {}
+                for s in resolved:
+                    p = s.pair
+                    if p not in pair_stats:
+                        pair_stats[p] = {'wins': 0, 'total': 0}
+                    pair_stats[p]['total'] += 1
+                    if s.is_win:
+                        pair_stats[p]['wins'] += 1
+                
+                best_pair = max(
+                    pair_stats.items(), 
+                    key=lambda x: x[1]['wins'] / max(x[1]['total'], 1), 
+                    default=('N/A', {'wins': 0, 'total': 0})
+                )
+        except Exception as e:
+            logger.error(f"Error querying performance: {e}")
+            total_signals = 0
+            wins = losses = 0
+            win_rate = 0
+            avg_payout = 0
+            best_pair = ('N/A', {'wins': 0, 'total': 0})
+        
         return f"""📈 PERFORMANCE RÉELLE — A2SNIPER
 ━━━━━━━━━━━━━━━━━━━━━
-🎯 Win Rate (Analyisé) : 94.2%
-🎯 Win Rate (Réel PO) : 91.8%
-📊 Signaux Émis : {total}
-💰 Payout Moyen : 92%
-🏆 Top Paire : EUR/USD OTC
+🎯 Win Rate (Réel) : {win_rate}%
+📊 Signaux Résolus : {wins}W / {losses}L ({wins+losses} total)
+📊 Signaux Total   : {total_signals}
+💰 Payout Moyen    : {avg_payout}%
+🏆 Meilleure Paire : {best_pair[0]} ({best_pair[1]['wins']}/{best_pair[1]['total']})
 
-📊 Ratio Profit/Perte : 4.2
-📉 Max Drawdown : 2.1%
 🏦 Source : Pocket Option Real-Market Feed
 
-Note: Toutes les données sont extraites en temps réel."""
+Note: Toutes les données sont extraites de la base de données réelle."""
 
     async def cmd_analyse(self, user_id: str, args: list = None) -> str:
         """5. /analyse [PAIRE] — Analyse manuelle à la demande (Premium+)"""
-        if not self._check_access(user_id, 'Premium'):
+        if not await self._check_access(user_id, 'Premium'):
             return "🔒 Commande réservée aux plans Premium et Pro.\nTapez /plan pour upgrader."
 
         pair = args[0] if args else 'EUR/USD OTC'
         if self.scanner and not self.scanner.is_connected:
             return f"⚠️ Impossible d'analyser {pair}. Le bot n'est actuellement pas connecté au marché réel."
 
-        payout = self.scanner.get_payout(pair) if self.scanner else 92
-        current_price = await self.scanner.get_current_price(pair) if self.scanner else 1.0820
+        payout = self.scanner.get_payout(pair) if self.scanner else None
+        current_price = await self.scanner.get_current_price(pair) if self.scanner else None
+        
+        if payout is None or current_price is None:
+            return f"⚠️ Impossible d'obtenir les données en temps réel pour {pair}. Vérifiez la connexion."
 
         return f"""🔍 ANALYSE EN DIRECT (RÉEL) — {pair}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 📈 Prix Actuel   : {current_price}
 💰 Payout Actuel : {payout}%
-📈 Tendance M1   : UPTREND (HH/HL)
-📈 Tendance M5   : UPTREND (HH/HL)
-📈 Tendance M15  : UPTREND (HH/HL)
-✅ MTF Aligné    : OUI
 
-🏗️ Structure SMC :
-▶ BOS haussier confirmé
-▶ OB Bullish @ 1.0810-1.0815 (Zone active)
-▶ FVG Bullish @ 1.0818-1.0822 (Retrait liquide)
+📊 Les données ci-dessus sont extraites en temps réel du marché.
+Pour un signal complet avec scoring IA, utilisez le dashboard Web.
 
-📊 Indicateurs réels :
-▶ RSI(14)  : 42 — Zone Neutre
-▶ MACD     : Haussier (histogram +)
-▶ ADX(14)  : 32 — Tendance forte
-
-🎯 Verdict : Signal CALL potentiel si retest OB (Winrate évalué par IA > 85%)"""
+⚠️ Les signaux doivent être générés par le moteur d'analyse complet pour une évaluation de winrate fiable."""
 
     async def cmd_structure(self, user_id: str, args: list = None) -> str:
         """6. /structure [PAIRE] — Vue SMC complète (Premium+)"""
-        if not self._check_access(user_id, 'Premium'):
+        if not await self._check_access(user_id, 'Premium'):
             return "🔒 Commande réservée aux plans Premium et Pro.\nTapez /plan pour upgrader."
 
         pair = args[0] if args else 'EUR/USD OTC'
         if self.scanner and not self.scanner.is_connected:
             return f"⚠️ Impossible de récupérer la structure pour {pair}. Le bot n'est pas connecté au marché réel."
 
-        current_price = await self.scanner.get_current_price(pair) if self.scanner else 1.0820
+        current_price = await self.scanner.get_current_price(pair) if self.scanner else None
+        
+        if current_price is None:
+            return f"⚠️ Impossible d'obtenir le prix pour {pair}. Vérifiez la connexion."
+
+        # Run real SMC analysis
+        try:
+            from engine.smc import SMCEngine
+            from engine.indicators import TechnicalIndicators
+            smc = SMCEngine()
+            ind = TechnicalIndicators()
+            
+            df = await self.scanner.get_candles(pair, timeframe="1m", count=100)
+            if df.empty or len(df) < 20:
+                return f"⚠️ Pas assez de données pour analyser {pair}."
+            
+            df = ind.calculate_all(df)
+            smc_result = smc.analyze(df)
+            trend = smc_result.get('trend', 'N/A')
+            obs = smc_result.get('order_blocks', [])
+            fvgs = smc_result.get('fvgs', [])
+            liq = smc_result.get('liquidity_zones', {})
+            
+            ob_lines = []
+            for ob in obs[:3]:
+                ob_lines.append(f"  └ {ob.get('type', 'OB')} @ zone active")
+            
+            fvg_lines = []
+            for fvg in fvgs[:3]:
+                fvg_lines.append(f"  └ {fvg.get('type', 'FVG')} @ zone active")
+            
+            bsl = liq.get('buy_side_liquidity', [])
+            ssl = liq.get('sell_side_liquidity', [])
+            bsl_str = f"@ {bsl[0]:.5f}" if bsl else "N/A"
+            ssl_str = f"@ {ssl[0]:.5f}" if ssl else "N/A"
+            
+        except Exception as e:
+            logger.error(f"Error in SMC analysis: {e}")
+            trend = "N/A"
+            ob_lines = ["  └ Erreur d'analyse"]
+            fvg_lines = ["  └ Erreur d'analyse"]
+            bsl_str = "N/A"
+            ssl_str = "N/A"
 
         return f"""🏗️ STRUCTURE SMC EN DIRECT — {pair}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 📈 Prix Marché : {current_price}
-📈 Tendance    : UPTREND (HH/HL confirmé)
-🔄 Wyckoff     : MARKUP
-
-🟢 BOS (Break of Structure) :
-  └ BOS haussier (confirmé par clôture)
-
-🔴 CHoCH (Change of Character) :
-  └ Aucun détecté
+📈 Tendance    : {trend}
 
 📦 Order Blocks actifs :
-  └ BULLISH OB @ 1.0810-1.0815 (non mitigé)
-  └ Zone d'entrée optimale (50-75%)
+{chr(10).join(ob_lines) if ob_lines else '  └ Aucun détecté'}
 
 📐 FVG actifs :
-  └ BULLISH FVG @ 1.0818-1.0822
+{chr(10).join(fvg_lines) if fvg_lines else '  └ Aucun détecté'}
 
 💧 Liquidité :
-  └ BSL @ {round(current_price * 1.002, 5)} (Equal Highs)
-  └ SSL @ {round(current_price * 0.998, 5)} (Equal Lows)"""
+  └ BSL {bsl_str}
+  └ SSL {ssl_str}"""
 
     async def cmd_timeframe(self, user_id: str, args: list = None) -> str:
         """7. /timeframe [M1|M5|M15] — Changer le timeframe"""
@@ -313,27 +420,69 @@ Note: Toutes les données sont extraites en temps réel."""
         return "\n".join(lines)
 
     async def cmd_backtesting(self, user_id: str, args: list = None) -> str:
-        """10. /backtesting [PAIRE] — Backtest rapide 30 jours (Pro)"""
-        if not self._check_access(user_id, 'Pro'):
+        """10. /backtesting [PAIRE] — Backtest rapide 30 jours (Pro) — uses real database data"""
+        if not await self._check_access(user_id, 'Pro'):
             return "🔒 Commande réservée au plan Pro.\nTapez /plan pour upgrader."
 
         pair = args[0] if args else 'EUR/USD OTC'
+        
+        try:
+            from db import AsyncSessionLocal, SignalRecord
+            from sqlalchemy import select, func
+            from datetime import timedelta
+            async with AsyncSessionLocal() as session:
+                cutoff = datetime.now(timezone.utc) - timedelta(days=30)
+                # Total signals for pair
+                total_result = await session.execute(
+                    select(func.count(SignalRecord.id)).where(
+                        SignalRecord.pair == pair,
+                        SignalRecord.timestamp >= cutoff
+                    )
+                )
+                total = total_result.scalar() or 0
+                
+                # Resolved signals
+                resolved_result = await session.execute(
+                    select(SignalRecord).where(
+                        SignalRecord.pair == pair,
+                        SignalRecord.is_win != None,
+                        SignalRecord.timestamp >= cutoff
+                    )
+                )
+                resolved = resolved_result.scalars().all()
+                
+                wins = sum(1 for s in resolved if s.is_win)
+                losses = len(resolved) - wins
+                win_rate = round(wins / len(resolved) * 100, 1) if resolved else 0
+                
+                # Profit calculation (assuming $10 stake)
+                pnl = 0
+                for s in resolved:
+                    if s.is_win:
+                        pnl += 10 * ((s.payout or 80) / 100)
+                    else:
+                        pnl -= 10
+        except Exception as e:
+            logger.error(f"Error in backtesting query: {e}")
+            total = 0
+            wins = losses = 0
+            win_rate = 0
+            pnl = 0
+        
         return f"""📊 BACKTESTING — {pair} (30 derniers jours)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📈 Trades totaux : 847
-✅ Gagnants      : 846
-❌ Perdants      : 1
-🎯 Win Rate      : 99.88%
-💰 Profit Net    : +$4,235
-📉 Max Drawdown  : 1.2%
-📊 Sharpe Ratio  : 4.8
-📊 Profit Factor : 12.3
+📈 Trades totaux : {total}
+✅ Gagnants      : {wins}
+❌ Perdants      : {losses}
+🎯 Win Rate      : {win_rate}%
+💰 Profit Net    : {'+' if pnl >= 0 else ''}${pnl:.2f} (mise $10)
 
-⚠️ Les performances passées ne garantissent pas les résultats futurs."""
+⚠️ Les performances passées ne garantissent pas les résultats futurs.
+📊 Données extraites de la base de données réelle."""
 
     async def cmd_alert(self, user_id: str, args: list = None) -> str:
         """11. /alert [PAIRE] [NIVEAU] — Alerte de prix (Premium+)"""
-        if not self._check_access(user_id, 'Premium'):
+        if not await self._check_access(user_id, 'Premium'):
             return "🔒 Commande réservée aux plans Premium et Pro."
 
         if not args or len(args) < 2:
@@ -344,7 +493,12 @@ Note: Toutes les données sont extraites en temps réel."""
             return "✅ Toutes les alertes supprimées."
 
         pair = args[0]
-        level = float(args[1])
+        # Sanitize level input - must be a valid number
+        try:
+            level = float(args[1])
+        except (ValueError, TypeError):
+            return "❌ Le niveau de prix doit être un nombre valide. Exemple : /alert EUR/USD 1.0850"
+        
         self.alerts.setdefault(user_id, []).append({'pair': pair, 'level': level})
         return f"✅ Alerte créée : {pair} @ {level}\nVous serez notifié quand le prix atteindra ce niveau."
 
@@ -355,7 +509,7 @@ Note: Toutes les données sont extraites en temps réel."""
 ━━━━━━━━━━━━━━━━━━━━━
 📊 Paires       : {', '.join(settings.get('pairs', ['EUR/USD OTC']))}
 ⏰ Timeframe    : {settings.get('timeframe', 'M5')}
-🎯 Winrate min  : {settings.get('min_winrate', 85)}%
+🎯 Winrate min  : {settings.get('min_winrate', 70)}%
 📅 Session      : {settings.get('session_filter', 'ALL')}
 📡 Live         : {'✅ Activé' if settings.get('live_signals') else '⏸️ Désactivé'}
 
@@ -363,7 +517,7 @@ Pour modifier : /timeframe M1 | /paires EUR/USD OTC | /session LONDON"""
 
     async def cmd_plan(self, user_id: str, args: list = None) -> str:
         """13. /plan — Afficher plan actuel et upgrade"""
-        plan = self._get_plan(user_id)
+        plan = await self._get_plan(user_id)
         return f"""👤 VOTRE ABONNEMENT
 ━━━━━━━━━━━━━━━━━━━━━
 📋 Plan actuel : {plan}
@@ -394,6 +548,7 @@ Utilisez les boutons au bas de votre écran pour naviguer :
 • <code>/backtesting [Paire]</code> — Backtest historique.
 • <code>/timeframe [TF]</code> — Changer l'unité de temps (M1/M5/M15).
 • <code>/live</code> — Activer/Désactiver les signaux automatiques.
+• <code>/unsubscribe</code> — Se désabonner des notifications.
 
 ⚠️ Le trading comporte des risques de perte de capital."""
 
@@ -409,13 +564,19 @@ Utilisez les boutons au bas de votre écran pour naviguer :
 🤖 L'assistant de pointe pour votre trading binaire haute fréquence.
 🟢 Vous êtes actuellement connecté avec succès au marché 💹
 
-Assure-toi que c'est seulement connecté, réellement connecté et que toutes les données sont vraiment purgées depuis le marché et tout ce qui est signal doit être en fonction du marché. La véracité des signaux doit être dépendante en fonction du marché tout.
-
 Pour commencer à recevoir vos signaux de trading binaire, veuillez cliquer sur le bouton <b>⚡ Pairs de devises</b> ci-dessous, puis sélectionnez la paire de votre choix pour recevoir votre signal.
 
 Excellente session de trading à vous !"""
         else:
             return "❌ <b>Échec de la connexion.</b> Le SSID ou message de session fourni est invalide ou expiré. Veuillez réessayer."
+
+    async def cmd_unsubscribe(self, user_id: str, args: list = None) -> str:
+        """Unsubscribe from signal notifications."""
+        self.subscribed_chats.discard(user_id)
+        settings = self.user_settings.get(user_id, {})
+        settings['live_signals'] = False
+        self.user_settings[user_id] = settings
+        return "✅ Vous êtes désabonné des notifications de signaux.\nUtilisez /live ou /start pour vous réabonner."
 
     async def cmd_trading_journal(self, user_id: str, args: list = None) -> str:
         """Affiche le Trading Journal à partir de la base de données"""
@@ -446,7 +607,7 @@ Les signaux résolus apparaîtront ici automatiquement."""
         pnl = 0
         for s in signals:
             if s.is_win:
-                pnl += 10 * (s.payout / 100)
+                pnl += 10 * ((s.payout or 80) / 100)
             else:
                 pnl -= 10
 
@@ -463,7 +624,7 @@ Les signaux résolus apparaîtront ici automatiquement."""
         
         for i, s in enumerate(signals[:5], 1):
             status = "🟢 WIN" if s.is_win else "🔴 LOSS"
-            pnl_val = (10 * (s.payout / 100)) if s.is_win else -10
+            pnl_val = (10 * ((s.payout or 80) / 100)) if s.is_win else -10
             lines.append(f"#{i} {s.pair} | {status} ({'+' if pnl_val >= 0 else ''}${pnl_val:.2f})")
             
         return "\n".join(lines)

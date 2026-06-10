@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line } from 'recharts';
 import { TrendingUp, Zap, Clock, Target, RefreshCw, Download } from 'lucide-react';
+import { toast } from 'sonner';
 
 const darkTooltipStyle = {
   backgroundColor: '#0a0a0c',
@@ -55,7 +56,7 @@ export function AdvancedAnalytics() {
   useEffect(() => {
     const interval = setInterval(() => {
       setLiveData(prev => ({
-        signalsGenerated: prev.signalsGenerated + Math.floor(Math.random() * 3),
+        signalsGenerated: prev.signalsGenerated + 1, // Increment by 1 per interval instead of random
         aiAccuracy: Math.max(85, Math.min(95, prev.aiAccuracy + (Math.random() - 0.5) * 0.5)),
         avgProfit: Math.max(50, Math.min(100, prev.avgProfit + (Math.random() - 0.5) * 5)),
         avgExecutionTime: Math.max(20, Math.min(40, prev.avgExecutionTime + (Math.random() - 0.5) * 2))
@@ -81,11 +82,7 @@ export function AdvancedAnalytics() {
   }, []);
 
   const handleRefresh = () => {
-    const notification = document.createElement('div');
-    notification.className = 'fixed top-4 right-4 bg-[#D4AF37] text-black px-6 py-3 rounded-xl shadow-lg z-50 font-bold text-xs uppercase tracking-wider';
-    notification.textContent = 'Analytics mis à jour !';
-    document.body.appendChild(notification);
-    setTimeout(() => document.body.removeChild(notification), 3000);
+    toast.success('Analytics mis à jour !');
   };
 
   const handleExport = () => {
@@ -106,12 +103,7 @@ export function AdvancedAnalytics() {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-
-    const notification = document.createElement('div');
-    notification.className = 'fixed top-4 right-4 bg-[#D4AF37] text-black px-6 py-3 rounded-xl shadow-lg z-50 font-bold text-xs uppercase tracking-wider';
-    notification.textContent = 'Analytics exportées !';
-    document.body.appendChild(notification);
-    setTimeout(() => document.body.removeChild(notification), 3000);
+    toast.success('Analytics exportées !');
   };
 
   return (

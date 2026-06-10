@@ -3,6 +3,7 @@
 import { useCallback } from 'react';
 import { useAppStore } from '@/lib/store';
 import { useRouter } from 'next/navigation';
+import { toast } from 'sonner';
 
 export function useGoogleAuth() {
   const router = useRouter();
@@ -25,17 +26,17 @@ export function useGoogleAuth() {
         setAuthenticated(true);
         router.push('/dashboard');
       } else {
-        alert('⚠️ Erreur backend (dev) : ' + (data.detail || 'Erreur inconnue'));
+        toast.error('Erreur backend (dev) : ' + (data.detail || 'Erreur inconnue'));
       }
     } catch (e) {
       console.error(e);
-      alert('⚠️ Erreur réseau (dev) : Veuillez réessayer.');
+      toast.error('Erreur réseau (dev) : Veuillez réessayer.');
     }
   };
 
   const signInWithGoogle = useCallback(() => {
     const clientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
-    const devToken = process.env.GOOGLE_DEV_TOKEN;
+    const devToken = process.env.NEXT_PUBLIC_GOOGLE_DEV_TOKEN;
 
     if (!clientId || clientId === 'VOTRE_CLIENT_ID_ICI') {
       if (devToken) {
@@ -43,19 +44,17 @@ export function useGoogleAuth() {
         handleDevToken(devToken);
         return;
       }
-      alert(
-        '⚠️ Configuration requise\n\n' +
-        'Pour activer Google Sign‑In :\n' +
-        '1. Allez sur console.cloud.google.com\n' +
-        '2. Créez un projet et activez "Google+ API"\n' +
-        '3. Créez des identifiants OAuth 2.0 (type: Web Application)\n' +
-        '4. Ajoutez http://localhost:3000/google-callback dans les URI de redirection autorisées\n' +
-        '5. Remplacez NEXT_PUBLIC_GOOGLE_CLIENT_ID par votre Client ID' 
+      toast.error(
+        'Configuration requise : Pour activer Google Sign‑In, configurez NEXT_PUBLIC_GOOGLE_CLIENT_ID.'
       );
       return;
     }
     
-    // Logic for actual Google Sign-In redirect would go here
+    // Actual Google Sign-In redirect using OAuth 2.0 implicit flow
+    const redirectUri = `${window.location.origin}/google-callback`;
+    const scope = 'openid email profile';
+    const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=token&scope=${encodeURIComponent(scope)}`;
+    window.location.href = authUrl;
   }, [handleDevToken]);
 
   const handleGoogleCallback = useCallback(async () => {
@@ -84,11 +83,11 @@ export function useGoogleAuth() {
         router.push('/dashboard');
         return true;
       } else {
-        alert('⚠️ Erreur serveur : ' + (data.detail || 'Impossible de se connecter'));
+        toast.error('Erreur serveur : ' + (data.detail || 'Impossible de se connecter'));
       }
     } catch (e) {
       console.error(e);
-      alert('⚠️ Erreur réseau – veuillez réessayer.');
+      toast.error('Erreur réseau – veuillez réessayer.');
     }
     return false;
   }, [router, setAuthenticated, setUser]);

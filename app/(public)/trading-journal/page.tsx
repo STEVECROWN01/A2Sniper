@@ -6,9 +6,32 @@ import { Calendar, BarChart3, Target, DollarSign, Info, Trash2, ArrowUpRight, Ar
 import { useAuth } from '@/hooks/use-auth';
 import { toast } from 'sonner';
 
+interface TradeEntry {
+  result: string;
+  amount: number;
+  return: number;
+}
+
+interface SessionData {
+  trades: TradeEntry[];
+  payout: number;
+  initialCapital: number;
+  sessionCounter: number;
+}
+
+interface Stats {
+  wins: number;
+  losses: number;
+  profit: number;
+  balance: number;
+  capital: number;
+  totalTrades: number;
+  winRate: number;
+}
+
 export default function TradingJournalPage() {
   useAuth();
-  const [sessionData, setSessionData] = useState<any>(null);
+  const [sessionData, setSessionData] = useState<SessionData | null>(null);
 
   const loadSession = () => {
     const saved = localStorage.getItem('a2sniper_risk_session');
@@ -30,13 +53,13 @@ export default function TradingJournalPage() {
     return () => window.removeEventListener('storage', loadSession);
   }, []);
 
-  const getStats = () => {
+  const getStats = (): Stats => {
     if (!sessionData) return { wins: 0, losses: 0, profit: 0, balance: 0, capital: 0, totalTrades: 0, winRate: 0 };
     let wins = 0;
     let losses = 0;
     let profit = 0;
     
-    sessionData.trades.forEach((t: any) => {
+    sessionData.trades.forEach((t: TradeEntry) => {
       if (t.result === 'WIN' && t.amount > 0) {
         wins++;
         profit += t.amount * (sessionData.payout / 100);
@@ -61,7 +84,7 @@ export default function TradingJournalPage() {
   };
 
   const stats = getStats();
-  const validTrades = sessionData ? sessionData.trades.filter((t: any) => t.result && t.amount > 0) : [];
+  const validTrades = sessionData ? sessionData.trades.filter((t: TradeEntry) => t.result && t.amount > 0) : [];
 
   const handleResetJournal = () => {
     localStorage.removeItem('a2sniper_risk_session');
@@ -179,7 +202,7 @@ export default function TradingJournalPage() {
               </p>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {validTrades.map((t: any, idx: number) => {
+                {validTrades.map((t: TradeEntry, idx: number) => {
                   const isWin = t.result === 'WIN';
                   const profitLoss = isWin ? t.amount * (sessionData.payout / 100) : -t.amount;
                   return (

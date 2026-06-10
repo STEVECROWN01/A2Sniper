@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { motion } from 'framer-motion';
-import { Check, Star, Zap, Shield, Crown, X, CreditCard, Smartphone } from 'lucide-react';
+import { Check, Star, Zap, Shield, Crown, X, CreditCard } from 'lucide-react';
 import { toast } from 'sonner';
 
 const plans = [
@@ -62,7 +62,7 @@ const plans = [
 
 const paymentMethods = [
   { id: 'card', name: 'Carte bancaire', icon: CreditCard, description: 'Visa, Mastercard, Amex' },
-  { id: 'paypal', name: 'PayPal', icon: Smartphone, description: 'Paiement sécurisé' },
+  { id: 'paypal', name: 'PayPal', icon: CreditCard, description: 'Paiement sécurisé' },
   { id: 'crypto', name: 'Crypto', icon: Zap, description: 'Bitcoin, Ethereum' }
 ];
 
@@ -75,8 +75,8 @@ export function SubscriptionPlans() {
 
   const getBillingMultiplier = () => {
     switch (billingCycle) {
-      case 'quarterly': return 3 * 0.9;
-      case 'yearly': return 12 * 0.8;
+      case 'quarterly': return 3 * 0.9; // 10% discount on 3 months
+      case 'yearly': return 12 * 0.8; // 20% discount on 12 months
       default: return 1;
     }
   };
@@ -88,10 +88,17 @@ export function SubscriptionPlans() {
 
   const handlePayment = async () => {
     setIsProcessing(true);
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    // TODO: Integrate with real payment processor (Stripe, PayPal SDK, crypto gateway)
+    // For now, validate the flow and show confirmation
+    if (selectedPlan === null) {
+      toast.error('Aucun plan sélectionné');
+      setIsProcessing(false);
+      return;
+    }
+    await new Promise(resolve => setTimeout(resolve, 1500));
     setIsProcessing(false);
     setShowPaymentModal(false);
-    toast.success(`Abonnement ${plans[selectedPlan!].name} activé avec succès !`);
+    toast.info(`Paiement en attente de l\'intégration du processeur. Plan ${plans[selectedPlan].name} sélectionné.`);
   };
 
   return (

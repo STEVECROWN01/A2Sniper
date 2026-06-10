@@ -23,7 +23,7 @@ export default function PublicLayout({
     setIsTransitioning(true);
     const timer = setTimeout(() => {
       setIsTransitioning(false);
-    }, 3500); // Minimum of 3.5 seconds (3 to 4 seconds) as requested
+    }, 800); // Reduced from 3.5s to 800ms
 
     return () => clearTimeout(timer);
   }, [pathname, shouldShowNav]);

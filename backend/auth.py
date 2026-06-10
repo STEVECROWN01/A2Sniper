@@ -1,15 +1,28 @@
 import jwt
+import os
+import re
 from datetime import datetime, timedelta, timezone
 from passlib.context import CryptContext
 from fastapi import HTTPException
 from fastapi.security import HTTPBearer
 
-SECRET_KEY = "A2SNIPER_SECRET_KEY_FOUNDERS_ONLY"
+SECRET_KEY = os.getenv("JWT_SECRET_KEY", "CHANGE_ME_IN_PRODUCTION_USE_ENV_VAR")
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 # 24 hours
+ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 24 hours
+MIN_PASSWORD_LENGTH = 8
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 security = HTTPBearer()
+
+def validate_password_strength(password: str) -> bool:
+    """Validate password meets minimum strength requirements."""
+    if len(password) < MIN_PASSWORD_LENGTH:
+        return False
+    if not re.search(r'[A-Z]', password):
+        return False
+    if not re.search(r'[0-9]', password):
+        return False
+    return True
 
 def get_password_hash(password):
     return pwd_context.hash(password)

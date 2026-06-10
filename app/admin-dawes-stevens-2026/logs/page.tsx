@@ -4,8 +4,10 @@ import { useState, useEffect, useRef } from 'react';
 import { Terminal, RefreshCw, Download, Search, AlertTriangle, CheckCircle, Info } from 'lucide-react';
 import { toast } from 'sonner';
 import { motion } from 'framer-motion';
+import { useAuth } from '@/hooks/use-auth';
 
 export default function AdminLogsPage() {
+  useAuth(true);
   const [logs, setLogs] = useState<any[]>([]);
   const [filter, setFilter] = useState('');
   const [isLoading, setIsLoading] = useState(true);
@@ -14,7 +16,10 @@ export default function AdminLogsPage() {
   const fetchLogs = async () => {
     try {
       const url = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
-      const res = await fetch(`${url}/api/admin/logs?limit=100`);
+      const token = typeof window !== 'undefined' ? localStorage.getItem('a2sniper_token') : null;
+      const res = await fetch(`${url}/api/admin/logs?limit=100`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
       if (res.ok) {
         const data = await res.json();
         setLogs(data.logs);

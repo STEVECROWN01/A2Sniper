@@ -4,7 +4,8 @@ Spike, Spread, News, Volatilité Extrême, Tendance Contradictoire, Stop Hunt.
 """
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -12,7 +13,7 @@ logger = logging.getLogger(__name__)
 class AntiManipulationFilters:
     def __init__(self):
         self.suspended_until = None
-        self.news_calendar = []  # À remplir via API externe
+        self.news_calendar = []  # Populated via update_news_calendar or fetch_news_calendar
 
     def check_all_filters(self, df, atr_value: float, atr_avg: float,
                           spread: float = 0, adx_d1: float = 0,
@@ -21,13 +22,13 @@ class AntiManipulationFilters:
         blocks = []
         score_penalty = 0
 
-        # 1. Spike Detection (Désactivé pour démo)
-        # if len(df) >= 2:
-        #     last_move = abs(df['close'].iloc[-1] - df['close'].iloc[-2])
-        #     if atr_value > 0 and last_move > 5 * atr_value:
-        #         self.suspended_until = datetime.now(timezone.utc) + timedelta(minutes=1)
-        #         blocks.append(f"SPIKE détecté ({last_move:.5f} > 5x ATR {atr_value:.5f}) — Suspension 1 min")
-        #         logger.warning(f"[FILTER] Spike detected. Suspended until {self.suspended_until}")
+        # 1. Spike Detection
+        if len(df) >= 2:
+            last_move = abs(df['close'].iloc[-1] - df['close'].iloc[-2])
+            if atr_value > 0 and last_move > 5 * atr_value:
+                self.suspended_until = datetime.now(timezone.utc) + timedelta(minutes=1)
+                blocks.append(f"SPIKE détecté ({last_move:.5f} > 5x ATR {atr_value:.5f}) — Suspension 1 min")
+                logger.warning(f"[FILTER] Spike detected. Suspended until {self.suspended_until}")
 
         # Vérifier suspension active
         if self.suspended_until and datetime.now(timezone.utc) < self.suspended_until:
@@ -48,9 +49,9 @@ class AntiManipulationFilters:
                 if delta < 300:  # 5 minutes
                     blocks.append(f"News High Impact: {news.get('title', 'N/A')} dans {int(delta)}s")
 
-        # 4. Volatilité Extrême (Désactivé pour démo)
-        # if atr_avg > 0 and atr_value > 3 * atr_avg:
-        #     blocks.append(f"Volatilité extrême (ATR {atr_value:.5f} > 3x moy {atr_avg:.5f})")
+        # 4. Volatilité Extrême
+        if atr_avg > 0 and atr_value > 3 * atr_avg:
+            blocks.append(f"Volatilité extrême (ATR {atr_value:.5f} > 3x moy {atr_avg:.5f})")
 
         # 5. Tendance Contradictoire D1 (ADX > 40 contraire → -2 pts)
         if adx_d1 > 40:
@@ -67,6 +68,13 @@ class AntiManipulationFilters:
     def update_news_calendar(self, events: list):
         """Met à jour le calendrier économique."""
         self.news_calendar = events
+
+    async def fetch_news_calendar(self) -> list:
+        """Fetch news calendar from an external API. Stub for integration."""
+        # In production, integrate with forex factory API or similar
+        # For now, return the current calendar
+        logger.info("[FILTER] News calendar fetch stub called — integrate with external API in production")
+        return self.news_calendar
 
     def check_session_valid(self) -> dict:
         """Vérifie si on est dans une session de trading valide."""

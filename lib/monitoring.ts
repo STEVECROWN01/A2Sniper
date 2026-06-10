@@ -116,19 +116,21 @@ export class MonitoringSystem {
 
   // Collecte des métriques système
   private collectMetrics(): void {
-    // Simulation de collecte de métriques système
+    // Collect stub: in production, these would come from actual system monitoring APIs
+    const lastMetrics = this.metrics.length > 0 ? this.metrics[this.metrics.length - 1] : null;
+    
     const metrics: SystemMetrics = {
       timestamp: new Date(),
-      cpu_usage: Math.random() * 100,
-      memory_usage: 60 + Math.random() * 30,
-      disk_usage: 45 + Math.random() * 20,
+      cpu_usage: lastMetrics ? Math.max(0, Math.min(100, lastMetrics.cpu_usage + (Math.random() - 0.5) * 10)) : 45,
+      memory_usage: lastMetrics ? Math.max(0, Math.min(100, lastMetrics.memory_usage + (Math.random() - 0.5) * 5)) : 70,
+      disk_usage: lastMetrics ? lastMetrics.disk_usage : 55, // Disk changes slowly
       network_io: {
-        bytes_in: Math.floor(Math.random() * 1000000),
-        bytes_out: Math.floor(Math.random() * 800000)
+        bytes_in: lastMetrics ? Math.max(0, lastMetrics.network_io.bytes_in + Math.floor((Math.random() - 0.3) * 50000)) : 500000,
+        bytes_out: lastMetrics ? Math.max(0, lastMetrics.network_io.bytes_out + Math.floor((Math.random() - 0.3) * 40000)) : 400000
       },
-      active_connections: Math.floor(50 + Math.random() * 200),
-      response_time: 100 + Math.random() * 500,
-      error_rate: Math.random() * 10
+      active_connections: lastMetrics ? Math.max(1, lastMetrics.active_connections + Math.floor((Math.random() - 0.5) * 20)) : 100,
+      response_time: lastMetrics ? Math.max(10, lastMetrics.response_time + (Math.random() - 0.5) * 50) : 200,
+      error_rate: this.calculateErrorRateFromLogs()
     };
 
     this.metrics.push(metrics);
@@ -155,37 +157,47 @@ export class MonitoringSystem {
         }
       }
 
-      const metricValue = metrics[rule.metric] as number;
+      const metricValue = metrics[rule.metric] as number | { bytes_in: number; bytes_out: number };
       let triggered = false;
+
+      const numericValue = typeof metricValue === 'number' ? metricValue : 0;
 
       switch (rule.operator) {
         case '>':
-          triggered = metricValue > rule.threshold;
+          triggered = numericValue > rule.threshold;
           break;
         case '<':
-          triggered = metricValue < rule.threshold;
+          triggered = numericValue < rule.threshold;
           break;
         case '>=':
-          triggered = metricValue >= rule.threshold;
+          triggered = numericValue >= rule.threshold;
           break;
         case '<=':
-          triggered = metricValue <= rule.threshold;
+          triggered = numericValue <= rule.threshold;
           break;
         case '=':
-          triggered = metricValue === rule.threshold;
+          triggered = numericValue === rule.threshold;
           break;
       }
 
       if (triggered) {
-        this.triggerAlert(rule, metricValue);
+        this.triggerAlert(rule, numericValue);
       }
     }
+  }
+
+  // Calculate error rate from performance logs instead of random
+  private calculateErrorRateFromLogs(): number {
+    if (this.performanceLogs.length === 0) return 0;
+    const recentLogs = this.performanceLogs.slice(-100);
+    const errorCount = recentLogs.filter(log => log.status_code >= 400).length;
+    return (errorCount / recentLogs.length) * 100;
   }
 
   // Déclenchement d'une alerte
   private triggerAlert(rule: AlertRule, value: number): void {
     const alert: Alert = {
-      id: `alert_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      id: `alert_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
       rule_id: rule.id,
       message: `${rule.name}: ${rule.metric} is ${value} (threshold: ${rule.threshold})`,
       severity: rule.severity,
@@ -222,7 +234,7 @@ export class MonitoringSystem {
   // Enregistrement des performances
   logPerformance(log: Omit<PerformanceLog, 'id' | 'timestamp'>): void {
     const performanceLog: PerformanceLog = {
-      id: `perf_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      id: `perf_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
       timestamp: new Date(),
       ...log
     };
@@ -411,7 +423,7 @@ export class MonitoringSystem {
   // Ajout d'une nouvelle règle d'alerte
   addAlertRule(rule: Omit<AlertRule, 'id'>): string {
     const newRule: AlertRule = {
-      id: `rule_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      id: `rule_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
       ...rule
     };
     
@@ -454,4 +466,5 @@ export class MonitoringSystem {
 }
 
 // Instance globale du système de monitoring
-export const monitoringSystem = new MonitoringSystem();
+// SSR guard: only instantiate in browser environment
+export const monitoringSystem = typeof window !== 'undefined' ? new MonitoringSystem() : (null as unknown as MonitoringSystem);

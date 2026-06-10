@@ -165,9 +165,11 @@ export class AITradingEngine {
     return `[${time}] – Actif: [${signal.pair}] – Direction: [${direction}] – Expiration: [${expiration} min] – Winrate: [${winrate}%]`;
   }
   
+  private signalIntervalId: ReturnType<typeof setInterval> | null = null;
+
   // Calcul de signaux toutes les minutes selon spécifications
-  async startSignalGeneration(callback: (signal: string) => void): Promise<void> {
-    setInterval(async () => {
+  startSignalGeneration(callback: (signal: string) => void): void {
+    this.signalIntervalId = setInterval(async () => {
       try {
         const marketData = await this.collectMarketData();
         const signal = await this.generateSignal('EUR/USD OTC', marketData);
@@ -180,6 +182,14 @@ export class AITradingEngine {
         console.error('Erreur génération signal:', error);
       }
     }, 60000); // Toutes les minutes
+  }
+
+  // Arrêt de la génération de signaux
+  stopSignalGeneration(): void {
+    if (this.signalIntervalId !== null) {
+      clearInterval(this.signalIntervalId);
+      this.signalIntervalId = null;
+    }
   }
 
   // Simulation Random Forest
@@ -224,9 +234,13 @@ export class AITradingEngine {
     else score -= 0.15;
     
     // Analyse Bollinger Bands
-    const currentPrice = features.price_change_1m + 1; // Prix relatif
-    if (currentPrice < 0.95) score += 0.1; // Proche de la bande inférieure
-    else if (currentPrice > 1.05) score -= 0.1; // Proche de la bande supérieure
+    const bbUpper = technicals.bollinger.upper;
+    const bbLower = technicals.bollinger.lower;
+    const bbRange = bbUpper - bbLower;
+    const currentPrice = technicals.bollinger.middle;
+    const bbPosition = bbRange > 0 ? (currentPrice - bbLower) / bbRange : 0.5;
+    if (bbPosition < 0.2) score += 0.1; // Proche de la bande inférieure
+    else if (bbPosition > 0.8) score -= 0.1; // Proche de la bande supérieure
     
     // Analyse ADX
     if (technicals.adx > 25) {
@@ -303,13 +317,29 @@ export class AITradingEngine {
       volatility,
       trend_strength: trendStrength,
       support_resistance: supportResistance,
-      market_sentiment: Math.random() * 0.4 + 0.3, // Simulation sentiment
+      market_sentiment: this.calculateSentiment((latest.close - previous1m.close) / previous1m.close, trendStrength),
       time_features: {
         hour: now.getHours(),
         day_of_week: now.getDay(),
         is_market_open: this.isMarketOpen(now)
       }
     };
+  }
+
+  // Calcul du sentiment de marché (déterministe, basé sur les indicateurs)
+  private calculateSentiment(priceChange1m: number, trendStrength: number): number {
+    // Base sentiment from price momentum
+    let sentiment = 0.5;
+    if (priceChange1m > 0.001) sentiment += 0.15;
+    else if (priceChange1m < -0.001) sentiment -= 0.15;
+    else sentiment += priceChange1m * 50; // Small changes scaled
+
+    // Adjust for trend strength
+    if (trendStrength > 0.01) sentiment += 0.1;
+    else if (trendStrength < -0.01) sentiment -= 0.1;
+
+    // Clamp to [0, 1]
+    return Math.max(0, Math.min(1, sentiment));
   }
 
   // Vérification des heures de marché
@@ -437,7 +467,7 @@ export class AITradingEngine {
       
       // Génération du signal
       const signal: AISignal = {
-        id: `signal_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        id: `signal_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
         pair,
         direction,
         winrate: Math.round(signalScore.final_winrate),
@@ -472,8 +502,11 @@ export class AITradingEngine {
     if (technicals.macd.histogram > 0) score += 0.15;
     else score -= 0.15;
     
-    // Bollinger Bands (simulation)
-    const bbPosition = 0.5; // Position dans les bandes (simplifié)
+    // Bollinger Bands
+    const bbUpper = technicals.bollinger.upper;
+    const bbLower = technicals.bollinger.lower;
+    const bbRange = bbUpper - bbLower;
+    const bbPosition = bbRange > 0 ? (technicals.bollinger.middle - bbLower) / bbRange : 0.5;
     if (bbPosition < 0.2) score += 0.1;
     else if (bbPosition > 0.8) score -= 0.1;
     

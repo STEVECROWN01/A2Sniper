@@ -8,45 +8,7 @@ import { useAppStore } from '@/lib/store';
 import { useAuth } from '@/hooks/use-auth';
 import { tradingPairs } from '@/lib/mock-data';
 
-export function validateSSID(ssid: string): { status: 'valid' | 'partial' | 'invalid' | 'none', message: string } {
-  if (!ssid) return { status: 'none', message: '' };
-  const trimmed = ssid.trim();
-  if (!trimmed.startsWith('42["auth"')) {
-    return {
-      status: 'invalid',
-      message: 'Le message doit commencer par 42["auth",...] (trame d\'authentification Pocket Option).'
-    };
-  }
-  try {
-    const jsonStart = trimmed.indexOf('{');
-    const jsonEnd = trimmed.lastIndexOf('}') + 1;
-    if (jsonStart === -1 || jsonEnd <= jsonStart) {
-      return { status: 'invalid', message: 'Format JSON de la trame invalide.' };
-    }
-    const payload = JSON.parse(trimmed.slice(jsonStart, jsonEnd));
-    if (!payload.session) {
-      return {
-        status: 'invalid',
-        message: 'Format non supporté. La clé "session" est manquante dans la trame.'
-      };
-    }
-    // Check for recommended fields: uid and (isDemo or currentUrl)
-    const hasUid = 'uid' in payload;
-    const hasDemo = 'isDemo' in payload || ('currentUrl' in payload && payload.currentUrl.includes('demo'));
-    if (!hasUid || !hasDemo) {
-      return {
-        status: 'partial',
-        message: 'Le format de trame ne correspond pas entièrement au format recommandé (les clés "uid" et "isDemo" sont manquantes).'
-      };
-    }
-    return {
-      status: 'valid',
-      message: 'Format WS valide — Connexion optimale'
-    };
-  } catch (e) {
-    return { status: 'invalid', message: 'Erreur de lecture de la trame d\'authentification.' };
-  }
-}
+import { validateSSID } from '@/lib/validate-ssid';
 
 export default function SignalsPage() {
   useAuth();
@@ -77,7 +39,7 @@ export default function SignalsPage() {
     let result = signals.filter(signal => {
       const matchesPair = selectedPair === 'ALL' || signal.pair === selectedPair;
       const matchesStatus = selectedStatus === 'ALL' || 
-                           (selectedStatus === 'EXPIRED' ? (signal.status === 'WON' || signal.status === 'LOST') : signal.status === selectedStatus);
+                           (selectedStatus === 'EXPIRED' ? (new Date(signal.timestamp).getTime() < Date.now() && signal.status === 'ACTIVE') : signal.status === selectedStatus);
       const matchesDirection = selectedDirection === 'ALL' || signal.direction === selectedDirection;
       const matchesWinrate = signal.winrate >= minWinrate;
       
@@ -88,7 +50,7 @@ export default function SignalsPage() {
         else if (selectedPayout === '80') matchesPayout = payoutVal > 80;
         else if (selectedPayout === '85') matchesPayout = payoutVal > 85;
         else if (selectedPayout === '90') matchesPayout = payoutVal > 90;
-        else if (selectedPayout === '92') matchesPayout = payoutVal === 92;
+        else if (selectedPayout === '92') matchesPayout = payoutVal >= 92;
       }
       
       return matchesPair && matchesStatus && matchesDirection && matchesWinrate && matchesPayout;
@@ -300,7 +262,7 @@ export default function SignalsPage() {
                       value={ssid}
                       onChange={(e) => setSsid(e.target.value)}
                       placeholder='42["auth",{"session":"a:4:{...}", "isDemo":0, "uid":..., ...}]'
-                      className={`w-full h-32 px-4 py-3 bg-white/[0.02] border rounded-xl focus:outline-none text-[10px] font-mono mb-2 resize-none text-white transition-colors overflow-hidden ${
+                      className={`w-full h-32 px-4 py-3 bg-white/[0.02] border rounded-xl focus:outline-none text-[10px] font-mono mb-2 resize-none text-white transition-colors overflow-auto ${
                         ssid && !ssid.trim().startsWith('42["auth"')
                           ? 'border-red-500/50 focus:border-red-500'
                           : 'border-white/10 focus:border-[#D4AF37]'
@@ -471,7 +433,7 @@ export default function SignalsPage() {
                     <option value="80">&gt; 80% Payout</option>
                     <option value="85">&gt; 85% Payout</option>
                     <option value="90">&gt; 90% Payout</option>
-                    <option value="92">= 92% Payout</option>
+                    <option value="92">≥ 92% Payout</option>
                   </select>
                 </div>
               </motion.div>

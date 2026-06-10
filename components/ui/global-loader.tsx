@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { usePathname, useSearchParams } from 'next/navigation';
+import { usePathname } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 
 export function GlobalLoader() {
@@ -17,9 +17,9 @@ export function GlobalLoader() {
 
     setIsLoading(true);
     
-    // Optimize loading time to 5s
-    const minLoadTime = 4800;
-    const maxLoadTime = 5000;
+    // Reduce loader time to ~2s
+    const minLoadTime = 1800;
+    const maxLoadTime = 2000;
     
     // Simulate complex loading and then hide
     const timer = setTimeout(() => {

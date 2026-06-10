@@ -14,20 +14,31 @@ export function BacktestResults({ result, onClose }: BacktestResultsProps) {
   const [activeTab, setActiveTab] = useState('overview');
 
   const handleDownload = (format: 'pdf' | 'csv' | 'json') => {
-    const data = format === 'json' ? JSON.stringify(result, null, 2) : 
-                 format === 'csv' ? convertToCSV(result) : 
-                 'PDF export simulation';
+    let data: string;
+    let mimeType: string;
+    let fileExt: string;
     
-    const blob = new Blob([data], { 
-      type: format === 'json' ? 'application/json' : 
-            format === 'csv' ? 'text/csv' : 
-            'application/pdf' 
-    });
+    if (format === 'json') {
+      data = JSON.stringify(result, null, 2);
+      mimeType = 'application/json';
+      fileExt = 'json';
+    } else if (format === 'csv') {
+      data = convertToCSV(result);
+      mimeType = 'text/csv';
+      fileExt = 'csv';
+    } else {
+      // PDF export: generate CSV as fallback since proper PDF generation requires a library
+      data = convertToCSV(result);
+      mimeType = 'text/csv';
+      fileExt = 'csv';
+    }
+    
+    const blob = new Blob([data], { type: mimeType });
     
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `backtest-results.${format}`;
+    a.download = `backtest-results.${fileExt}`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -328,7 +339,7 @@ export function BacktestResults({ result, onClose }: BacktestResultsProps) {
                   </div>
                   <div className="flex justify-between border-b border-white/[0.02] pb-2">
                     <span>Ratio Gain/Perte</span>
-                    <span className="text-white font-black">{(result.avgWin / result.avgLoss).toFixed(2)}</span>
+                    <span className="text-white font-black">{result.avgLoss > 0 ? (result.avgWin / result.avgLoss).toFixed(2) : 'N/A'}</span>
                   </div>
                   <div className="flex justify-between border-b border-white/[0.02] pb-2">
                     <span>Facteur de Profit</span>

@@ -76,7 +76,7 @@ export class RiskManager {
 
   // Évaluation du risque d'un trade
   evaluateTradeRisk(
-    signal: any,
+    signal: { winrate: number; ml_features?: { volatility?: number; time_features?: { is_market_open?: boolean } }; technical_indicators?: { adx?: number }; entry_price: number; stop_loss: number; target_price: number },
     accountBalance: number,
     currentDrawdown: number,
     activeTrades: number
@@ -149,7 +149,7 @@ export class RiskManager {
 
   // Vérification des limites de risque quotidiennes
   checkDailyRiskLimits(
-    todayTrades: any[],
+    todayTrades: { status: string; profit_loss?: number }[],
     accountBalance: number
   ): { canTrade: boolean; reason?: string; riskUsed: number } {
     const todayLosses = todayTrades
@@ -170,7 +170,7 @@ export class RiskManager {
   }
 
   // Calcul du drawdown
-  calculateDrawdown(trades: any[]): { current: number; maximum: number } {
+  calculateDrawdown(trades: { profit_loss: number }[]): { current: number; maximum: number } {
     let peak = 0;
     let currentDrawdown = 0;
     let maxDrawdown = 0;
@@ -182,7 +182,7 @@ export class RiskManager {
       if (runningBalance > peak) {
         peak = runningBalance;
         currentDrawdown = 0;
-      } else {
+      } else if (peak > 0) {
         currentDrawdown = (peak - runningBalance) / peak;
         maxDrawdown = Math.max(maxDrawdown, currentDrawdown);
       }
@@ -223,6 +223,9 @@ export class RiskManager {
       adjusted.minWinrateLevel = Math.min(95, adjusted.minWinrateLevel + 5);
       adjusted.maxRiskPerTrade = Math.max(0.01, adjusted.maxRiskPerTrade * 0.7);
     }
+    
+    // Actually update the instance parameters
+    this.parameters = adjusted;
     
     return adjusted;
   }

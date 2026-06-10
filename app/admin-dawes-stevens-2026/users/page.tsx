@@ -4,8 +4,10 @@ import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { Users, UserCheck, Shield, Award, Crown, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
+import { useAuth } from '@/hooks/use-auth';
 
 export default function AdminUsersPage() {
+  useAuth(true);
   const [users, setUsers] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -13,7 +15,10 @@ export default function AdminUsersPage() {
     setIsLoading(true);
     try {
       const url = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
-      const res = await fetch(`${url}/api/admin/users`);
+      const token = typeof window !== 'undefined' ? localStorage.getItem('a2sniper_token') : null;
+      const res = await fetch(`${url}/api/admin/users`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
       if (res.ok) {
         const data = await res.json();
         setUsers(data.users);
@@ -32,9 +37,10 @@ export default function AdminUsersPage() {
   const updatePlan = async (userId: string, newPlan: string) => {
     try {
       const url = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
+      const token = typeof window !== 'undefined' ? localStorage.getItem('a2sniper_token') : null;
       const res = await fetch(`${url}/api/admin/users/${userId}/plan`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
         body: JSON.stringify({ plan: newPlan })
       });
       if (res.ok) {
@@ -80,7 +86,7 @@ export default function AdminUsersPage() {
         </div>
         <div className="bg-gray-900/40 border border-gray-800 p-6 rounded-2xl">
           <p className="text-xs text-gray-500 uppercase font-bold mb-1">Retention</p>
-          <p className="text-3xl font-bold text-green-500">98.2%</p>
+          <p className="text-3xl font-bold text-green-500">N/A</p>
         </div>
       </div>
       

@@ -15,6 +15,22 @@ interface PerformanceChartProps {
 }
 
 export function PerformanceChart({ data, title }: PerformanceChartProps) {
+  if (!data || data.length === 0) {
+    return (
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5 }}
+        className="bg-white rounded-xl shadow-lg border border-gray-100 p-6"
+      >
+        <h3 className="text-lg font-semibold text-gray-900 mb-6">{title}</h3>
+        <div className="h-80 flex items-center justify-center text-gray-400">
+          <p>Aucune donnée disponible</p>
+        </div>
+      </motion.div>
+    );
+  }
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 20 }}
