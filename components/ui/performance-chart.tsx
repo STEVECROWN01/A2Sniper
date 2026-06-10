@@ -29,8 +29,8 @@ export function PerformanceChart({ data, title }: PerformanceChartProps) {
           <AreaChart data={data}>
             <defs>
               <linearGradient id="profitGradient" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="#3B82F6" stopOpacity={0.3}/>
-                <stop offset="95%" stopColor="#3B82F6" stopOpacity={0}/>
+                <stop offset="5%" stopColor="#D4AF37" stopOpacity={0.3}/>
+                <stop offset="95%" stopColor="#D4AF37" stopOpacity={0}/>
               </linearGradient>
             </defs>
             <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
@@ -64,7 +64,7 @@ export function PerformanceChart({ data, title }: PerformanceChartProps) {
             <Area
               type="monotone"
               dataKey="profit"
-              stroke="#3B82F6"
+              stroke="#D4AF37"
               strokeWidth={2}
               fill="url(#profitGradient)"
             />
@@ -82,7 +82,7 @@ export function PerformanceChart({ data, title }: PerformanceChartProps) {
       
       <div className="mt-4 grid grid-cols-3 gap-4 text-center">
         <div>
-          <div className="text-2xl font-bold text-blue-600">
+          <div className="text-2xl font-bold text-[#D4AF37]">
             ${data[data.length - 1]?.profit || 0}
           </div>
           <div className="text-sm text-gray-600">Profit actuel</div>

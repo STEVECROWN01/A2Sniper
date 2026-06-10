@@ -15,34 +15,34 @@ interface MetricCardProps {
 
 const colorClasses = {
   blue: {
-    bg: 'bg-blue-100',
-    text: 'text-blue-600',
-    changePositive: 'text-blue-600',
-    changeNegative: 'text-red-600'
+    bg: 'bg-[#D4AF37]/10 border border-[#D4AF37]/20',
+    text: 'text-[#D4AF37]',
+    changePositive: 'text-green-500',
+    changeNegative: 'text-red-500'
   },
   green: {
-    bg: 'bg-green-100',
-    text: 'text-green-600',
-    changePositive: 'text-green-600',
-    changeNegative: 'text-red-600'
+    bg: 'bg-green-500/10 border border-green-500/20',
+    text: 'text-green-500',
+    changePositive: 'text-green-500',
+    changeNegative: 'text-red-500'
   },
   yellow: {
-    bg: 'bg-yellow-100',
-    text: 'text-yellow-600',
-    changePositive: 'text-green-600',
-    changeNegative: 'text-red-600'
+    bg: 'bg-[#D4AF37]/10 border border-[#D4AF37]/20',
+    text: 'text-[#D4AF37]',
+    changePositive: 'text-green-500',
+    changeNegative: 'text-red-500'
   },
   red: {
-    bg: 'bg-red-100',
-    text: 'text-red-600',
-    changePositive: 'text-green-600',
-    changeNegative: 'text-red-600'
+    bg: 'bg-red-500/10 border border-red-500/20',
+    text: 'text-red-500',
+    changePositive: 'text-green-500',
+    changeNegative: 'text-red-500'
   },
   purple: {
-    bg: 'bg-purple-100',
-    text: 'text-purple-600',
-    changePositive: 'text-green-600',
-    changeNegative: 'text-red-600'
+    bg: 'bg-purple-500/10 border border-purple-500/20',
+    text: 'text-purple-400',
+    changePositive: 'text-green-500',
+    changeNegative: 'text-red-500'
   }
 };
 
@@ -55,30 +55,30 @@ export function MetricCard({ title, value, change, icon, color }: MetricCardProp
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.5 }}
       whileHover={{ scale: 1.02 }}
-      className="bg-white rounded-xl shadow-lg border border-gray-100 p-6 hover:shadow-xl transition-all cursor-pointer"
+      className="bg-[#0a0a0c]/80 border border-white/5 p-6 rounded-2xl backdrop-blur-md hover:border-[#D4AF37]/30 transition-all cursor-pointer"
     >
       <div className="flex items-center justify-between">
         <div className="flex-1">
-          <p className="text-sm text-gray-600 mb-1">{title}</p>
-          <p className="text-2xl font-bold text-gray-900">{value}</p>
+          <p className="text-[10px] text-gray-500 font-bold uppercase tracking-wider mb-1">{title}</p>
+          <p className="text-2xl font-black text-white tracking-tight">{value}</p>
           
           {change && (
-            <div className={`flex items-center mt-2 ${
+            <div className={`flex items-center mt-2.5 font-bold text-xs ${
               change.type === 'increase' ? colors.changePositive : colors.changeNegative
             }`}>
               {change.type === 'increase' ? (
-                <TrendingUp className="w-4 h-4 mr-1" />
+                <TrendingUp className="w-3.5 h-3.5 mr-1" />
               ) : (
-                <TrendingDown className="w-4 h-4 mr-1" />
+                <TrendingDown className="w-3.5 h-3.5 mr-1" />
               )}
-              <span className="text-sm font-medium">
+              <span>
                 {change.type === 'increase' ? '+' : '-'}{Math.abs(change.value)}%
               </span>
             </div>
           )}
         </div>
         
-        <div className={`w-12 h-12 ${colors.bg} rounded-lg flex items-center justify-center`}>
+        <div className={`w-12 h-12 ${colors.bg} rounded-xl flex items-center justify-center`}>
           <div className={colors.text}>
             {icon}
           </div>

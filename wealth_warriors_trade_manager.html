@@ -1,0 +1,595 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wealth Warriors Trade Manager</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: Arial, sans-serif;
+            background: #2c2c2c;
+            color: white;
+            overflow-x: auto;
+        }
+
+        .container {
+            min-width: 1200px;
+            padding: 20px;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #1a1a1a, #333);
+            text-align: center;
+            padding: 15px;
+            margin-bottom: 20px;
+            border-radius: 5px;
+        }
+
+        .header h1 {
+            font-size: 24px;
+            font-weight: bold;
+            letter-spacing: 2px;
+        }
+
+        .main-content {
+            display: grid;
+            grid-template-columns: 1fr 350px;
+            gap: 20px;
+        }
+
+        .trades-section {
+            background: #3a3a3a;
+            border-radius: 5px;
+            padding: 20px;
+        }
+
+        .trades-header {
+            display: grid;
+            grid-template-columns: 50px 80px 120px 80px 120px;
+            gap: 10px;
+            background: #4a4a4a;
+            padding: 10px;
+            margin-bottom: 10px;
+            border-radius: 3px;
+            font-weight: bold;
+            font-size: 12px;
+        }
+
+        .trade-row {
+            display: grid;
+            grid-template-columns: 50px 80px 120px 80px 120px;
+            gap: 10px;
+            padding: 8px 10px;
+            border-bottom: 1px solid #555;
+            font-size: 12px;
+        }
+
+        .trade-row:hover {
+            background: #4a4a4a;
+        }
+
+        .trade-input {
+            background: #2a2a2a;
+            border: 1px solid #555;
+            color: white;
+            padding: 5px;
+            border-radius: 3px;
+            font-size: 12px;
+        }
+
+        .trade-input:focus {
+            outline: none;
+            border-color: #007acc;
+        }
+
+        .clear-btn {
+            background: #666;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            margin-top: 10px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+
+        .clear-btn:hover {
+            background: #777;
+        }
+
+        .sidebar {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .calculations-panel {
+            background: #3a3a3a;
+            border-radius: 5px;
+            padding: 20px;
+        }
+
+        .panel-header {
+            text-align: center;
+            font-weight: bold;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #555;
+        }
+
+        .calc-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 0;
+            border-bottom: 1px solid #444;
+            font-size: 12px;
+        }
+
+        .calc-value {
+            background: #2a2a2a;
+            padding: 5px 10px;
+            border-radius: 3px;
+            min-width: 80px;
+            text-align: right;
+            border: 1px solid #555;
+        }
+
+        .calc-input {
+            background: #2a2a2a;
+            border: 1px solid #555;
+            color: white;
+            padding: 5px 10px;
+            border-radius: 3px;
+            width: 80px;
+            text-align: right;
+            font-size: 12px;
+        }
+
+        .win-profit {
+            background: #4a9a4a !important;
+        }
+
+        .new-session-btn {
+            background: linear-gradient(135deg, #d4ac0d, #f1c40f);
+            color: #000;
+            border: none;
+            padding: 15px 20px;
+            border-radius: 5px;
+            font-weight: bold;
+            cursor: pointer;
+            margin-bottom: 20px;
+        }
+
+        .new-session-btn:hover {
+            background: linear-gradient(135deg, #f1c40f, #d4ac0d);
+        }
+
+        .session-controls {
+            background: #3a3a3a;
+            padding: 15px;
+            border-radius: 5px;
+            text-align: center;
+        }
+
+        .session-counter {
+            font-size: 48px;
+            font-weight: bold;
+            margin: 20px 0;
+        }
+
+        .counter-controls {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        .counter-btn {
+            background: #666;
+            color: white;
+            border: none;
+            width: 40px;
+            height: 40px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 18px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .counter-btn:hover {
+            background: #777;
+        }
+
+        .reset-btn {
+            background: #666;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+
+        .reset-btn:hover {
+            background: #777;
+        }
+
+        .daily-goals {
+            background: #3a3a3a;
+            padding: 15px;
+            border-radius: 5px;
+        }
+
+        .goal-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 5px 0;
+            font-size: 12px;
+        }
+
+        .goal-input {
+            background: #2a2a2a;
+            border: 1px solid #555;
+            color: white;
+            padding: 5px;
+            border-radius: 3px;
+            width: 60px;
+            text-align: right;
+            font-size: 12px;
+        }
+
+        .performance-panel {
+            background: #3a3a3a;
+            padding: 15px;
+            border-radius: 5px;
+        }
+
+        .performance-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 5px 0;
+            font-size: 12px;
+        }
+
+        .about-panel {
+            background: #3a3a3a;
+            padding: 15px;
+            border-radius: 5px;
+            text-align: center;
+        }
+
+        .logo {
+            width: 60px;
+            height: 60px;
+            background: #555;
+            border-radius: 50%;
+            margin: 0 auto 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+        }
+
+        .version {
+            font-size: 11px;
+            color: #aaa;
+        }
+
+        .dropdown {
+            background: #2a2a2a;
+            border: 1px solid #555;
+            color: white;
+            padding: 5px;
+            border-radius: 3px;
+            font-size: 12px;
+        }
+
+        .min-text {
+            font-size: 10px;
+            color: #aaa;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>WEALTH WARRIORS TRADE MANAGER</h1>
+        </div>
+
+        <div class="main-content">
+            <div class="trades-section">
+                <div class="trades-header">
+                    <div>NO.</div>
+                    <div>RESULT</div>
+                    <div>TRADE AMOUNT</div>
+                    <div>RETURN</div>
+                    <div>CURRENT BALANCE</div>
+                </div>
+                
+                <div id="trades-container">
+                    <!-- Trades will be populated here -->
+                </div>
+
+                <button class="clear-btn" onclick="clearTrades()">CLEAR</button>
+            </div>
+
+            <div class="sidebar">
+                <button class="new-session-btn">+ NEW SESSION</button>
+
+                <div class="calculations-panel">
+                    <div class="panel-header">CALCULATIONS</div>
+                    
+                    <div class="calc-row">
+                        <span>Initial Capital</span>
+                        <input type="number" class="calc-input" id="initial-capital" value="3750.74" onchange="updateCalculations()">
+                    </div>
+                    
+                    <div class="calc-row">
+                        <span>Total Trades</span>
+                        <div class="calc-value" id="total-trades">10</div>
+                    </div>
+                    
+                    <div class="calc-row">
+                        <span>Win Trades</span>
+                        <div class="calc-value" id="win-trades">1</div>
+                    </div>
+                    
+                    <div class="calc-row">
+                        <span>Payout %</span>
+                        <input type="number" class="calc-input" id="payout-percent" value="92" onchange="updateCalculations()">
+                    </div>
+                    
+                    <div class="calc-row">
+                        <span>Currency</span>
+                        <select class="dropdown">
+                            <option>USD ($)</option>
+                        </select>
+                    </div>
+                    
+                    <div class="calc-row">
+                        <span>Capital Final</span>
+                        <div class="calc-value" id="capital-final">$3,753.13</div>
+                    </div>
+                    
+                    <div class="calc-row">
+                        <span>Account Gain</span>
+                        <div class="calc-value" id="account-gain">0.06%</div>
+                    </div>
+                    
+                    <div class="calc-row">
+                        <span>Win Profit</span>
+                        <div class="calc-value win-profit" id="win-profit">$2.39</div>
+                    </div>
+                    
+                    <div class="calc-row">
+                        <span>Stop Loss</span>
+                        <div class="calc-value" id="stop-loss">$3,000.59</div>
+                    </div>
+                    
+                    <div class="calc-row">
+                        <span>Max Loss Limit</span>
+                        <input type="number" class="calc-input" id="max-loss-limit" value="10" onchange="updateCalculations()">
+                    </div>
+                </div>
+
+                <div class="session-controls">
+                    <div style="font-size: 12px; margin-bottom: 10px;">LOG SESSION</div>
+                    <div style="font-size: 12px; margin-bottom: 10px;">SESSION COUNTER</div>
+                    
+                    <div class="counter-controls">
+                        <button class="counter-btn" onclick="changeCounter(-1)">▲</button>
+                        <div class="session-counter" id="session-counter">0</div>
+                        <button class="counter-btn" onclick="changeCounter(1)">▼</button>
+                    </div>
+                    
+                    <button class="reset-btn" onclick="resetCounter()">RESET</button>
+                </div>
+
+                <div class="daily-goals">
+                    <div class="panel-header">DAILY GOALS <span class="min-text">MIN</span></div>
+                    
+                    <div class="goal-row">
+                        <span>Profit Target</span>
+                        <input type="number" class="goal-input" value="2">
+                    </div>
+                    
+                    <div class="goal-row">
+                        <span>Daily Goal Format</span>
+                        <input type="text" class="goal-input" value="%" style="width: 40px;">
+                    </div>
+                    
+                    <div class="goal-row">
+                        <span>Sessions Required</span>
+                        <input type="number" class="goal-input" value="1">
+                    </div>
+                </div>
+
+                <div class="performance-panel">
+                    <div class="panel-header">SESSION PERFORMANCE</div>
+                    
+                    <div class="performance-row">
+                        <span>Events Won</span>
+                        <span id="events-won">0</span>
+                    </div>
+                    
+                    <div class="performance-row">
+                        <span>Events Lost</span>
+                        <span id="events-lost">0</span>
+                    </div>
+                </div>
+
+                <div class="about-panel">
+                    <div class="panel-header">ABOUT</div>
+                    <div class="logo">⚔️</div>
+                    <div style="font-size: 12px; margin-bottom: 5px;">Wealth Warriors Trade Manager</div>
+                    <div class="version">Version 3.0</div>
+                    <div class="version">www.wwa.co</div>
+                    <div class="version">© Wealth Warriors Alliance</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let trades = [];
+        let sessionCounter = 0;
+        let initialCapital = 3750.74;
+        let payoutPercent = 92;
+
+        // Initialize trades table
+        function initializeTrades() {
+            const container = document.getElementById('trades-container');
+            for (let i = 1; i <= 20; i++) {
+                const row = document.createElement('div');
+                row.className = 'trade-row';
+                row.innerHTML = `
+                    <div>${i}</div>
+                    <div>
+                        <select class="trade-input" onchange="updateTrade(${i-1})" data-field="result">
+                            <option value="">-</option>
+                            <option value="win">Win</option>
+                            <option value="loss">Loss</option>
+                        </select>
+                    </div>
+                    <div>
+                        <input type="number" class="trade-input" placeholder="$0.00" onchange="updateTrade(${i-1})" data-field="amount" step="0.01">
+                    </div>
+                    <div>
+                        <input type="number" class="trade-input" placeholder="$0.00" onchange="updateTrade(${i-1})" data-field="return" step="0.01">
+                    </div>
+                    <div>
+                        <div class="calc-value" id="balance-${i-1}">-</div>
+                    </div>
+                `;
+                container.appendChild(row);
+            }
+            
+            // Initialize trades array
+            for (let i = 0; i < 20; i++) {
+                trades[i] = { result: '', amount: 0, return: 0, balance: 0 };
+            }
+        }
+
+        function updateTrade(index) {
+            const row = document.querySelectorAll('.trade-row')[index];
+            const inputs = row.querySelectorAll('input, select');
+            
+            inputs.forEach(input => {
+                const field = input.getAttribute('data-field');
+                if (field === 'result') {
+                    trades[index].result = input.value;
+                } else if (field === 'amount') {
+                    trades[index].amount = parseFloat(input.value) || 0;
+                } else if (field === 'return') {
+                    trades[index].return = parseFloat(input.value) || 0;
+                }
+            });
+
+            updateBalances();
+            updateCalculations();
+        }
+
+        function updateBalances() {
+            let currentBalance = initialCapital;
+            
+            for (let i = 0; i < trades.length; i++) {
+                if (trades[i].result && trades[i].amount > 0) {
+                    if (trades[i].result === 'win') {
+                        currentBalance += trades[i].return;
+                    } else if (trades[i].result === 'loss') {
+                        currentBalance -= trades[i].amount;
+                    }
+                }
+                
+                trades[i].balance = currentBalance;
+                const balanceElement = document.getElementById(`balance-${i}`);
+                if (trades[i].result && trades[i].amount > 0) {
+                    balanceElement.textContent = `$${currentBalance.toFixed(2)}`;
+                } else {
+                    balanceElement.textContent = '-';
+                }
+            }
+        }
+
+        function updateCalculations() {
+            initialCapital = parseFloat(document.getElementById('initial-capital').value) || 0;
+            payoutPercent = parseFloat(document.getElementById('payout-percent').value) || 0;
+            
+            let totalTrades = 0;
+            let winTrades = 0;
+            let totalProfit = 0;
+            let totalLoss = 0;
+            
+            trades.forEach(trade => {
+                if (trade.result && trade.amount > 0) {
+                    totalTrades++;
+                    if (trade.result === 'win') {
+                        winTrades++;
+                        totalProfit += trade.return;
+                    } else if (trade.result === 'loss') {
+                        totalLoss += trade.amount;
+                    }
+                }
+            });
+            
+            const finalCapital = initialCapital + totalProfit - totalLoss;
+            const accountGain = ((finalCapital - initialCapital) / initialCapital * 100);
+            const stopLoss = initialCapital * 0.8; // 20% stop loss
+            
+            document.getElementById('total-trades').textContent = totalTrades;
+            document.getElementById('win-trades').textContent = winTrades;
+            document.getElementById('capital-final').textContent = `$${finalCapital.toFixed(2)}`;
+            document.getElementById('account-gain').textContent = `${accountGain.toFixed(2)}%`;
+            document.getElementById('win-profit').textContent = `$${totalProfit.toFixed(2)}`;
+            document.getElementById('stop-loss').textContent = `$${stopLoss.toFixed(2)}`;
+            
+            updateBalances();
+        }
+
+        function clearTrades() {
+            trades = [];
+            for (let i = 0; i < 20; i++) {
+                trades[i] = { result: '', amount: 0, return: 0, balance: 0 };
+            }
+            
+            document.querySelectorAll('.trade-input').forEach(input => {
+                input.value = '';
+            });
+            
+            for (let i = 0; i < 20; i++) {
+                document.getElementById(`balance-${i}`).textContent = '-';
+            }
+            
+            updateCalculations();
+        }
+
+        function changeCounter(direction) {
+            sessionCounter += direction;
+            if (sessionCounter < 0) sessionCounter = 0;
+            document.getElementById('session-counter').textContent = sessionCounter;
+        }
+
+        function resetCounter() {
+            sessionCounter = 0;
+            document.getElementById('session-counter').textContent = sessionCounter;
+        }
+
+        // Initialize the application
+        document.addEventListener('DOMContentLoaded', function() {
+            initializeTrades();
+            updateCalculations();
+        });
+    </script>
+</body>
+</html>

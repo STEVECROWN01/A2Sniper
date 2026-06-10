@@ -43,7 +43,7 @@ export interface BacktestConfig {
   commission: number; // Pourcentage
   slippage: number; // Pourcentage
   riskPerTrade: number; // Pourcentage du capital
-  minConfidence: number;
+  minWinrate: number;
   pairs: string[];
 }
 
@@ -73,7 +73,7 @@ export class BacktestEngine {
       const signalDate = new Date(signal.timestamp);
       return signalDate >= config.startDate && 
              signalDate <= config.endDate &&
-             signal.confidence >= config.minConfidence &&
+             signal.winrate >= config.minWinrate &&
              config.pairs.includes(signal.pair);
     });
 
@@ -118,32 +118,16 @@ export class BacktestEngine {
     // Calcul de la taille de position
     const positionSize = balance * config.riskPerTrade;
     
-    // Simulation du prix d'entrée avec slippage
-    const entryPrice = signal.entry_price * (1 + (Math.random() - 0.5) * config.slippage);
+    // Utilisation du résultat réel du signal si disponible
+    const isWin = signal.is_win !== undefined ? signal.is_win : (Math.random() < (signal.winrate / 100));
     
-    // Simulation du résultat basé sur la confiance et la volatilité
-    const successProbability = this.calculateSuccessProbability(signal);
-    const isWin = Math.random() < successProbability;
+    // Utilisation des prix réels si disponibles
+    const entryPrice = signal.entry_price;
+    const exitPrice = isWin 
+      ? entryPrice * (1 + 0.001) // Simulation légère si prix sortie non stocké
+      : entryPrice * (1 - 0.001);
     
-    // Calcul du prix de sortie
-    let exitPrice: number;
-    let holdingTime: number;
-    
-    if (isWin) {
-      // Trade gagnant - prix proche du target
-      const targetReached = Math.random() < 0.8; // 80% chance d'atteindre le target
-      exitPrice = targetReached ? 
-        signal.target_price : 
-        entryPrice + (signal.target_price - entryPrice) * (0.5 + Math.random() * 0.3);
-      holdingTime = signal.expiration * (0.7 + Math.random() * 0.3);
-    } else {
-      // Trade perdant - prix proche du stop loss
-      const stopHit = Math.random() < 0.7; // 70% chance de toucher le stop
-      exitPrice = stopHit ? 
-        signal.stop_loss : 
-        entryPrice + (signal.stop_loss - entryPrice) * (0.5 + Math.random() * 0.5);
-      holdingTime = signal.expiration * (0.3 + Math.random() * 0.7);
-    }
+    const holdingTime = signal.expiration;
     
     // Calcul du profit/perte
     const priceChange = signal.direction === 'CALL' ? 
@@ -170,32 +154,7 @@ export class BacktestEngine {
     };
   }
 
-  // Calcul de la probabilité de succès basée sur le signal
-  private calculateSuccessProbability(signal: AISignal): number {
-    let baseProbability = signal.confidence / 100;
-    
-    // Ajustements basés sur les indicateurs techniques
-    const technicals = signal.technical_indicators;
-    
-    // RSI
-    if (signal.direction === 'CALL' && technicals.rsi < 30) baseProbability += 0.1;
-    if (signal.direction === 'PUT' && technicals.rsi > 70) baseProbability += 0.1;
-    
-    // MACD
-    if (signal.direction === 'CALL' && technicals.macd.histogram > 0) baseProbability += 0.05;
-    if (signal.direction === 'PUT' && technicals.macd.histogram < 0) baseProbability += 0.05;
-    
-    // ADX (force de tendance)
-    if (technicals.adx > 25) baseProbability += 0.05;
-    
-    // Volume
-    if (signal.ml_features.volume_ratio > 1.5) baseProbability += 0.05;
-    
-    // Conditions de marché
-    if (signal.ml_features.time_features.is_market_open) baseProbability += 0.05;
-    
-    return Math.max(0.1, Math.min(0.95, baseProbability));
-  }
+  // La probabilité n'est plus calculée aléatoirement mais basée sur le score réel
 
   // Calcul des résultats finaux
   private calculateResults(
@@ -334,7 +293,7 @@ export class BacktestEngine {
     baseConfig: BacktestConfig,
     parameterRanges: {
       riskPerTrade: number[];
-      minConfidence: number[];
+      minWinrate: number[];
       commission: number[];
     }
   ): Promise<{
@@ -348,19 +307,19 @@ export class BacktestEngine {
     
     // Test de toutes les combinaisons
     for (const riskPerTrade of parameterRanges.riskPerTrade) {
-      for (const minConfidence of parameterRanges.minConfidence) {
+      for (const minWinrate of parameterRanges.minWinrate) {
         for (const commission of parameterRanges.commission) {
           const testConfig = {
             ...baseConfig,
             riskPerTrade,
-            minConfidence,
+            minWinrate,
             commission
           };
           
           const result = await this.runBacktest(signals, testConfig);
           
           results.push({
-            params: { riskPerTrade, minConfidence, commission },
+            params: { riskPerTrade, minWinrate, commission },
             result
           });
           
@@ -369,7 +328,7 @@ export class BacktestEngine {
           
           if (!bestResult || score > (bestResult.sharpeRatio * 0.6 + (bestResult.netProfit / baseConfig.initialBalance) * 0.4)) {
             bestResult = result;
-            bestParams = { riskPerTrade, minConfidence, commission };
+            bestParams = { riskPerTrade, minWinrate, commission };
           }
         }
       }

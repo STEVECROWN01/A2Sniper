@@ -5,6 +5,15 @@ import { motion } from 'framer-motion';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line } from 'recharts';
 import { TrendingUp, Zap, Clock, Target, RefreshCw, Download } from 'lucide-react';
 
+const darkTooltipStyle = {
+  backgroundColor: '#0a0a0c',
+  border: '1px solid rgba(255,255,255,0.1)',
+  borderRadius: '12px',
+  color: '#fff',
+  fontSize: '11px',
+  fontWeight: 700,
+};
+
 export function AdvancedAnalytics() {
   const [liveData, setLiveData] = useState({
     signalsGenerated: 247,
@@ -29,9 +38,9 @@ export function AdvancedAnalytics() {
   ]);
 
   const [timeframeDistribution, setTimeframeDistribution] = useState([
-    { name: '1 min', value: 35, color: '#3B82F6' },
+    { name: '1 min', value: 35, color: '#D4AF37' },
     { name: '3 min', value: 45, color: '#10B981' },
-    { name: '5 min', value: 20, color: '#F59E0B' }
+    { name: '5 min', value: 20, color: '#D4AF37' }
   ]);
 
   const [pairPerformance, setPairPerformance] = useState([
@@ -72,9 +81,8 @@ export function AdvancedAnalytics() {
   }, []);
 
   const handleRefresh = () => {
-    // Simulation de rafraîchissement
     const notification = document.createElement('div');
-    notification.className = 'fixed top-4 right-4 bg-green-500 text-white px-6 py-3 rounded-lg shadow-lg z-50';
+    notification.className = 'fixed top-4 right-4 bg-[#D4AF37] text-black px-6 py-3 rounded-xl shadow-lg z-50 font-bold text-xs uppercase tracking-wider';
     notification.textContent = 'Analytics mis à jour !';
     document.body.appendChild(notification);
     setTimeout(() => document.body.removeChild(notification), 3000);
@@ -99,9 +107,8 @@ export function AdvancedAnalytics() {
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
 
-    // Notification
     const notification = document.createElement('div');
-    notification.className = 'fixed top-4 right-4 bg-blue-500 text-white px-6 py-3 rounded-lg shadow-lg z-50';
+    notification.className = 'fixed top-4 right-4 bg-[#D4AF37] text-black px-6 py-3 rounded-xl shadow-lg z-50 font-bold text-xs uppercase tracking-wider';
     notification.textContent = 'Analytics exportées !';
     document.body.appendChild(notification);
     setTimeout(() => document.body.removeChild(notification), 3000);
@@ -110,113 +117,68 @@ export function AdvancedAnalytics() {
   return (
     <div className="space-y-8">
       {/* Métriques temps réel */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="bg-white rounded-xl shadow-lg border border-gray-100 p-6"
-        >
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-gray-600 mb-1">Signaux Générés</p>
-              <p className="text-2xl font-bold text-blue-600">{liveData.signalsGenerated}</p>
-              <p className="text-xs text-green-600">+12 dernière heure</p>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+        {[
+          { label: 'Signaux Générés', value: liveData.signalsGenerated.toString(), sub: '+12 dernière heure', icon: TrendingUp, color: 'text-[#D4AF37] bg-[#D4AF37]/10' },
+          { label: 'Précision Assistant', value: `${liveData.aiAccuracy.toFixed(1)}%`, sub: '+0.3% aujourd\'hui', icon: Zap, color: 'text-green-400 bg-green-500/10' },
+          { label: 'Profit Moyen', value: `$${liveData.avgProfit.toFixed(2)}`, sub: '+5.2% cette semaine', icon: Target, color: 'text-purple-400 bg-purple-500/10' },
+          { label: 'Temps Moyen', value: `${liveData.avgExecutionTime.toFixed(0)}s`, sub: '-2s optimisé', icon: Clock, color: 'text-[#D4AF37] bg-[#D4AF37]/10' },
+        ].map((metric, i) => (
+          <motion.div
+            key={i}
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: i * 0.1 }}
+            className="bg-[#0a0a0c]/80 border border-white/5 rounded-2xl p-6 backdrop-blur-md"
+          >
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-[10px] text-gray-500 font-bold uppercase tracking-wider mb-1">{metric.label}</p>
+                <p className="text-2xl font-black text-white tracking-tight">{metric.value}</p>
+                <p className="text-[10px] text-green-400 font-bold mt-1">{metric.sub}</p>
+              </div>
+              <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${metric.color}`}>
+                <metric.icon className="w-5 h-5" />
+              </div>
             </div>
-            <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
-              <TrendingUp className="w-6 h-6 text-blue-600" />
-            </div>
-          </div>
-        </motion.div>
-
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.1 }}
-          className="bg-white rounded-xl shadow-lg border border-gray-100 p-6"
-        >
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-gray-600 mb-1">Précision IA</p>
-              <p className="text-2xl font-bold text-green-600">{liveData.aiAccuracy.toFixed(1)}%</p>
-              <p className="text-xs text-green-600">+0.3% aujourd'hui</p>
-            </div>
-            <div className="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center">
-              <Zap className="w-6 h-6 text-green-600" />
-            </div>
-          </div>
-        </motion.div>
-
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.2 }}
-          className="bg-white rounded-xl shadow-lg border border-gray-100 p-6"
-        >
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-gray-600 mb-1">Profit Moyen</p>
-              <p className="text-2xl font-bold text-purple-600">${liveData.avgProfit.toFixed(2)}</p>
-              <p className="text-xs text-green-600">+5.2% cette semaine</p>
-            </div>
-            <div className="w-12 h-12 bg-purple-100 rounded-lg flex items-center justify-center">
-              <Target className="w-6 h-6 text-purple-600" />
-            </div>
-          </div>
-        </motion.div>
-
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.3 }}
-          className="bg-white rounded-xl shadow-lg border border-gray-100 p-6"
-        >
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-gray-600 mb-1">Temps Moyen</p>
-              <p className="text-2xl font-bold text-orange-600">{liveData.avgExecutionTime.toFixed(0)}s</p>
-              <p className="text-xs text-green-600">-2s optimisé</p>
-            </div>
-            <div className="w-12 h-12 bg-orange-100 rounded-lg flex items-center justify-center">
-              <Clock className="w-6 h-6 text-orange-600" />
-            </div>
-          </div>
-        </motion.div>
+          </motion.div>
+        ))}
       </div>
 
       {/* Graphiques */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Performance par heure */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.4 }}
-          className="bg-white rounded-xl shadow-lg border border-gray-100 p-6"
+          className="bg-[#0a0a0c]/80 border border-white/5 rounded-2xl p-6 backdrop-blur-md"
         >
           <div className="flex items-center justify-between mb-6">
-            <h3 className="text-lg font-semibold text-gray-900">Performance par Heure</h3>
+            <h3 className="text-sm font-black text-white uppercase tracking-wider">Performance par Heure</h3>
             <div className="flex space-x-2">
               <button
                 onClick={handleRefresh}
-                className="p-2 bg-blue-100 text-blue-600 rounded-lg hover:bg-blue-200 transition-colors"
+                className="p-2 bg-white/[0.03] border border-white/5 text-gray-400 rounded-lg hover:border-[#D4AF37]/30 hover:text-[#D4AF37] transition-all"
               >
-                <RefreshCw className="w-4 h-4" />
+                <RefreshCw className="w-3.5 h-3.5" />
               </button>
               <button
                 onClick={handleExport}
-                className="p-2 bg-green-100 text-green-600 rounded-lg hover:bg-green-200 transition-colors"
+                className="p-2 bg-white/[0.03] border border-white/5 text-gray-400 rounded-lg hover:border-[#D4AF37]/30 hover:text-[#D4AF37] transition-all"
               >
-                <Download className="w-4 h-4" />
+                <Download className="w-3.5 h-3.5" />
               </button>
             </div>
           </div>
           <ResponsiveContainer width="100%" height={300}>
             <BarChart data={performanceByHour}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="hour" />
-              <YAxis />
-              <Tooltip />
-              <Bar dataKey="signals" fill="#3B82F6" name="Signaux" />
-              <Bar dataKey="accuracy" fill="#10B981" name="Précision %" />
+              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+              <XAxis dataKey="hour" tick={{ fill: '#6b7280', fontSize: 10, fontWeight: 700 }} axisLine={{ stroke: 'rgba(255,255,255,0.05)' }} />
+              <YAxis tick={{ fill: '#6b7280', fontSize: 10, fontWeight: 700 }} axisLine={{ stroke: 'rgba(255,255,255,0.05)' }} />
+              <Tooltip contentStyle={darkTooltipStyle} />
+              <Bar dataKey="signals" fill="#D4AF37" name="Signaux" radius={[4, 4, 0, 0]} />
+              <Bar dataKey="accuracy" fill="#10B981" name="Précision %" radius={[4, 4, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         </motion.div>
@@ -226,9 +188,9 @@ export function AdvancedAnalytics() {
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.5 }}
-          className="bg-white rounded-xl shadow-lg border border-gray-100 p-6"
+          className="bg-[#0a0a0c]/80 border border-white/5 rounded-2xl p-6 backdrop-blur-md"
         >
-          <h3 className="text-lg font-semibold text-gray-900 mb-6">Distribution des Timeframes</h3>
+          <h3 className="text-sm font-black text-white uppercase tracking-wider mb-6">Distribution des Timeframes</h3>
           <ResponsiveContainer width="100%" height={300}>
             <PieChart>
               <Pie
@@ -245,7 +207,7 @@ export function AdvancedAnalytics() {
                   <Cell key={`cell-${index}`} fill={entry.color} />
                 ))}
               </Pie>
-              <Tooltip />
+              <Tooltip contentStyle={darkTooltipStyle} />
             </PieChart>
           </ResponsiveContainer>
         </motion.div>
@@ -256,18 +218,18 @@ export function AdvancedAnalytics() {
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.6 }}
-        className="bg-white rounded-xl shadow-lg border border-gray-100 p-6"
+        className="bg-[#0a0a0c]/80 border border-white/5 rounded-2xl p-6 backdrop-blur-md"
       >
-        <h3 className="text-lg font-semibold text-gray-900 mb-6">Performance par Paire de Devises</h3>
+        <h3 className="text-sm font-black text-white uppercase tracking-wider mb-6">Performance par Paire de Devises</h3>
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead>
-              <tr className="border-b border-gray-200">
-                <th className="text-left py-3 px-4 font-medium text-gray-900">Paire</th>
-                <th className="text-left py-3 px-4 font-medium text-gray-900">Trades</th>
-                <th className="text-left py-3 px-4 font-medium text-gray-900">Taux Réussite</th>
-                <th className="text-left py-3 px-4 font-medium text-gray-900">Profit</th>
-                <th className="text-left py-3 px-4 font-medium text-gray-900">Tendance</th>
+              <tr className="border-b border-white/5">
+                <th className="text-left py-3 px-4 text-[10px] font-bold text-gray-500 uppercase tracking-wider">Paire</th>
+                <th className="text-left py-3 px-4 text-[10px] font-bold text-gray-500 uppercase tracking-wider">Trades</th>
+                <th className="text-left py-3 px-4 text-[10px] font-bold text-gray-500 uppercase tracking-wider">Taux Réussite</th>
+                <th className="text-left py-3 px-4 text-[10px] font-bold text-gray-500 uppercase tracking-wider">Profit</th>
+                <th className="text-left py-3 px-4 text-[10px] font-bold text-gray-500 uppercase tracking-wider">Tendance</th>
               </tr>
             </thead>
             <tbody>
@@ -277,31 +239,31 @@ export function AdvancedAnalytics() {
                   initial={{ opacity: 0, x: -20 }}
                   animate={{ opacity: 1, x: 0 }}
                   transition={{ delay: 0.7 + index * 0.1 }}
-                  className="border-b border-gray-100 hover:bg-gray-50"
+                  className="border-b border-white/[0.03] hover:bg-white/[0.02] transition-colors"
                 >
                   <td className="py-4 px-4">
                     <div className="flex items-center space-x-3">
-                      <div className="w-8 h-8 bg-gradient-to-r from-blue-500 to-purple-600 rounded-lg flex items-center justify-center">
-                        <span className="text-white font-bold text-xs">
+                      <div className="w-8 h-8 bg-gradient-to-r from-[#D4AF37] to-[#C5A059] rounded-lg flex items-center justify-center">
+                        <span className="text-black font-black text-[10px]">
                           {pair.pair.split('/')[0]}
                         </span>
                       </div>
-                      <span className="font-medium text-gray-900">{pair.pair}</span>
+                      <span className="text-xs font-black text-white">{pair.pair}</span>
                     </div>
                   </td>
-                  <td className="py-4 px-4 text-gray-900">{pair.trades}</td>
+                  <td className="py-4 px-4 text-xs font-bold text-gray-300">{pair.trades}</td>
                   <td className="py-4 px-4">
                     <div className="flex items-center space-x-2">
-                      <span className={`font-medium ${
-                        pair.winRate >= 90 ? 'text-green-600' :
-                        pair.winRate >= 85 ? 'text-yellow-600' :
-                        'text-red-600'
+                      <span className={`text-xs font-black ${
+                        pair.winRate >= 90 ? 'text-green-400' :
+                        pair.winRate >= 85 ? 'text-yellow-400' :
+                        'text-red-400'
                       }`}>
                         {pair.winRate.toFixed(1)}%
                       </span>
-                      <div className="w-20 bg-gray-200 rounded-full h-2">
+                      <div className="w-20 bg-white/5 rounded-full h-1.5">
                         <div 
-                          className={`h-2 rounded-full ${
+                          className={`h-1.5 rounded-full ${
                             pair.winRate >= 90 ? 'bg-green-500' :
                             pair.winRate >= 85 ? 'bg-yellow-500' :
                             'bg-red-500'
@@ -312,7 +274,7 @@ export function AdvancedAnalytics() {
                     </div>
                   </td>
                   <td className="py-4 px-4">
-                    <span className="font-medium text-green-600">
+                    <span className="text-xs font-black text-green-400">
                       ${pair.profit.toFixed(2)}
                     </span>
                   </td>
@@ -327,7 +289,7 @@ export function AdvancedAnalytics() {
                         <Line 
                           type="monotone" 
                           dataKey="value" 
-                          stroke="#10B981" 
+                          stroke="#D4AF37" 
                           strokeWidth={2}
                           dot={false}
                         />

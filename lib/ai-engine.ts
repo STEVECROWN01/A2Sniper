@@ -17,11 +17,11 @@ export interface MLFeatures {
 
 export interface SignalScore {
   base_probability: number;
-  technical_score: number;
-  ml_confidence: number;
-  volume_score: number;
-  trend_score: number;
-  final_confidence: number;
+  technical_winrate: number;
+  ml_probability: number;
+  volume_winrate: number;
+  trend_winrate: number;
+  final_winrate: number;
   risk_level: 'LOW' | 'MEDIUM' | 'HIGH';
 }
 
@@ -29,7 +29,7 @@ export interface AISignal {
   id: string;
   pair: string;
   direction: 'CALL' | 'PUT';
-  confidence: number;
+  winrate: number;
   entry_price: number;
   target_price: number;
   stop_loss: number;
@@ -39,14 +39,15 @@ export interface AISignal {
   signal_score: SignalScore;
   timestamp: Date;
   reasoning: string[];
+  is_win?: boolean;
 }
 
 export class AITradingEngine {
-  private readonly confidenceThreshold = 75;
+  private readonly winrateThreshold = 85;
   private readonly riskLevels = {
-    LOW: { maxRisk: 0.02, minConfidence: 85 },
-    MEDIUM: { maxRisk: 0.05, minConfidence: 75 },
-    HIGH: { maxRisk: 0.10, minConfidence: 65 }
+    LOW: { maxRisk: 0.02, minWinrate: 90 },
+    MEDIUM: { maxRisk: 0.05, minWinrate: 85 },
+    HIGH: { maxRisk: 0.10, minWinrate: 75 }
   };
 
   // Nouvelles méthodes pour conformité au document
@@ -94,7 +95,7 @@ export class AITradingEngine {
       const basePrice = 1.0800 + Math.random() * 0.01;
       
       data.push({
-        symbol: 'EUR/USD',
+        symbol: 'EUR/USD OTC',
         timestamp,
         open: basePrice,
         high: basePrice + Math.random() * 0.001,
@@ -159,9 +160,9 @@ export class AITradingEngine {
     const time = signal.timestamp.toLocaleTimeString('fr-FR');
     const direction = signal.direction;
     const expiration = signal.expiration;
-    const confidence = signal.confidence;
+    const winrate = signal.winrate;
     
-    return `[${time}] – Actif: [${signal.pair}] – Direction: [${direction}] – Expiration: [${expiration} min] – Confiance: [${confidence}%]`;
+    return `[${time}] – Actif: [${signal.pair}] – Direction: [${direction}] – Expiration: [${expiration} min] – Winrate: [${winrate}%]`;
   }
   
   // Calcul de signaux toutes les minutes selon spécifications
@@ -169,9 +170,9 @@ export class AITradingEngine {
     setInterval(async () => {
       try {
         const marketData = await this.collectMarketData();
-        const signal = await this.generateSignal('EUR/USD', marketData);
+        const signal = await this.generateSignal('EUR/USD OTC', marketData);
         
-        if (signal && signal.confidence >= this.confidenceThreshold) {
+        if (signal && signal.winrate >= this.winrateThreshold) {
           const formattedSignal = this.generateFormattedSignal(signal);
           callback(formattedSignal);
         }
@@ -324,27 +325,27 @@ export class AITradingEngine {
     return true;
   }
 
-  // Calcul du score final
-  private calculateFinalScore(scores: Omit<SignalScore, 'final_confidence' | 'risk_level'>): SignalScore {
+  // Calcul du winrate final
+  private calculateFinalWinrate(scores: Omit<SignalScore, 'final_winrate' | 'risk_level'>): SignalScore {
     const weights = {
       base_probability: 0.25,
-      technical_score: 0.30,
-      ml_confidence: 0.25,
-      volume_score: 0.15,
-      trend_score: 0.05
+      technical_winrate: 0.30,
+      ml_probability: 0.25,
+      volume_winrate: 0.15,
+      trend_winrate: 0.05
     };
     
-    const finalConfidence = Object.entries(weights).reduce((total, [key, weight]) => {
+    const finalWinrate = Object.entries(weights).reduce((total, [key, weight]) => {
       return total + (scores[key as keyof typeof scores] * weight);
     }, 0) * 100;
     
     let riskLevel: 'LOW' | 'MEDIUM' | 'HIGH' = 'MEDIUM';
-    if (finalConfidence >= 85) riskLevel = 'LOW';
-    else if (finalConfidence < 70) riskLevel = 'HIGH';
+    if (finalWinrate >= 90) riskLevel = 'LOW';
+    else if (finalWinrate < 85) riskLevel = 'HIGH';
     
     return {
       ...scores,
-      final_confidence: finalConfidence,
+      final_winrate: finalWinrate,
       risk_level: riskLevel
     };
   }
@@ -404,16 +405,16 @@ export class AITradingEngine {
       const trendScore = Math.abs(mlFeatures.trend_strength) * 10;
       
       // Score final
-      const signalScore = this.calculateFinalScore({
+      const signalScore = this.calculateFinalWinrate({
         base_probability: (rfScore + xgbScore + lstmScore) / 3,
-        technical_score: technicalScore,
-        ml_confidence: Math.max(rfScore, xgbScore, lstmScore),
-        volume_score: volumeScore,
-        trend_score: trendScore
+        technical_winrate: technicalScore,
+        ml_probability: Math.max(rfScore, xgbScore, lstmScore),
+        volume_winrate: volumeScore,
+        trend_winrate: trendScore
       });
       
-      // Filtrage par seuil de confiance
-      if (signalScore.final_confidence < this.confidenceThreshold) {
+      // Filtrage par seuil de winrate
+      if (signalScore.final_winrate < this.winrateThreshold) {
         return null;
       }
       
@@ -439,11 +440,11 @@ export class AITradingEngine {
         id: `signal_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
         pair,
         direction,
-        confidence: Math.round(signalScore.final_confidence),
+        winrate: Math.round(signalScore.final_winrate),
         entry_price: currentPrice,
         target_price: targetPrice,
         stop_loss: stopLoss,
-        expiration: this.calculateExpiration(signalScore.final_confidence),
+        expiration: this.calculateExpiration(signalScore.final_winrate),
         technical_indicators: technicals,
         ml_features: mlFeatures,
         signal_score: signalScore,
@@ -487,23 +488,23 @@ export class AITradingEngine {
   }
 
   // Calcul de l'expiration optimale
-  private calculateExpiration(confidence: number): number {
-    if (confidence >= 90) return 1; // 1 minute pour haute confiance
-    if (confidence >= 80) return 3; // 3 minutes
-    if (confidence >= 75) return 5; // 5 minutes
+  private calculateExpiration(winrate: number): number {
+    if (winrate >= 95) return 1; // 1 minute pour haute précision
+    if (winrate >= 90) return 3; // 3 minutes
+    if (winrate >= 85) return 5; // 5 minutes
     return 5; // Par défaut
   }
 
   // Validation du signal
   validateSignal(signal: AISignal): boolean {
     // Vérifications de base
-    if (signal.confidence < this.confidenceThreshold) return false;
+    if (signal.winrate < this.winrateThreshold) return false;
     if (!signal.pair || !signal.direction) return false;
     if (signal.entry_price <= 0) return false;
     
     // Vérification des niveaux de risque
     const riskConfig = this.riskLevels[signal.signal_score.risk_level];
-    if (signal.confidence < riskConfig.minConfidence) return false;
+    if (signal.winrate < riskConfig.minWinrate) return false;
     
     // Vérification de la cohérence des prix
     const priceRange = Math.abs(signal.target_price - signal.entry_price) / signal.entry_price;

@@ -1,0 +1,317 @@
+A2SNIPER
+⚡ SNIPER EDITION v3.0 ⚡
+Cahier des Charges Technique Complet & Avancé
+Système de Génération de Signaux à 99,99% de Précision
+Spécialisé & Optimisé pour Pocket Option
+
+
+
+
+SECTION 1 — VISION STRATÉGIQUE & OBJECTIFS
+
+1.1  Présentation du Projet
+A2Sniper est une plateforme de trading algorithmique de nouvelle génération, conçue avec une précision chirurgicale de sniper. Le système est exclusivement optimisé pour l'algorithme de Pocket Option, la seule plateforme d'options binaires OTC dont le moteur de marché a un comportement prévisible, structuré et exploitable à très haute fréquence.
+
+L'objectif absolu est de délivrer des signaux d'entrée avec un taux de réussite de 99,99%, en combinant : l'analyse de la structure du marché (SMC), la lecture des bougies japonaises, les figures chartistes, les zones de liquidité (Order Blocks & FVG), et le comportement spécifique de l'algorithme Pocket Option.
+
+1.2  Objectifs Mesurables
+Taux de précision des signaux : ≥ 99,99% validé sur backtesting 5 ans + forward testing 3 mois
+Latence signal → notification Telegram : < 500 ms
+Nombre de signaux qualifiés par jour : 15 à 35 (qualité > quantité — sniper, pas mitraillette)
+Score de confluence minimum pour émettre un signal : 8/10
+Temps d'exécution du moteur d'analyse : < 200 ms par cycle
+Disponibilité du système : 99,9% uptime — 24h/24, 7j/7
+
+
+
+SECTION 2 — ANALYSE DE L'ALGORITHME POCKET OPTION
+
+2.1  Comportement Spécifique de l'Algorithme Pocket Option
+Pocket Option utilise un marché OTC (Over-The-Counter) dont l'algorithme interne présente des comportements très spécifiques, distincts des marchés Forex classiques. La compréhension précise de ces comportements est la fondation de la précision à 99,99%.
+
+2.2  Caractéristiques Clés de l'Algorithme PO
+RESPECT DES NIVEAUX PSYCHOLOGIQUES : L'algorithme PO réagit systématiquement aux niveaux ronds (ex: 1.1000, 1.0850). Ces niveaux doivent être cartographiés en priorité.
+CYCLES DE MANIPULATION : L'algo PO génère des fausses cassures (Stop Hunt) avant les vrais mouvements directionnels. Le système doit détecter ces manipulations AVANT qu'elles se produisent.
+HORAIRES D'EFFICACITÉ MAXIMALE : Les sessions London Open (08h00-10h00 GMT) et New York Open (13h00-15h00 GMT) produisent les mouvements les plus prévisibles sur PO. Hors sessions = signaux interdits sauf conditions SMC ultra-validées.
+COMPORTEMENT OTC WEEKEND : Le marché OTC PO weekend présente des patterns répétitifs. L'algorithme doit identifier ces patterns et les exploiter spécifiquement.
+FENÊTRES D'EXPIRATION OPTIMALES : Sur PO, les expirations 1 min et 5 min sont les plus précises algorithmiquement. Le système doit IMPOSER ces fenêtres selon la structure en cours.
+LISSAGE DES PRIX : L'algo PO lisse les prix OTC. Les bougies présentent moins de mèches parasites que le Forex live. L'IA doit exploiter cette propriété pour une lecture plus précise des patterns.
+
+2.3  Paires d'Actifs Optimaux sur Pocket Option
+
+
+SECTION 3 — ANALYSE SMC : STRUCTURE DU MARCHÉ
+
+3.1  Identification de la Tendance (Market Structure)
+Le moteur SMC (Smart Money Concepts) est le cœur analytique du système. Il lit le marché comme un trader institutionnel, pas comme un retail trader. La première obligation du système est d'identifier QUELLE structure est en cours avant tout signal.
+
+3.2  Types de Tendances à Identifier
+UPTREND (Tendance haussière) : Succession de Higher Highs (HH) et Higher Lows (HL). Le système doit cartographier chaque HH et HL, calculer l'angle de la tendance, et identifier le momentum.
+DOWNTREND (Tendance baissière) : Succession de Lower Lows (LL) et Lower Highs (LH). Même logique inversée. Chaque cassure de LH confirmée est une opportunité PUT.
+RANGE (Consolidation) : Prix oscillant entre un support et résistance bien définis. Le système identifie les bornes haute et basse, les mid-range, et attend la cassure ou le rebond validé.
+ACCUMULATION / DISTRIBUTION (Phase Wyckoff) : Le système doit reconnaître les phases d'accumulation (smart money achète discrètement) et de distribution (smart money vend en zone haute).
+
+3.3  Ruptures de Structure (Market Structure Breaks)
+
+3.4  Identification des Retournements à 99%
+L'IA doit détecter les retournements AVANT qu'ils soient évidents. Voici les conditions obligatoires pour qu'un retournement soit classifié à 99% de probabilité :
+
+CHoCH détecté sur le timeframe de travail (M1 ou M5)
+CHoCH confirmé sur le timeframe supérieur (M15 ou H1) — alignement multi-timeframe obligatoire
+Présence d'un Order Block institutionnel dans la zone de retournement
+FVG (Fair Value Gap) non comblé situé au-dessus (retournement baissier) ou en dessous (retournement haussier)
+Pattern de bougie de retournement validé (Engulfing, Pin Bar, ou Doji de retournement)
+RSI en divergence (divergence classique ou cachée)
+Volume anormal (spike ≥ 1,5x la moyenne)
+Liquidity sweep confirmé (chasse des stops du côté opposé)
+
+
+
+SECTION 4 — ORDER BLOCKS, FVG & ZONES INSTITUTIONNELLES
+
+4.1  Order Blocks (OB) — Blocs d'Ordres Institutionnels
+Les Order Blocks sont les empreintes laissées par les grandes institutions financières (banques, hedge funds). Ce sont des zones où la majorité des ordres institutionnels ont été exécutés. Sur Pocket Option, l'algorithme OTC préserve ces zones avec une précision remarquable, les rendant particulièrement fiables comme niveaux de réaction.
+
+BULLISH ORDER BLOCK (OB Haussier) : Dernière bougie bearish (rouge) AVANT un mouvement haussier impulsif significatif. La zone High-Low de cette bougie devient une zone d'achat institutionnel. Quand le prix revient dessus → signal CALL.
+BEARISH ORDER BLOCK (OB Baissier) : Dernière bougie bullish (verte) AVANT un mouvement baissier impulsif significatif. La zone High-Low de cette bougie devient une zone de vente institutionnelle. Quand le prix revient dessus → signal PUT.
+BREAKER BLOCK : Un OB qui a été cassé et qui s'est transformé en zone opposée. Un ancien Bearish OB devenu Bullish Breaker est une zone de rebond particulièrement puissante.
+MITIGATION BLOCK : Zone d'OB partiellement mitigée. Encore valide pour un signal mais avec un score de confiance réduit de 1 point.
+REJECTION BLOCK : Zone où le prix a rejeté violemment plusieurs fois. Équivalent d'un OB renforcé par des rejets multiples.
+
+4.2  Spécifications Techniques — Détection des Order Blocks
+
+4.3  Fair Value Gaps (FVG) — Déséquilibres de Prix
+Un FVG est un déséquilibre de marché créé quand une bougie se déplace si rapidement qu'elle laisse un espace (gap) entre la mèche haute de la bougie N-1 et la mèche basse de la bougie N+1. Sur Pocket Option OTC, les FVG sont comblés à 87% dans les 10 à 30 prochaines bougies. C'est une des propriétés les plus exploitables de l'algorithme PO.
+
+BULLISH FVG : Gap entre High[N-1] et Low[N+1] sur un mouvement haussier. Le prix DOIT revenir combler ce gap → signal CALL à l'entrée dans le FVG.
+BEARISH FVG : Gap entre Low[N-1] et High[N+1] sur un mouvement baissier. Le prix doit revenir → signal PUT à l'entrée dans le FVG.
+IFVG (Inverse FVG) : FVG déjà partiellement comblé qui devient une résistance/support. Plus fort qu'un FVG standard.
+VOID / VACUUM : Grand FVG couvrant plusieurs bougies. Zone d'aspiration de prix très puissante. Score de confluence +2.
+FVG STACKING : Deux ou plusieurs FVG superposés dans la même direction. Zone institutionnelle critique. Score de confluence +3.
+FVG + OB CONFLUENT : FVG se superposant à un OB dans la même zone. C'est la ZONE D'OR. Score +4. Signal à 99% lorsque le prix y entre avec confirmation de bougie.
+
+4.4  Zones de Liquidité à Cartographier
+BSL (Buy-Side Liquidity) : Regroupement de stop-loss d'acheteurs au-dessus des highs récents. L'algo PO "chasse" ces stops avant de revenir baissier.
+SSL (Sell-Side Liquidity) : Regroupement de stop-loss de vendeurs sous les lows récents. Chasse avant retournement haussier.
+EQH (Equal Highs) : Deux ou plusieurs hauts identiques = piège évident pour les stop-loss. Zone de sweep liquidity très probable.
+EQL (Equal Lows) : Même logique baissière. Deux lows identiques = zone de chasse de stops avant rebond.
+OLD HIGHS / OLD LOWS : Niveaux significatifs D1/H4 non encore touchés = zones d'attraction forte sur PO OTC.
+
+
+SECTION 5 — FIGURES CHARTISTES & EXPLOITATION SNIPER
+
+Chaque figure chartiste doit être reconnue, validée, et exploitée avec des règles d'entrée EXACTES. Le système ne reconnaît pas les figures approximatives. La précision géométrique est obligatoire.
+
+5.1  Figures de Retournement
+
+5.2  Figures de Continuation
+
+5.3  Règles d'Exploitation Sniper des Figures
+RÈGLE 1 — ATTENDRE LA CONFIRMATION : Jamais d'entrée sur une figure non confirmée. La cassure doit être suivie d'une bougie de clôture HORS de la figure. Pas d'entrée sur la bougie de cassure elle-même.
+RÈGLE 2 — RETEST OBLIGATOIRE : Si un retest de la neckline ou de la zone cassée se produit dans les 3 bougies suivant la cassure → entrée sniper au retest. Score de confiance +1.
+RÈGLE 3 — VOLUME CONFIRMATION : Tout signal sur figure chartiste doit s'accompagner d'une augmentation du volume ≥ 1,3x la moyenne sur la bougie de cassure.
+RÈGLE 4 — CONFLUENCE MAXIMALE : La figure chartiste N'EST PAS suffisante seule. Elle doit coïncider avec au moins un OB, un FVG, ou un niveau de Fibonacci clé pour valider le signal.
+RÈGLE 5 — TIMEFRAME SUPÉRIEUR : Toute figure identifiée sur M1 ou M5 doit être validée sur M15 (tendance alignée). Si le M15 est contre la figure → signal refusé.
+
+
+SECTION 6 — PATTERNS DE BOUGIES JAPONAISES
+
+Les bougies japonaises sont le langage du marché. Sur Pocket Option OTC, les patterns sont particulièrement respectés car l'algorithme PO crée des bougies propres avec peu de bruit. Le système doit maîtriser chaque pattern avec ses conditions d'entrée exactes.
+
+6.1  Patterns de Retournement Haussiers (Signaux CALL)
+
+6.2  Patterns de Retournement Baissiers (Signaux PUT)
+
+6.3  Patterns d'Indécision (Filtres de Signal)
+DOJI STANDARD : Corps quasi nul. Indécision totale. → Le signal est SUSPENDU jusqu'à la bougie suivante.
+DOJI DRAGONFLY : Mèche basse longue + corps en haut. → Potentiel retournement haussier si sur support.
+DOJI GRAVESTONE : Mèche haute longue + corps en bas. → Potentiel retournement baissier si sur résistance.
+SPINNING TOP : Corps réduit avec mèches des deux côtés. → Signal refusé ou score réduit de 2 points.
+MARUBOZU BULLISH : Grande bougie verte sans mèches. → Continuation haussière très forte. Score +2.
+MARUBOZU BEARISH : Grande bougie rouge sans mèches. → Continuation baissière très forte. Score +2.
+
+
+SECTION 7 — SYSTÈME D'ENTRÉE SNIPER : CONFLUENCE & SCORING
+
+Le Sniper Entry System (SES) est le cerveau de décision finale. C'est lui qui dit OUI ou NON à chaque signal. Son fonctionnement repose sur un score de confluence de 0 à 10. Tout signal avec un score < 7 est automatiquement REJETÉ. Un signal parfait à 10/10 déclenche une notification prioritaire.
+
+7.1  Tableau de Scoring Sniper — 10 Facteurs
+
+7.2  Seuils de Décision
+
+7.3  Processus d'Entrée Sniper — Séquence Exacte
+SCAN : Le système scanne toutes les paires actives sur PO toutes les 1 seconde.
+FILTRE HORAIRE : Vérification que l'on est dans une session de trading valide (London/NY/Overlap).
+DÉTECTION STRUCTURE : Identification de la tendance M15, puis M5, puis M1.
+ALIGNEMENT MTF : Les 3 timeframes doivent être alignés. Sinon → rejet immédiat.
+RECHERCHE DE ZONE : Identification des OB et FVG actifs sur le chemin du prix.
+ATTENTE D'APPROCHE : Le système attend que le prix ENTRE dans la zone institutionnelle.
+DÉTECTION DE PATTERN : À l'intérieur de la zone, attente d'un pattern de bougie confirmé.
+CALCUL DU SCORE : Tous les facteurs sont scorés. Si < 7 → rejet.
+GÉNÉRATION DU SIGNAL : Si score ≥ 7 → le signal est formaté et envoyé instantanément.
+MONITORING : Suivi du signal pour mise à jour en temps réel si le marché change.
+
+
+SECTION 8 — INDICATEURS TECHNIQUES AVANCÉS
+
+8.1  Suite d'Indicateurs Obligatoires
+
+8.2  Détection de Divergences — Système Avancé
+DIVERGENCE CLASSIQUE BAISSIÈRE : Prix fait HH mais RSI fait LH → signal PUT fort. Score +2.
+DIVERGENCE CLASSIQUE HAUSSIÈRE : Prix fait LL mais RSI fait HL → signal CALL fort. Score +2.
+DIVERGENCE CACHÉE HAUSSIÈRE : Prix fait HL mais RSI fait LL → continuation haussière. Score +1.
+DIVERGENCE CACHÉE BAISSIÈRE : Prix fait LH mais RSI fait HH → continuation baissière. Score +1.
+DIVERGENCE TRIPLE : Divergence présente simultanément sur RSI + MACD + Stochastique → Score +4. Signal SNIPER SHOT quasi-certain.
+
+8.3  Niveaux de Fibonacci — Règles de Précision
+GOLDEN ZONE (50%-61.8%) : Zone de pull-back institutionnelle privilégiée. Quand un OB/FVG coïncide avec cette zone → entrée sniper score +3.
+DEEP RETRACEMENT (78.6%) : Pull-back profond mais valide. Souvent utilisé par les algos PO pour manipuler avant reprise.
+SHALLOW RETRACEMENT (23.6%-38.2%) : Tendance très forte. Entrée agressive mais valide si volume confirme.
+EXTENSIONS 127.2% ET 161.8% : Niveaux de take-profit institutionnels. Utilisés pour fixer l'expiration maximale du signal.
+
+
+SECTION 9 — ARCHITECTURE TECHNIQUE DU SYSTÈME
+
+9.1  Architecture Globale du Système
+
+9.2  Moteur d'Intelligence Artificielle — Spécifications
+MODÈLE PRIMAIRE — LSTM BIDIRECTIONNEL : Réseau de neurones récurrent pour séries temporelles. Entraîné sur 5 ans de données OHLCV de toutes les paires PO OTC. Architecture : 3 couches LSTM bi-directionnelles (128 → 64 → 32 neurones) + couche Dense + Dropout 0.3. Fenêtre d'observation : 60 bougies.
+MODÈLE SECONDAIRE — TRANSFORMER TEMPOREL : Attention mechanism pour capturer les dépendances longue distance dans les séries de prix. Particulièrement efficace pour identifier les patterns de manipulation PO.
+MODÈLE TERTIAIRE — XGBOOST ENSEMBLE : Classification multi-classe (CALL / PUT / NO TRADE) basée sur 47 features techniques. Optimisé par validation croisée temporelle (TimeSeriesSplit).
+MÉTA-MODÈLE — VOTING CLASSIFIER : Combinaison pondérée des 3 modèles. Poids : LSTM 40% + Transformer 35% + XGBoost 25%. Décision finale par vote pondéré.
+APPRENTISSAGE CONTINU : Le système se ré-entraîne automatiquement toutes les 72h avec les nouvelles données de marché. Les modèles dégradés sont remplacés automatiquement.
+VALIDATION RIGOUREUSE : Chaque nouveau modèle doit atteindre ≥ 99% de précision sur le jeu de test avant déploiement. Sinon le modèle précédent est conservé.
+
+9.3  Pipeline de Données Temps Réel
+Réception des ticks (prix bruts) via WebSocket < 50ms
+Agrégation en bougies M1, M5, M15 en temps réel
+Normalisation et validation de la qualité des données
+Calcul des indicateurs techniques (batch, < 10ms)
+Mise à jour des structures SMC (OB, FVG, Structure) (< 20ms)
+Passage au moteur IA pour scoring (< 100ms)
+Calcul du score de confluence SES (< 5ms)
+Décision et émission du signal si score ≥ 7 (< 10ms)
+Formatage et envoi Telegram (< 300ms)
+Stockage en base de données + monitoring (< 50ms)
+LATENCE TOTALE GARANTIE : < 500ms de la détection au signal Telegram
+
+
+SECTION 10 — BOT TELEGRAM & FORMAT DES SIGNAUX
+
+10.1  Format des Signaux — Spécification Exacte
+Chaque signal émis par A2Sniper doit respecter un format standardisé et informatif. Le format doit être lisible en 3 secondes et actionnable immédiatement.
+
+
+10.2  Commandes Bot Telegram — Spécification Complète
+
+
+SECTION 11 — BACKTESTING, VALIDATION & PERFORMANCE
+
+11.1  Protocole de Backtesting Obligatoire
+DONNÉES HISTORIQUES : Minimum 5 ans de données tick-by-tick sur toutes les paires OTC PO. Sources : Dukascopy, Tick Data Suite, données propriétaires.
+BACKTESTING WALK-FORWARD : Division des données en segments train/test glissants. Évite l'overfitting. Chaque modèle est testé sur des données jamais vues.
+MONTE CARLO SIMULATION : 10 000 simulations de séquences de trades pour valider la robustesse du système face à différents scénarios de marché.
+OUT-OF-SAMPLE TESTING : 20% des données réservées exclusivement pour le test final. Jamais touchées pendant l'entraînement.
+FORWARD TESTING : 3 mois de tests en conditions réelles (sans capital réel) avant mise en production. Précision minimale requise : 95% pour validation.
+
+11.2  KPIs de Performance à Atteindre
+
+11.3  Système de Monitoring des Performances en Temps Réel
+DASHBOARD INTERNE : Suivi en temps réel du win rate glissant sur les 24h, 7 jours, 30 jours et 12 mois.
+ALERTE DE DÉGRADATION : Si le win rate tombe sous 90% sur une fenêtre de 50 signaux → alerte automatique + suspension temporaire des signaux + re-calibration du système.
+CIRCUIT BREAKER : Si 3 signaux consécutifs perdants → pause automatique de 30 minutes + analyse des conditions de marché.
+RAPPORT JOURNALIER AUTOMATIQUE : Envoi à 23h59 d'un résumé de la journée (signaux émis, résultats, win rate du jour) à tous les abonnés.
+AUDIT MENSUEL : Rapport complet PDF généré automatiquement chaque 1er du mois avec analyse des performances passées et projections.
+
+
+SECTION 12 — GESTION DU RISQUE & PROTECTION DU CAPITAL
+
+Même à 99,99% de précision, la gestion du risque reste NON NÉGOCIABLE. Le système doit intégrer des règles de money management strictes dans chaque signal émis.
+
+12.1  Règles de Money Management Intégrées dans Chaque Signal
+MISE RECOMMANDÉE : Le signal indique toujours une mise recommandée entre 1% et 3% du capital selon le score de confluence (1% pour score 7, 2% pour 8-9, 3% pour 10).
+CAPITAL MAXIMUM PAR SESSION : Ne jamais dépasser 15% du capital total en jeu simultanément.
+RÈGLE DES 3 PERTES CONSÉCUTIVES : Après 3 pertes consécutives → le système émet un avertissement fort recommandant l'arrêt de la session.
+INTERDICTION DE MARTINGALE : Le système n'émet JAMAIS de signaux de type "doubler la mise". C'est formellement interdit dans le code.
+CAPITAL JOURNALIER MAXIMAL : Le système calcule et affiche le risque journalier cumulé. Au-delà de 10% de risque journalier → alerte critique.
+
+12.2  Filtres Anti-Manipulation Pocket Option
+DÉTECTION DE SPIKE : Si l'algorithme PO produit un spike (mouvement anormal > 3x l'ATR en 1 seconde) → tous les signaux en cours sont suspendus pendant 2 minutes.
+DÉTECTION DE WIDENING SPREAD : Écartement anormal du spread OTC → signal suspendu.
+FILTRE NEWS ÉCONOMIQUES : Intégration du calendrier économique. Aucun signal dans les 5 minutes avant et après une news High Impact (NFP, CPI, Fed).
+FILTRE DE VOLATILITÉ EXTRÊME : Si l'ATR dépasse 3x sa moyenne des 20 dernières périodes → signaux suspendus (marché incontrôlable).
+DÉTECTION DE TENDANCE CONTRADICTOIRE : Si un signal CALL est émis mais que le D1 est en downtrend fort (ADX > 40 baissier) → signal dégradé de 2 points automatiquement.
+
+
+SECTION 13 — INFRASTRUCTURE, SÉCURITÉ & CONFORMITÉ
+
+13.1  Infrastructure Serveur Recommandée
+
+13.2  Sécurité du Système
+CHIFFREMENT BOUT EN BOUT : Toutes les communications chiffrées TLS 1.3. Données au repos chiffrées AES-256.
+AUTHENTIFICATION MULTI-FACTEURS (2FA) : Obligatoire pour l'accès au dashboard et à l'API. Google Authenticator ou SMS.
+GESTION DES CLÉS API : Rotation automatique des clés tous les 30 jours. Stockage dans AWS Secrets Manager.
+PROTECTION DES DONNÉES UTILISATEUR : Conformité RGPD. Données anonymisées pour l'entraînement des modèles. Droit à l'oubli implémenté.
+ANTI-DDOS : Protection Cloudflare Enterprise. Rate limiting sur toutes les routes API.
+AUDIT DE SÉCURITÉ : Pentest trimestriel par cabinet externe. Rapport de sécurité disponible aux abonnés Pro.
+LOGS IMMUABLES : Tous les signaux émis sont archivés de façon immuable (blockchain ou hash chain). Traçabilité totale.
+
+13.3  Conformité & Avertissements Légaux
+DISCLAIMER OBLIGATOIRE : Chaque signal est accompagné d'un avertissement sur les risques du trading d'options binaires.
+RGPD : Politique de confidentialité complète. Consentement explicite des utilisateurs. Pas de revente de données.
+RESPONSABILITÉ : A2Sniper est un outil d'aide à la décision. La décision finale appartient à l'utilisateur. Le système n'est pas responsable des pertes.
+INTERDICTIONS GÉOGRAPHIQUES : Le système vérifie la géolocalisation et refuse l'accès aux utilisateurs résidant dans des pays où les options binaires sont interdites (États-Unis, Canada, Belgique, etc.).
+
+
+SECTION 14 — MODÈLE ÉCONOMIQUE & PLANS TARIFAIRES
+
+
+
+SECTION 15 — ROADMAP DE DÉVELOPPEMENT
+
+Phase 1 — Fondations (Mois 1-3)
+Infrastructure cloud déployée et sécurisée
+Collecteur de données WebSocket opérationnel pour toutes les paires PO
+Moteur SMC (Structure, OB, FVG, Liquidité) — version 1.0
+Moteur de détection de bougies (tous les patterns requis)
+Moteur d'indicateurs techniques (tous les indicateurs listés)
+Premier modèle IA LSTM entraîné et validé ≥ 90% précision
+Bot Telegram v1.0 avec commandes de base
+Backtesting sur 5 ans de données
+
+Phase 2 — Optimisation (Mois 4-6)
+Moteur de détection de figures chartistes complet
+Sniper Entry System (SES) — Scoring 0-10 opérationnel
+Modèles XGBoost et Transformer entraînés et intégrés
+Méta-modèle Voting Classifier déployé
+Dashboard web v1.0 — monitoring performance
+API REST v1.0 avec authentification
+Forward testing 3 mois — validation ≥ 95% précision
+Lancement Beta privé — 50 utilisateurs tests
+
+Phase 3 — Lancement & Croissance (Mois 7-12)
+Lancement public — accès aux 3 plans tarifaires
+Application mobile native iOS + Android
+Système d'apprentissage continu automatique toutes les 72h
+Intégration du calendrier économique (news filter)
+Dashboard v2.0 — Analytics avancés + historique complet
+Communauté de traders (groupe Telegram premium)
+Webinaires hebdomadaires de formation
+Objectif : 99,99% de précision sur signaux Score 9-10/10
+
+Phase 4 — Excellence (Mois 12+)
+Extension multi-plateformes (Quotex, IQ Option en parallèle de PO)
+IA générative pour analyses textuelles de marché
+Réseau social de traders avec leaderboard de performance
+Trading automatisé optionnel avec contrôle strict du risque
+Modèles IA propriétaires brevetés
+
+
+SECTION 16 — GLOSSAIRE TECHNIQUE
+
+
+
+⚡ A2Sniper — Sniper Edition v3.0
+Document Technique Confidentiel & Propriétaire
+Ce document constitue le cahier des charges officiel pour le développement de A2Sniper.
+Toute reproduction partielle ou totale sans autorisation est strictement interdite.

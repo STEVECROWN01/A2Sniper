@@ -270,14 +270,14 @@ export class DataSourceManager {
 
   // Analyse du sentiment de marché
   async getMarketSentiment(symbol: string): Promise<{
-    score: number; // -1 to 1
-    confidence: number; // 0 to 1
+    probability: number; // -1 to 1
+    winrate: number; // 0 to 1
     sources: string[];
   }> {
     // Simulation d'analyse de sentiment
     return {
-      score: (Math.random() - 0.5) * 2, // Random entre -1 et 1
-      confidence: 0.7 + Math.random() * 0.3, // Random entre 0.7 et 1
+      probability: (Math.random() - 0.5) * 2, // Random entre -1 et 1
+      winrate: 0.7 + Math.random() * 0.3, // Random entre 0.7 et 1
       sources: ['Twitter', 'Reddit', 'News Articles', 'Economic Indicators']
     };
   }

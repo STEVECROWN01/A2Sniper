@@ -14,7 +14,6 @@ export function BacktestResults({ result, onClose }: BacktestResultsProps) {
   const [activeTab, setActiveTab] = useState('overview');
 
   const handleDownload = (format: 'pdf' | 'csv' | 'json') => {
-    // Simulation du téléchargement
     const data = format === 'json' ? JSON.stringify(result, null, 2) : 
                  format === 'csv' ? convertToCSV(result) : 
                  'PDF export simulation';
@@ -57,43 +56,43 @@ export function BacktestResults({ result, onClose }: BacktestResultsProps) {
   ];
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
       <motion.div
-        initial={{ opacity: 0, scale: 0.9 }}
+        initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
-        exit={{ opacity: 0, scale: 0.9 }}
-        className="bg-white rounded-xl shadow-2xl max-w-6xl w-full max-h-[90vh] overflow-hidden"
+        exit={{ opacity: 0, scale: 0.95 }}
+        className="bg-[#0a0a0c] border border-white/10 rounded-2xl shadow-2xl max-w-6xl w-full max-h-[90vh] overflow-hidden"
       >
         {/* Header */}
-        <div className="flex items-center justify-between p-6 border-b border-gray-200">
+        <div className="flex items-center justify-between p-6 border-b border-white/5">
           <div>
-            <h2 className="text-2xl font-bold text-gray-900">Résultats du Backtest</h2>
-            <p className="text-gray-600">Analyse détaillée des performances</p>
+            <h2 className="text-xl font-black text-white uppercase tracking-wider">Résultats du Backtest</h2>
+            <p className="text-xs text-gray-500 font-bold mt-1">Analyse détaillée des performances historiques.</p>
           </div>
           <div className="flex items-center space-x-3">
             <div className="flex items-center space-x-2">
               <button
                 onClick={() => handleDownload('pdf')}
-                className="bg-red-600 text-white px-3 py-2 rounded-lg hover:bg-red-700 transition-colors text-sm"
+                className="bg-[#D4AF37] hover:bg-[#c5a059] text-black font-black uppercase tracking-wider text-[10px] px-4 py-2 rounded-xl transition-all"
               >
                 PDF
               </button>
               <button
                 onClick={() => handleDownload('csv')}
-                className="bg-green-600 text-white px-3 py-2 rounded-lg hover:bg-green-700 transition-colors text-sm"
+                className="bg-white/5 border border-white/10 text-white hover:bg-white/10 font-bold uppercase tracking-wider text-[10px] px-4 py-2 rounded-xl transition-all"
               >
                 CSV
               </button>
               <button
                 onClick={() => handleDownload('json')}
-                className="bg-blue-600 text-white px-3 py-2 rounded-lg hover:bg-blue-700 transition-colors text-sm"
+                className="bg-white/5 border border-white/10 text-white hover:bg-white/10 font-bold uppercase tracking-wider text-[10px] px-4 py-2 rounded-xl transition-all"
               >
                 JSON
               </button>
             </div>
             <button
               onClick={onClose}
-              className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+              className="p-2 text-gray-500 hover:text-white hover:bg-white/[0.03] rounded-xl transition-all"
             >
               <X className="w-5 h-5" />
             </button>
@@ -101,16 +100,16 @@ export function BacktestResults({ result, onClose }: BacktestResultsProps) {
         </div>
 
         {/* Tabs */}
-        <div className="border-b border-gray-200">
+        <div className="border-b border-white/5 bg-[#050507]">
           <nav className="flex space-x-8 px-6">
             {tabs.map((tab) => (
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
-                className={`py-4 px-1 border-b-2 font-medium text-sm flex items-center space-x-2 ${
+                className={`py-4 px-1 border-b-2 font-black text-xs uppercase tracking-wider flex items-center space-x-2 transition-all ${
                   activeTab === tab.id
-                    ? 'border-blue-500 text-blue-600'
-                    : 'border-transparent text-gray-500 hover:text-gray-700'
+                    ? 'border-[#D4AF37] text-[#D4AF37]'
+                    : 'border-transparent text-gray-500 hover:text-gray-300'
                 }`}
               >
                 <tab.icon className="w-4 h-4" />
@@ -121,102 +120,103 @@ export function BacktestResults({ result, onClose }: BacktestResultsProps) {
         </div>
 
         {/* Content */}
-        <div className="p-6 overflow-y-auto max-h-[60vh]">
+        <div className="p-6 overflow-y-auto max-h-[60vh] bg-[#050507]">
           {activeTab === 'overview' && (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-              <div className="bg-green-50 rounded-lg p-4 border border-green-200">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+              
+              <div className="bg-[#0a0a0c] rounded-xl p-5 border border-white/5">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm text-green-600 mb-1">Profit Net</p>
-                    <p className="text-2xl font-bold text-green-700">
+                    <p className="text-[10px] text-gray-500 font-bold uppercase tracking-wider mb-1">Profit Net</p>
+                    <p className="text-2xl font-black text-green-500">
                       ${result.netProfit.toFixed(2)}
                     </p>
                   </div>
-                  <DollarSign className="w-8 h-8 text-green-600" />
+                  <DollarSign className="w-8 h-8 text-green-500" />
                 </div>
               </div>
 
-              <div className="bg-blue-50 rounded-lg p-4 border border-blue-200">
+              <div className="bg-[#0a0a0c] rounded-xl p-5 border border-white/5">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm text-blue-600 mb-1">Taux de Réussite</p>
-                    <p className="text-2xl font-bold text-blue-700">
+                    <p className="text-[10px] text-gray-500 font-bold uppercase tracking-wider mb-1">Taux de Réussite</p>
+                    <p className="text-2xl font-black text-[#D4AF37]">
                       {result.winRate.toFixed(1)}%
                     </p>
                   </div>
-                  <Target className="w-8 h-8 text-blue-600" />
+                  <Target className="w-8 h-8 text-[#D4AF37]" />
                 </div>
               </div>
 
-              <div className="bg-purple-50 rounded-lg p-4 border border-purple-200">
+              <div className="bg-[#0a0a0c] rounded-xl p-5 border border-white/5">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm text-purple-600 mb-1">Total Trades</p>
-                    <p className="text-2xl font-bold text-purple-700">
+                    <p className="text-[10px] text-gray-500 font-bold uppercase tracking-wider mb-1">Total Trades</p>
+                    <p className="text-2xl font-black text-white">
                       {result.totalTrades}
                     </p>
                   </div>
-                  <BarChart3 className="w-8 h-8 text-purple-600" />
+                  <BarChart3 className="w-8 h-8 text-gray-400" />
                 </div>
               </div>
 
-              <div className="bg-yellow-50 rounded-lg p-4 border border-yellow-200">
+              <div className="bg-[#0a0a0c] rounded-xl p-5 border border-white/5">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm text-yellow-600 mb-1">Ratio Sharpe</p>
-                    <p className="text-2xl font-bold text-yellow-700">
+                    <p className="text-[10px] text-gray-500 font-bold uppercase tracking-wider mb-1">Ratio Sharpe</p>
+                    <p className="text-2xl font-black text-yellow-500">
                       {result.sharpeRatio.toFixed(2)}
                     </p>
                   </div>
-                  <TrendingUp className="w-8 h-8 text-yellow-600" />
+                  <TrendingUp className="w-8 h-8 text-yellow-500" />
                 </div>
               </div>
 
-              <div className="bg-red-50 rounded-lg p-4 border border-red-200">
+              <div className="bg-[#0a0a0c] rounded-xl p-5 border border-white/5">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm text-red-600 mb-1">Drawdown Max</p>
-                    <p className="text-2xl font-bold text-red-700">
+                    <p className="text-[10px] text-gray-500 font-bold uppercase tracking-wider mb-1">Drawdown Max</p>
+                    <p className="text-2xl font-black text-red-500">
                       {result.maxDrawdown.toFixed(1)}%
                     </p>
                   </div>
-                  <TrendingDown className="w-8 h-8 text-red-600" />
+                  <TrendingDown className="w-8 h-8 text-red-500" />
                 </div>
               </div>
 
-              <div className="bg-indigo-50 rounded-lg p-4 border border-indigo-200">
+              <div className="bg-[#0a0a0c] rounded-xl p-5 border border-white/5">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm text-indigo-600 mb-1">Facteur Profit</p>
-                    <p className="text-2xl font-bold text-indigo-700">
+                    <p className="text-[10px] text-gray-500 font-bold uppercase tracking-wider mb-1">Facteur Profit</p>
+                    <p className="text-2xl font-black text-[#D4AF37]">
                       {result.profitFactor.toFixed(2)}
                     </p>
                   </div>
-                  <DollarSign className="w-8 h-8 text-indigo-600" />
+                  <DollarSign className="w-8 h-8 text-[#D4AF37]" />
                 </div>
               </div>
 
-              <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
+              <div className="bg-[#0a0a0c] rounded-xl p-5 border border-white/5">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm text-gray-600 mb-1">Gain Moyen</p>
-                    <p className="text-2xl font-bold text-gray-700">
+                    <p className="text-[10px] text-gray-500 font-bold uppercase tracking-wider mb-1">Gain Moyen</p>
+                    <p className="text-2xl font-black text-green-400">
                       ${result.avgWin.toFixed(2)}
                     </p>
                   </div>
-                  <TrendingUp className="w-8 h-8 text-gray-600" />
+                  <TrendingUp className="w-8 h-8 text-green-400" />
                 </div>
               </div>
 
-              <div className="bg-orange-50 rounded-lg p-4 border border-orange-200">
+              <div className="bg-[#0a0a0c] rounded-xl p-5 border border-white/5">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm text-orange-600 mb-1">Perte Moyenne</p>
-                    <p className="text-2xl font-bold text-orange-700">
+                    <p className="text-[10px] text-gray-500 font-bold uppercase tracking-wider mb-1">Perte Moyenne</p>
+                    <p className="text-2xl font-black text-red-400">
                       ${result.avgLoss.toFixed(2)}
                     </p>
                   </div>
-                  <TrendingDown className="w-8 h-8 text-orange-600" />
+                  <TrendingDown className="w-8 h-8 text-red-400" />
                 </div>
               </div>
             </div>
@@ -224,54 +224,54 @@ export function BacktestResults({ result, onClose }: BacktestResultsProps) {
 
           {activeTab === 'trades' && (
             <div className="overflow-x-auto">
-              <table className="w-full">
+              <table className="w-full text-xs font-bold">
                 <thead>
-                  <tr className="border-b border-gray-200">
-                    <th className="text-left py-3 px-4 font-medium text-gray-900">ID</th>
-                    <th className="text-left py-3 px-4 font-medium text-gray-900">Paire</th>
-                    <th className="text-left py-3 px-4 font-medium text-gray-900">Direction</th>
-                    <th className="text-left py-3 px-4 font-medium text-gray-900">Entrée</th>
-                    <th className="text-left py-3 px-4 font-medium text-gray-900">Sortie</th>
-                    <th className="text-left py-3 px-4 font-medium text-gray-900">Résultat</th>
-                    <th className="text-left py-3 px-4 font-medium text-gray-900">Profit</th>
+                  <tr className="border-b border-white/10 text-gray-500 uppercase text-[10px] tracking-wider">
+                    <th className="text-left py-3 px-4">ID</th>
+                    <th className="text-left py-3 px-4">Paire</th>
+                    <th className="text-left py-3 px-4">Direction</th>
+                    <th className="text-left py-3 px-4">Entrée</th>
+                    <th className="text-left py-3 px-4">Sortie</th>
+                    <th className="text-left py-3 px-4">Résultat</th>
+                    <th className="text-left py-3 px-4">Profit</th>
                   </tr>
                 </thead>
                 <tbody>
                   {result.trades.slice(0, 50).map((trade, index) => (
-                    <tr key={trade.id} className="border-b border-gray-100 hover:bg-gray-50">
-                      <td className="py-3 px-4 text-sm text-gray-900">
+                    <tr key={trade.id} className="border-b border-white/[0.02] hover:bg-white/[0.02] transition-colors text-white">
+                      <td className="py-3 px-4 text-gray-500">
                         #{index + 1}
                       </td>
-                      <td className="py-3 px-4 text-sm text-gray-900">
+                      <td className="py-3 px-4 uppercase">
                         {trade.signal.pair}
                       </td>
                       <td className="py-3 px-4">
-                        <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                        <span className={`px-2 py-0.5 rounded text-[10px] font-black uppercase ${
                           trade.direction === 'CALL' 
-                            ? 'bg-green-100 text-green-800' 
-                            : 'bg-red-100 text-red-800'
+                            ? 'bg-green-500/10 text-green-500' 
+                            : 'bg-red-500/10 text-red-500'
                         }`}>
                           {trade.direction}
                         </span>
                       </td>
-                      <td className="py-3 px-4 text-sm text-gray-900">
+                      <td className="py-3 px-4 font-mono">
                         {trade.entryPrice.toFixed(4)}
                       </td>
-                      <td className="py-3 px-4 text-sm text-gray-900">
+                      <td className="py-3 px-4 font-mono">
                         {trade.exitPrice.toFixed(4)}
                       </td>
                       <td className="py-3 px-4">
-                        <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                        <span className={`px-2 py-0.5 rounded text-[10px] font-black uppercase ${
                           trade.result === 'WIN' 
-                            ? 'bg-green-100 text-green-800' 
-                            : 'bg-red-100 text-red-800'
+                            ? 'bg-green-500/10 text-green-500' 
+                            : 'bg-red-500/10 text-red-500'
                         }`}>
                           {trade.result}
                         </span>
                       </td>
-                      <td className="py-3 px-4 text-sm">
-                        <span className={`font-medium ${
-                          trade.netProfit > 0 ? 'text-green-600' : 'text-red-600'
+                      <td className="py-3 px-4">
+                        <span className={`font-black ${
+                          trade.netProfit > 0 ? 'text-green-500' : 'text-red-500'
                         }`}>
                           {trade.netProfit > 0 ? '+' : ''}${trade.netProfit.toFixed(2)}
                         </span>
@@ -284,63 +284,63 @@ export function BacktestResults({ result, onClose }: BacktestResultsProps) {
           )}
 
           {activeTab === 'metrics' && (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-8 text-xs font-bold text-gray-400">
               <div>
-                <h3 className="text-lg font-semibold text-gray-900 mb-4">Métriques de Performance</h3>
-                <div className="space-y-4">
-                  <div className="flex justify-between">
-                    <span className="text-gray-600">Trades Gagnants</span>
-                    <span className="font-medium">{result.winningTrades}</span>
+                <h3 className="text-sm font-black text-[#D4AF37] uppercase tracking-wider mb-4">Métriques de Performance</h3>
+                <div className="space-y-3">
+                  <div className="flex justify-between border-b border-white/[0.02] pb-2">
+                    <span>Trades Gagnants</span>
+                    <span className="text-white font-black">{result.winningTrades}</span>
                   </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-600">Trades Perdants</span>
-                    <span className="font-medium">{result.losingTrades}</span>
+                  <div className="flex justify-between border-b border-white/[0.02] pb-2">
+                    <span>Trades Perdants</span>
+                    <span className="text-white font-black">{result.losingTrades}</span>
                   </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-600">Plus Gros Gain</span>
-                    <span className="font-medium text-green-600">${result.largestWin.toFixed(2)}</span>
+                  <div className="flex justify-between border-b border-white/[0.02] pb-2">
+                    <span>Plus Gros Gain</span>
+                    <span className="text-green-500 font-black">${result.largestWin.toFixed(2)}</span>
                   </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-600">Plus Grosse Perte</span>
-                    <span className="font-medium text-red-600">${result.largestLoss.toFixed(2)}</span>
+                  <div className="flex justify-between border-b border-white/[0.02] pb-2">
+                    <span>Plus Grosse Perte</span>
+                    <span className="text-red-500 font-black">${result.largestLoss.toFixed(2)}</span>
                   </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-600">Série Gagnante Max</span>
-                    <span className="font-medium">{result.consecutiveWins}</span>
+                  <div className="flex justify-between border-b border-white/[0.02] pb-2">
+                    <span>Série Gagnante Max</span>
+                    <span className="text-white font-black">{result.consecutiveWins}</span>
                   </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-600">Série Perdante Max</span>
-                    <span className="font-medium">{result.consecutiveLosses}</span>
+                  <div className="flex justify-between border-b border-white/[0.02] pb-2">
+                    <span>Série Perdante Max</span>
+                    <span className="text-white font-black">{result.consecutiveLosses}</span>
                   </div>
                 </div>
               </div>
 
               <div>
-                <h3 className="text-lg font-semibold text-gray-900 mb-4">Métriques de Risque</h3>
-                <div className="space-y-4">
-                  <div className="flex justify-between">
-                    <span className="text-gray-600">Profit Total</span>
-                    <span className="font-medium text-green-600">${result.totalProfit.toFixed(2)}</span>
+                <h3 className="text-sm font-black text-[#D4AF37] uppercase tracking-wider mb-4">Métriques de Risque</h3>
+                <div className="space-y-3">
+                  <div className="flex justify-between border-b border-white/[0.02] pb-2">
+                    <span>Profit Total</span>
+                    <span className="text-green-500 font-black">${result.totalProfit.toFixed(2)}</span>
                   </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-600">Perte Totale</span>
-                    <span className="font-medium text-red-600">${result.totalLoss.toFixed(2)}</span>
+                  <div className="flex justify-between border-b border-white/[0.02] pb-2">
+                    <span>Perte Totale</span>
+                    <span className="text-red-500 font-black">${result.totalLoss.toFixed(2)}</span>
                   </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-600">Ratio Gain/Perte</span>
-                    <span className="font-medium">{(result.avgWin / result.avgLoss).toFixed(2)}</span>
+                  <div className="flex justify-between border-b border-white/[0.02] pb-2">
+                    <span>Ratio Gain/Perte</span>
+                    <span className="text-white font-black">{(result.avgWin / result.avgLoss).toFixed(2)}</span>
                   </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-600">Facteur de Profit</span>
-                    <span className="font-medium">{result.profitFactor.toFixed(2)}</span>
+                  <div className="flex justify-between border-b border-white/[0.02] pb-2">
+                    <span>Facteur de Profit</span>
+                    <span className="text-white font-black">{result.profitFactor.toFixed(2)}</span>
                   </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-600">Ratio de Sharpe</span>
-                    <span className="font-medium">{result.sharpeRatio.toFixed(2)}</span>
+                  <div className="flex justify-between border-b border-white/[0.02] pb-2">
+                    <span>Ratio de Sharpe</span>
+                    <span className="text-white font-black">{result.sharpeRatio.toFixed(2)}</span>
                   </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-600">Drawdown Maximum</span>
-                    <span className="font-medium text-red-600">{result.maxDrawdown.toFixed(1)}%</span>
+                  <div className="flex justify-between border-b border-white/[0.02] pb-2">
+                    <span>Drawdown Maximum</span>
+                    <span className="text-red-500 font-black">{result.maxDrawdown.toFixed(1)}%</span>
                   </div>
                 </div>
               </div>

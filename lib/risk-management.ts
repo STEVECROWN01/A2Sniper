@@ -5,7 +5,7 @@ export interface RiskParameters {
   stopLossPercentage: number;
   takeProfitPercentage: number;
   maxConcurrentTrades: number;
-  minConfidenceLevel: number;
+  minWinrateLevel: number;
 }
 
 export interface PositionSize {
@@ -25,6 +25,7 @@ export interface TradeRisk {
 }
 
 export class RiskManager {
+  private parameters: RiskParameters;
   private defaultParameters: RiskParameters = {
     maxRiskPerTrade: 0.02, // 2% par trade
     maxDailyRisk: 0.10, // 10% par jour
@@ -32,10 +33,10 @@ export class RiskManager {
     stopLossPercentage: 0.015, // 1.5%
     takeProfitPercentage: 0.025, // 2.5%
     maxConcurrentTrades: 5,
-    minConfidenceLevel: 75
+    minWinrateLevel: 85
   };
 
-  constructor(private parameters: RiskParameters = {}) {
+  constructor(parameters: Partial<RiskParameters> = {}) {
     this.parameters = { ...this.defaultParameters, ...parameters };
   }
 
@@ -45,7 +46,7 @@ export class RiskManager {
     winRate: number,
     avgWin: number,
     avgLoss: number,
-    confidence: number
+    analyzedWinrate: number
   ): PositionSize {
     // Formule de Kelly: f = (bp - q) / b
     // où b = odds reçues, p = probabilité de gain, q = probabilité de perte
@@ -56,9 +57,9 @@ export class RiskManager {
     const kellyPercentage = (b * p - q) / b;
     const adjustedKelly = Math.max(0, Math.min(kellyPercentage * 0.5, 0.1)); // Limité à 10% et réduit de moitié
     
-    // Ajustement basé sur la confiance
-    const confidenceMultiplier = confidence / 100;
-    const finalPercentage = adjustedKelly * confidenceMultiplier;
+    // Ajustement basé sur l'analyse de winrate
+    const winrateMultiplier = analyzedWinrate / 100;
+    const finalPercentage = adjustedKelly * winrateMultiplier;
     
     // Application des limites de risque
     const maxRiskAmount = accountBalance * this.parameters.maxRiskPerTrade;
@@ -85,9 +86,9 @@ export class RiskManager {
     
     // Facteurs de risque
     
-    // 1. Niveau de confiance
-    if (signal.confidence >= 85) riskScore += 20;
-    else if (signal.confidence >= 75) riskScore += 10;
+    // 1. Niveau de Winrate (Analyse technique)
+    if (signal.winrate >= 95) riskScore += 20;
+    else if (signal.winrate >= 85) riskScore += 10;
     else riskScore -= 10;
     
     // 2. Volatilité du marché
@@ -219,7 +220,7 @@ export class RiskManager {
     
     // Ajustement basé sur le drawdown
     if (performanceMetrics.maxDrawdown > 0.15) {
-      adjusted.minConfidenceLevel = Math.min(90, adjusted.minConfidenceLevel + 5);
+      adjusted.minWinrateLevel = Math.min(95, adjusted.minWinrateLevel + 5);
       adjusted.maxRiskPerTrade = Math.max(0.01, adjusted.maxRiskPerTrade * 0.7);
     }
     
@@ -242,8 +243,8 @@ export class RiskManager {
       recommendations.push('📉 Considérez une pause de trading pour réévaluer la stratégie');
     }
     
-    if (accountMetrics.winRate < 70) {
-      recommendations.push('🎯 Taux de réussite faible - Augmentez le seuil de confiance minimum');
+    if (accountMetrics.winRate < 85) {
+      recommendations.push('🎯 Taux de réussite faible - Augmentez le seuil de winrate minimum');
       recommendations.push('📊 Analysez les trades perdants pour identifier les patterns');
     }
     

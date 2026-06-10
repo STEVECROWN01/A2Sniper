@@ -2,8 +2,8 @@
 
 import { useState, useCallback } from 'react';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
-import { motion } from 'framer-motion';
+import { usePathname, useRouter } from 'next/navigation';
+import { motion, AnimatePresence } from 'framer-motion';
 import { 
   TrendingUp, 
   BarChart3, 
@@ -15,37 +15,37 @@ import {
   User, 
   Bell, 
   LogOut, 
-  Moon, 
-  Sun, 
   Search,
   MessageCircle,
   Brain,
   DollarSign,
   LayoutDashboard,
-  ExternalLink
+  Calculator,
+  BookOpen,
+  Activity
 } from 'lucide-react';
 import { useAppStore } from '@/lib/store';
 
 const navigationItems = [
   { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
   { name: 'Signaux', href: '/signals', icon: TrendingUp },
-  { name: 'Performance', href: '/performance', icon: BarChart3 },
-  { name: 'Backtesting', href: '/backtesting', icon: TrendingUp },
-  { name: 'Courtiers', href: '/brokers', icon: ExternalLink },
-  { name: 'Paramètres', href: '/settings', icon: Settings },
   { name: 'Bot Telegram', href: '/telegram', icon: MessageCircle },
+  { name: 'Risk Manager', href: '/risk-manager', icon: Calculator },
+  { name: 'Trading Journal', href: '/trading-journal', icon: BookOpen },
+  { name: 'Performance', href: '/performance', icon: Activity },
   { name: 'Analyses', href: '/analytics', icon: Brain },
+  { name: 'Paramètres', href: '/settings', icon: Settings },
   { name: 'Tarifs', href: '/pricing', icon: DollarSign }
 ];
 
 export function Navigation() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-  const [isDarkMode, setIsDarkMode] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const { user, setAuthenticated } = useAppStore();
+  const { user, logout } = useAppStore();
   const pathname = usePathname();
+  const router = useRouter();
 
   const notifications = [
     { id: 1, title: 'Nouveau signal EUR/USD', time: '2 min', type: 'signal' },
@@ -54,22 +54,14 @@ export function Navigation() {
   ];
 
   const handleLogout = useCallback(() => {
-    setAuthenticated(false);
+    logout();
     setShowUserMenu(false);
-    // Redirection vers la page d'accueil
     window.location.href = '/';
-  }, [setAuthenticated]);
-
-  const toggleDarkMode = useCallback(() => {
-    setIsDarkMode(!isDarkMode);
-    // Ici on pourrait implémenter le vrai dark mode
-    document.documentElement.classList.toggle('dark');
-  }, [isDarkMode]);
+  }, [logout]);
 
   const handleSearch = useCallback((e: React.FormEvent) => {
     e.preventDefault();
     if (searchQuery.trim()) {
-      // Simulation de recherche
       const searchResults = [
         { type: 'signal', title: 'EUR/USD CALL Signal', url: '/signals' },
         { type: 'performance', title: 'Performance Analytics', url: '/performance' },
@@ -77,7 +69,7 @@ export function Navigation() {
       ];
       
       const result = searchResults.find(r => 
-        r.title.toLowerCase().includes(searchTerm.toLowerCase())
+        r.title.toLowerCase().includes(searchQuery.toLowerCase())
       );
       
       if (result) {
@@ -86,77 +78,73 @@ export function Navigation() {
         router.push('/signals');
       }
       setSearchQuery('');
+      setIsMobileMenuOpen(false);
     }
-  }, [searchQuery]);
+  }, [searchQuery, router]);
 
   return (
     <>
       {/* Sidebar Desktop */}
       <div className="hidden md:flex md:w-64 md:flex-col md:fixed md:inset-y-0 z-50">
-        <div className="flex flex-col flex-grow pt-5 bg-gradient-to-b from-slate-900 to-slate-800 overflow-y-auto">
-          <div className="flex items-center flex-shrink-0 px-4">
-            <div className="flex items-center space-x-2">
-              <div className="w-10 h-10 bg-gradient-to-r from-blue-500 to-purple-600 rounded-lg flex items-center justify-center">
-                <TrendingUp className="w-6 h-6 text-white" />
+        <div className="flex flex-col flex-grow pt-6 bg-[#0a0a0c] border-r border-white/5 overflow-y-auto">
+          
+          {/* Logo Brand */}
+          <div className="flex items-center flex-shrink-0 px-5 mb-8">
+            <div className="flex items-center space-x-3">
+              <div className="relative w-10 h-10 rounded-xl overflow-hidden border border-[#D4AF37]/30 flex items-center justify-center bg-[#050507] shadow-[0_0_15px_rgba(212,175,55,0.1)]">
+                <img src="/A2Sniper-logo.jpeg" alt="A2Sniper Logo" className="w-full h-full object-cover" />
               </div>
               <div>
-                <h1 className="text-xl font-bold text-white">TradeAlgo</h1>
-                <p className="text-xs text-blue-200">AI Trading Platform</p>
+                <h1 className="text-sm font-black text-white tracking-widest uppercase">A2Sniper <span className="text-[10px] text-[#D4AF37] font-black tracking-[0.2em] ml-1">v3.0</span></h1>
+                <p className="text-[9px] text-[#D4AF37] font-black uppercase tracking-widest">Neural cockpit</p>
               </div>
             </div>
           </div>
           
-          <div className="mt-8 flex-grow flex flex-col">
-            <nav className="flex-1 px-2 space-y-1">
+          {/* Nav Items */}
+          <div className="flex-grow flex flex-col">
+            <nav className="flex-1 px-3 space-y-1">
               {navigationItems.map((item) => {
                 const isActive = pathname === item.href;
                 return (
                   <Link
                     key={item.name}
                     href={item.href}
-                    className={`group flex items-center px-2 py-3 text-sm font-medium rounded-md transition-colors ${
+                    className={`group flex items-center px-4 py-3 text-xs font-bold uppercase tracking-wider rounded-xl transition-all duration-200 relative ${
                       isActive
-                        ? 'bg-blue-600 text-white'
-                        : 'text-gray-300 hover:bg-gray-700 hover:text-white'
+                        ? 'bg-[#D4AF37]/10 text-[#D4AF37] border-l-2 border-[#D4AF37]'
+                        : 'text-gray-400 hover:text-white hover:bg-white/[0.02]'
                     }`}
                   >
                     <item.icon
-                      className={`mr-3 h-5 w-5 ${
-                        isActive ? 'text-white' : 'text-gray-400'
+                      className={`mr-3 h-4 w-4 transition-colors ${
+                        isActive ? 'text-[#D4AF37]' : 'text-gray-500 group-hover:text-white'
                       }`}
                     />
                     {item.name}
-                    {isActive && (
-                      <motion.div
-                        className="ml-auto w-1 h-8 bg-blue-300 rounded-full"
-                        layoutId="activeIndicator"
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        transition={{ duration: 0.2 }}
-                      />
-                    )}
                   </Link>
                 );
               })}
             </nav>
             
             {/* User Profile */}
-            <div className="flex-shrink-0 flex border-t border-gray-700 p-4">
-              <div className="flex items-center space-x-3">
-                <div className="w-10 h-10 bg-gradient-to-r from-green-400 to-blue-500 rounded-full flex items-center justify-center">
-                  <User className="w-5 h-5 text-white" />
+            <div className="flex-shrink-0 flex border-t border-white/5 p-4 bg-[#050507]/40">
+              <div className="flex items-center space-x-3 w-full">
+                <div className="w-10 h-10 bg-white/[0.02] border border-[#D4AF37]/20 rounded-full flex items-center justify-center flex-shrink-0">
+                  <User className="w-5 h-5 text-[#D4AF37]" />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-white truncate">
-                    {user?.name}
+                  <p className="text-xs font-black text-white truncate uppercase tracking-wider">
+                    {user?.name || 'Founder Member'}
                   </p>
-                  <p className="text-xs text-gray-400 truncate">
-                    {user?.email}
+                  <p className="text-[10px] text-gray-500 truncate font-bold">
+                    {user?.email || 'founders@a2sniper.ai'}
                   </p>
                 </div>
                 <button
                   onClick={handleLogout}
-                  className="flex-shrink-0 p-1 text-gray-400 hover:text-white"
+                  className="flex-shrink-0 p-2 text-gray-500 hover:text-[#D4AF37] hover:bg-white/[0.03] rounded-lg transition-colors"
+                  title="Déconnexion"
                 >
                   <LogOut className="w-4 h-4" />
                 </button>
@@ -166,135 +154,186 @@ export function Navigation() {
         </div>
       </div>
 
-      {/* Mobile menu button */}
-      <div className="md:hidden">
-        <div className="fixed top-0 left-0 right-0 z-40 bg-slate-900 px-4 py-3 flex items-center justify-between">
-          {/* Search */}
-          <form onSubmit={handleSearch} className="flex-1 max-w-md">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Rechercher..."
-                className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              />
-            </div>
-          </form>
+      {/* Mobile Top Bar */}
+      <div className="md:hidden fixed top-0 left-0 right-0 z-40 bg-[#0a0a0c] border-b border-white/5 px-4 py-3 flex items-center justify-between">
+        
+        {/* Left: Mobile Menu Trigger */}
+        <button
+          onClick={() => setIsMobileMenuOpen(true)}
+          className="p-2 text-gray-400 hover:text-white hover:bg-white/[0.03] rounded-xl transition-colors"
+        >
+          <Menu className="w-6 h-6" />
+        </button>
 
-          {/* Actions */}
-          <div className="flex items-center space-x-4">
-            {/* Dark Mode Toggle */}
+        {/* Center: Brand */}
+        <div className="flex items-center space-x-2">
+          <div className="relative w-8 h-8 rounded-lg overflow-hidden border border-[#D4AF37]/30 flex items-center justify-center bg-[#050507]">
+            <img src="/A2Sniper-logo.jpeg" alt="Logo" className="w-full h-full object-cover" />
+          </div>
+          <span className="text-sm font-black text-white tracking-widest uppercase">A2Sniper</span>
+        </div>
+
+        {/* Right: Actions */}
+        <div className="flex items-center space-x-2">
+          
+          {/* Notifications */}
+          <div className="relative">
             <button
-              onClick={toggleDarkMode}
-              className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
-              title={isDarkMode ? 'Mode clair' : 'Mode sombre'}
+              onClick={() => setShowNotifications(!showNotifications)}
+              className="p-2 text-gray-400 hover:text-white hover:bg-white/[0.03] rounded-xl transition-colors relative"
             >
-              {isDarkMode ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
+              <Bell className="w-5 h-5" />
+              <span className="absolute top-1 right-1 bg-[#D4AF37] text-black text-[9px] font-black rounded-full w-4 h-4 flex items-center justify-center">
+                {notifications.length}
+              </span>
             </button>
 
-            {/* Notifications */}
-            <div className="relative">
-              <button
-                onClick={() => setShowNotifications(!showNotifications)}
-                className="p-2 hover:bg-gray-100 rounded-lg transition-colors relative"
-              >
-                <Bell className="w-5 h-5" />
-                <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
-                  {notifications.length}
-                </span>
-              </button>
-
-              {showNotifications && (
-                <div className="absolute right-0 mt-2 w-80 bg-white rounded-lg shadow-lg border border-gray-200 z-50">
-                  <div className="p-4 border-b border-gray-200">
-                    <h3 className="font-semibold text-gray-900">Notifications</h3>
-                  </div>
-                  <div className="max-h-64 overflow-y-auto">
-                    {notifications.map((notification) => (
-                      <div key={notification.id} className="p-4 border-b border-gray-100 hover:bg-gray-50">
-                        <div className="flex justify-between items-start">
-                          <div>
-                            <p className="text-sm font-medium text-gray-900">{notification.title}</p>
-                            <p className="text-xs text-gray-500">Il y a {notification.time}</p>
-                          </div>
-                          <span className={`w-2 h-2 rounded-full ${
-                            notification.type === 'signal' ? 'bg-green-500' :
-                            notification.type === 'performance' ? 'bg-blue-500' :
-                            'bg-yellow-500'
-                          }`} />
+            {showNotifications && (
+              <div className="absolute right-0 mt-3 w-80 bg-[#0a0a0c] rounded-2xl border border-white/10 shadow-[0_10px_30px_rgba(0,0,0,0.5)] z-50">
+                <div className="p-4 border-b border-white/5 flex justify-between items-center">
+                  <h3 className="font-bold text-xs uppercase tracking-wider text-white">Notifications</h3>
+                </div>
+                <div className="max-h-64 overflow-y-auto">
+                  {notifications.map((notification) => (
+                    <div key={notification.id} className="p-4 border-b border-white/[0.02] hover:bg-white/[0.02] transition-colors">
+                      <div className="flex justify-between items-start gap-2">
+                        <div>
+                          <p className="text-xs font-bold text-gray-200">{notification.title}</p>
+                          <p className="text-[10px] text-gray-500 font-bold mt-1">Il y a {notification.time}</p>
                         </div>
+                        <span className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                          notification.type === 'signal' ? 'bg-[#D4AF37]' :
+                          notification.type === 'performance' ? 'bg-green-500' :
+                          'bg-red-500'
+                        }`} />
                       </div>
-                    ))}
-                  </div>
-                  <div className="p-4">
-                    <button 
-                      onClick={() => setShowNotifications(false)}
-                      className="w-full text-center text-sm text-blue-600 hover:text-blue-700"
-                    >
-                      Marquer tout comme lu
-                    </button>
-                  </div>
+                    </div>
+                  ))}
                 </div>
-              )}
-            </div>
+              </div>
+            )}
+          </div>
 
-            {/* User Menu */}
-            <div className="relative">
-              <button
-                onClick={() => setShowUserMenu(!showUserMenu)}
-                className="flex items-center space-x-2 p-2 hover:bg-gray-100 rounded-lg transition-colors"
-              >
-                <img
-                  src={user?.avatar || 'https://images.pexels.com/photos/614810/pexels-photo-614810.jpeg?auto=compress&cs=tinysrgb&w=150'}
-                  alt={user?.name || 'User'}
-                  className="w-8 h-8 rounded-full"
-                />
-                <span className="text-sm font-medium text-gray-700">{user?.name}</span>
-              </button>
+          {/* User Menu */}
+          <div className="relative">
+            <button
+              onClick={() => setShowUserMenu(!showUserMenu)}
+              className="flex items-center p-1 border border-[#D4AF37]/20 rounded-full hover:bg-white/[0.03] transition-colors"
+            >
+              <div className="w-7 h-7 bg-white/[0.02] rounded-full flex items-center justify-center overflow-hidden">
+                <User className="w-4 h-4 text-[#D4AF37]" />
+              </div>
+            </button>
 
-              {showUserMenu && (
-                <div className="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg border border-gray-200 z-50">
-                  <div className="p-4 border-b border-gray-200">
-                    <p className="text-sm font-medium text-gray-900">{user?.name}</p>
-                    <p className="text-xs text-gray-500">{user?.email}</p>
+            {showUserMenu && (
+              <div className="absolute right-0 mt-3 w-48 bg-[#0a0a0c] rounded-2xl border border-white/10 shadow-[0_10px_30px_rgba(0,0,0,0.5)] z-50">
+                <div className="p-4 border-b border-white/5">
+                  <p className="text-xs font-black text-white uppercase truncate">{user?.name || 'Founder Member'}</p>
+                  <p className="text-[10px] text-gray-500 font-bold truncate mt-0.5">{user?.email}</p>
+                </div>
+                <div className="py-2">
+                  <Link
+                    href="/settings"
+                    className="flex items-center space-x-2 px-4 py-2.5 text-xs font-bold text-gray-400 hover:text-white hover:bg-white/[0.02]"
+                    onClick={() => setShowUserMenu(false)}
+                  >
+                    <Settings className="w-4 h-4" />
+                    <span>Paramètres</span>
+                  </Link>
+                  <button
+                    onClick={handleLogout}
+                    className="flex items-center space-x-2 px-4 py-2.5 text-xs font-bold text-red-400 hover:bg-red-500/10 w-full text-left"
+                  >
+                    <LogOut className="w-4 h-4" />
+                    <span>Déconnexion</span>
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
+        </div>
+      </div>
+
+      {/* Mobile Drawer Menu */}
+      <AnimatePresence>
+        {isMobileMenuOpen && (
+          <>
+            {/* Backdrop */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 0.6 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIsMobileMenuOpen(false)}
+              className="fixed inset-0 bg-black z-40 backdrop-blur-sm md:hidden"
+            />
+
+            {/* Sidebar drawer */}
+            <motion.div
+              initial={{ x: '-100%' }}
+              animate={{ x: 0 }}
+              exit={{ x: '-100%' }}
+              transition={{ type: 'tween', duration: 0.3 }}
+              className="fixed inset-y-0 left-0 w-64 bg-[#0a0a0c] border-r border-white/5 z-50 p-6 flex flex-col md:hidden"
+            >
+              <div className="flex justify-between items-center mb-8">
+                <div className="flex items-center space-x-3">
+                  <div className="relative w-8 h-8 rounded-lg overflow-hidden border border-[#D4AF37]/30 flex items-center justify-center bg-[#050507]">
+                    <img src="/A2Sniper-logo.jpeg" alt="Logo" className="w-full h-full object-cover" />
                   </div>
-                  <div className="py-2">
+                  <span className="text-sm font-black text-white tracking-widest uppercase">A2Sniper</span>
+                </div>
+                <button
+                  onClick={() => setIsMobileMenuOpen(false)}
+                  className="p-1.5 text-gray-500 hover:text-white hover:bg-white/[0.03] rounded-lg"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Navigation list */}
+              <nav className="flex-1 space-y-1 overflow-y-auto no-scrollbar">
+                {navigationItems.map((item) => {
+                  const isActive = pathname === item.href;
+                  return (
                     <Link
-                      href="/settings"
-                      className="flex items-center space-x-2 px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
-                      onClick={() => setShowUserMenu(false)}
+                      key={item.name}
+                      href={item.href}
+                      onClick={() => setIsMobileMenuOpen(false)}
+                      className={`group flex items-center px-4 py-3 text-xs font-bold uppercase tracking-wider rounded-xl transition-all duration-200 ${
+                        isActive
+                          ? 'bg-[#D4AF37]/10 text-[#D4AF37] border-l-2 border-[#D4AF37]'
+                          : 'text-gray-400 hover:text-white hover:bg-white/[0.02]'
+                      }`}
                     >
-                      <Settings className="w-4 h-4" />
-                      <span>Paramètres</span>
+                      <item.icon
+                        className={`mr-3 h-4 w-4 ${
+                          isActive ? 'text-[#D4AF37]' : 'text-gray-500'
+                        }`}
+                      />
+                      {item.name}
                     </Link>
-                    <button
-                      onClick={handleLogout}
-                      className="flex items-center space-x-2 px-4 py-2 text-sm text-red-600 hover:bg-red-50 w-full text-left"
-                    >
-                      <LogOut className="w-4 h-4" />
-                      <span>Déconnexion</span>
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
+                  );
+                })}
+              </nav>
 
-      {/* Mobile Header */}
-      <div className="md:hidden bg-white shadow-sm border-b border-gray-200">
-        <div className="flex items-center justify-between p-4">
-          <div className="flex items-center space-x-2">
-            <div className="w-8 h-8 bg-gradient-to-r from-blue-500 to-purple-600 rounded-lg flex items-center justify-center">
-              <TrendingUp className="w-5 h-5 text-white" />
-            </div>
-            <h1 className="text-lg font-bold text-white">TradeAlgo</h1>
-          </div>
-        </div>
-      </div>
+              {/* Bottom logout */}
+              <div className="border-t border-white/5 pt-6 mt-auto">
+                <button
+                  onClick={handleLogout}
+                  className="flex items-center space-x-3 text-xs font-bold text-red-400 hover:text-red-300 w-full"
+                >
+                  <LogOut className="w-4 h-4" />
+                  <span>Se déconnecter</span>
+                </button>
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+      
+      {/* Spacer to push down content under Mobile Top Bar */}
+      <div className="h-14 md:hidden" />
     </>
   );
 }

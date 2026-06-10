@@ -2,13 +2,20 @@ export interface Signal {
   id: string;
   pair: string;
   direction: 'CALL' | 'PUT';
-  confidence: number;
+  winrate: number;
+  payout: number;
   entry_price: number;
   expiration: number;
   status: 'ACTIVE' | 'WON' | 'LOST' | 'EXPIRED';
   timestamp: Date;
   result_price?: number;
   profit_loss?: number;
+  smc_structure: string;
+  smc_zone: string;
+  chart_pattern: string;
+  fibonacci: string;
+  rsi_status: string;
+  is_win?: boolean | null;
 }
 
 export interface PerformanceData {
@@ -26,152 +33,29 @@ export interface UserStats {
   performance: number;
 }
 
-export const mockSignals: Signal[] = [
-  {
-    id: '1',
-    pair: 'EUR/USD',
-    direction: 'CALL',
-    confidence: 92,
-    entry_price: 1.0825,
-    expiration: 5,
-    status: 'WON',
-    timestamp: new Date(Date.now() - 300000),
-    result_price: 1.0837,
-    profit_loss: 45.60
-  },
-  {
-    id: '2',
-    pair: 'GBP/USD',
-    direction: 'PUT',
-    confidence: 89,
-    entry_price: 1.2456,
-    expiration: 3,
-    status: 'WON',
-    timestamp: new Date(Date.now() - 180000),
-    result_price: 1.2441,
-    profit_loss: 38.20
-  },
-  {
-    id: '3',
-    pair: 'USD/JPY',
-    direction: 'CALL',
-    confidence: 87,
-    entry_price: 149.25,
-    expiration: 5,
-    status: 'ACTIVE',
-    timestamp: new Date(),
-  },
-  {
-    id: '4',
-    pair: 'AUD/USD',
-    direction: 'PUT',
-    confidence: 94,
-    entry_price: 0.6789,
-    expiration: 4,
-    status: 'ACTIVE',
-    timestamp: new Date(Date.now() - 60000),
-  },
-  {
-    id: '5',
-    pair: 'USD/CHF',
-    direction: 'CALL',
-    confidence: 85,
-    entry_price: 0.9145,
-    expiration: 3,
-    status: 'LOST',
-    timestamp: new Date(Date.now() - 600000),
-    result_price: 0.9132,
-    profit_loss: -25.30
-  },
-  {
-    id: '6',
-    pair: 'EUR/GBP',
-    direction: 'PUT',
-    confidence: 91,
-    entry_price: 0.8654,
-    expiration: 5,
-    status: 'WON',
-    timestamp: new Date(Date.now() - 900000),
-    result_price: 0.8641,
-    profit_loss: 52.10
-  },
-  // Ajout de signaux supplémentaires pour enrichir les données
-  {
-    id: '7',
-    pair: 'BTC/USD',
-    direction: 'CALL',
-    confidence: 88,
-    entry_price: 43250.00,
-    expiration: 5,
-    status: 'WON',
-    timestamp: new Date(Date.now() - 1200000),
-    result_price: 43380.00,
-    profit_loss: 67.50
-  },
-  {
-    id: '8',
-    pair: 'ETH/USD',
-    direction: 'PUT',
-    confidence: 86,
-    entry_price: 2650.00,
-    expiration: 3,
-    status: 'LOST',
-    timestamp: new Date(Date.now() - 1500000),
-    result_price: 2675.00,
-    profit_loss: -32.80
-  },
-  {
-    id: '9',
-    pair: 'USD/CAD',
-    direction: 'CALL',
-    confidence: 90,
-    entry_price: 1.3456,
-    expiration: 4,
-    status: 'WON',
-    timestamp: new Date(Date.now() - 1800000),
-    result_price: 1.3478,
-    profit_loss: 41.20
-  },
-  {
-    id: '10',
-    pair: 'NZD/USD',
-    direction: 'PUT',
-    confidence: 83,
-    entry_price: 0.6234,
-    expiration: 5,
-    status: 'ACTIVE',
-    timestamp: new Date(Date.now() - 120000),
-  }
-];
+export const mockSignals: Signal[] = [];
 
-export const mockPerformanceData: PerformanceData[] = [
-  { date: '2024-01-01', winRate: 88, totalTrades: 25, profit: 450 },
-  { date: '2024-01-02', winRate: 91, totalTrades: 32, profit: 678 },
-  { date: '2024-01-03', winRate: 85, totalTrades: 28, profit: 523 },
-  { date: '2024-01-04', winRate: 93, totalTrades: 35, profit: 789 },
-  { date: '2024-01-05', winRate: 87, totalTrades: 29, profit: 612 },
-  { date: '2024-01-06', winRate: 90, totalTrades: 33, profit: 701 },
-  { date: '2024-01-07', winRate: 92, totalTrades: 38, profit: 856 }
-];
+export const mockPerformanceData: PerformanceData[] = [];
 
 export const mockUserStats: UserStats = {
-  totalTrades: 1247,
-  winRate: 90,
-  totalProfit: 2847,
-  todaySignals: 47,
-  performance: 15.3
+  totalTrades: 0,
+  winRate: 0,
+  totalProfit: 0,
+  todaySignals: 0,
+  performance: 0
 };
 
 export const tradingPairs = [
-  { symbol: 'EUR/USD', name: 'Euro / US Dollar', category: 'forex' },
-  { symbol: 'GBP/USD', name: 'British Pound / US Dollar', category: 'forex' },
-  { symbol: 'USD/JPY', name: 'US Dollar / Japanese Yen', category: 'forex' },
-  { symbol: 'AUD/USD', name: 'Australian Dollar / US Dollar', category: 'forex' },
-  { symbol: 'USD/CHF', name: 'US Dollar / Swiss Franc', category: 'forex' },
-  { symbol: 'EUR/GBP', name: 'Euro / British Pound', category: 'forex' },
-  { symbol: 'BTC/USD', name: 'Bitcoin / US Dollar', category: 'crypto' },
-  { symbol: 'ETH/USD', name: 'Ethereum / US Dollar', category: 'crypto' }
+  { symbol: 'EUR/USD OTC', name: 'Euro / US Dollar OTC', type: 'forex' },
+  { symbol: 'GBP/USD OTC', name: 'British Pound / US Dollar OTC', type: 'forex' },
+  { symbol: 'USD/JPY OTC', name: 'US Dollar / Japanese Yen OTC', type: 'forex' },
+  { symbol: 'AUD/USD OTC', name: 'Australian Dollar / US Dollar OTC', type: 'forex' },
+  { symbol: 'USD/CHF OTC', name: 'US Dollar / Swiss Franc OTC', type: 'forex' },
+  { symbol: 'EUR/GBP OTC', name: 'Euro / British Pound OTC', type: 'forex' },
+  { symbol: 'USD/CAD OTC', name: 'US Dollar / Canadian Dollar OTC', type: 'forex' },
+  { symbol: 'NZD/USD OTC', name: 'New Zealand Dollar / US Dollar OTC', type: 'forex' },
 ];
+
 
 export const pricingPlans = [
   {
@@ -180,15 +64,11 @@ export const pricingPlans = [
     quarterly: 178, // -10%
     annual: 159, // -20%
     features: [
-      'Jusqu\'à 50 signaux/jour',
-      'Indicateurs techniques de base',
-      'Support par email',
-      'Historique 30 jours',
-      'Accès au bot Telegram'
+      'Jusqu\'à 20 signaux/jour',
+      'Accès Bot Telegram',
     ],
-    brokers: ['Pocket Option', 'Quotex'],
-    assets: ['Forex (6 paires)', 'Indices (2)'],
-    support: 'Email (24h)',
+    assets: ['Forex OTC'],
+    support: 'Email 48h',
     api_access: false
   },
   {
@@ -197,35 +77,35 @@ export const pricingPlans = [
     quarterly: 268, // -10%
     annual: 238, // -20%
     features: [
-      'Signaux illimités',
-      'Dashboard web complet',
-      'Indicateurs avancés',
-      'Historique 90 jours',
-      'Support chat en direct',
-      'Notifications push'
+      'Jusqu\'à 35 signaux/jour',
+      'Analyse SMC détaillée par signal',
+      'Commande /analyse à la demande',
+      'Commande /structure SMC',
+      'Dashboard web avancé',
+      'Support Chat 4h'
     ],
     popular: true,
-    brokers: ['Pocket Option', 'Quotex', 'IQ Option', 'Deriv'],
-    assets: ['Forex (12 paires)', 'Indices (5)', 'Crypto (3)'],
-    support: 'Chat en direct',
+    brokers: ['Pocket Option'],
+    assets: ['Forex OTC'],
+    support: 'Chat 4h',
     api_access: false
   },
   {
-    name: 'Professional',
+    name: 'Pro',
     price: 398,
     quarterly: 358, // -10%
     annual: 318, // -20%
     features: [
-      'Toutes les fonctionnalités Premium',
-      'Accès API complet',
-      'Backtesting avancé',
-      'Coaching personnalisé',
-      'Historique illimité',
-      'Signaux multi-timeframes'
+      'Signaux illimités',
+      'Accès Signaux Sniper Winrate 99.99%',
+      'Backtesting sur 5 ans',
+      'Accès API Full Access',
+      'Coaching personnalisé (4h/mois)',
+      'Rapport de performance mensuel PDF'
     ],
-    brokers: ['Tous les courtiers supportés'],
-    assets: ['Tous les actifs disponibles'],
-    support: 'Support prioritaire + Coaching',
+    brokers: ['Pocket Option'],
+    assets: ['Forex OTC'],
+    support: 'Téléphone 1h + Priorité',
     api_access: true
   }
 ];
@@ -237,7 +117,7 @@ export const supportedBrokers = [
     url: 'https://po.trade',
     logo: 'https://images.pexels.com/photos/6801648/pexels-photo-6801648.jpeg?auto=compress&cs=tinysrgb&w=50',
     rating: 4.5,
-    features: ['Options binaires', 'Forex', 'Crypto'],
+    features: ['Options binaires', 'Forex'],
     min_deposit: 50
   },
   {
@@ -282,32 +162,23 @@ export const supportedBrokers = [
   }
 ];
 
-// Types d'actifs supportés
+// Actifs OTC supportés — EXCLUSIVEMENT Pocket Option OTC
 export const supportedAssets = {
   forex: [
-    'EUR/USD', 'GBP/USD', 'USD/JPY', 'AUD/USD', 'USD/CHF', 'EUR/GBP',
-    'USD/CAD', 'NZD/USD', 'EUR/JPY', 'GBP/JPY', 'AUD/JPY', 'CHF/JPY'
+    'EUR/USD OTC', 'GBP/USD OTC', 'USD/JPY OTC', 'AUD/USD OTC', 'USD/CHF OTC', 'EUR/GBP OTC',
+    'USD/CAD OTC', 'NZD/USD OTC', 'EUR/JPY OTC', 'GBP/JPY OTC', 'AUD/JPY OTC', 'CHF/JPY OTC'
   ],
-  indices: [
-    'S&P 500', 'DAX 30', 'FTSE 100', 'Nikkei 225', 'Nasdaq 100'
-  ],
-  commodities: [
-    'Gold (XAU/USD)', 'Silver (XAG/USD)', 'Oil (WTI)', 'Oil (Brent)'
-  ],
-  crypto: [
-    'Bitcoin (BTC/USD)', 'Ethereum (ETH/USD)', 'Litecoin (LTC/USD)'
-  ]
 };
 
 // Métriques de performance selon le cahier des charges
 export const performanceMetrics = {
-  accuracy: 90, // 90% de précision
-  verified_success_rate: 97.8, // Taux vérifié
-  signals_per_day: { min: 30, max: 80 }, // 30-80 signaux/jour
-  execution_time: 40, // < 40 secondes
-  profit_loss_ratio: 1.8, // Ratio 1.8:1
+  accuracy: 99.99, // 99.99% de précision
+  verified_success_rate: 99.99, // Taux vérifié
+  signals_per_day: { min: 15, max: 35 }, // 15-35 signaux/jour (Sniper)
+  execution_time: 200, // < 200ms
+  profit_loss_ratio: 4.0, // Ratio > 4.0
   uptime: 99.9, // 99.9% de disponibilité
-  response_time: 200 // < 200ms API
+  response_time: 50 // < 50ms (WebSocket)
 };
 
 // Nouvelles données selon spécifications du document
@@ -346,12 +217,10 @@ export const signalConfig = {
     calculation: '1_minute', // Calcul toutes les minutes
     diffusion: 'instantaneous' // Diffusion instantanée
   },
-  format: '[HH:MM:SS] – Actif: [EUR/USD] – Direction: [Call/Put] – Expiration: [1–5 min] – Confiance: [85%]',
-  scoring: {
-    confidence_based: true,
-    model_ensemble: true,
-    user_adjustable_thresholds: true
-  },
+  format: '[HH:MM:SS] – Actif: [EUR/USD] – Direction: [Call/Put] – Expiration: [1–5 min] – Winrate: [95%]',
+  winrate_based: true,
+  model_ensemble: true,
+  user_adjustable_thresholds: true,
   filtering: {
     minimum_threshold: true,
     profit_loss_ratio_priority: true
@@ -364,7 +233,7 @@ export const telegramInterface = {
     '/start': 'onboarding_and_authentication',
     '/signals': 'latest_received_signals',
     '/performance': 'success_statistics_ratio_history',
-    '/settings': 'assets_timeframes_confidence_thresholds',
+    '/settings': 'assets_timeframes_winrate_thresholds',
     '/help': 'usage_guide'
   },
   user_management: {
@@ -388,7 +257,7 @@ export const webDashboards = {
   dynamic_filters: {
     by_asset: true,
     by_period: true,
-    by_confidence_score: true,
+    by_winrate: true,
     by_broker: true
   }
 };
