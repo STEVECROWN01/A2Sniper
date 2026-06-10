@@ -55,7 +55,10 @@ export function SignalCard({ signal }: SignalCardProps) {
 
       return () => clearInterval(interval);
     }
-  }, [signal, updateSignalStatus]);
+    // Use signal.id as dependency so timer only resets when a new signal arrives,
+    // not on every re-render of the parent component
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [signal.id, signal.status, signal.expiration, updateSignalStatus]);
 
   const formatTime = (ms: number) => {
     const minutes = Math.floor(ms / 60000);
@@ -93,11 +96,11 @@ export function SignalCard({ signal }: SignalCardProps) {
   };
 
   const handleMarkResult = (result: 'WON' | 'LOST') => {
-    // TODO: Replace with actual API call to record signal result
-    // For now, use placeholder values instead of fake random profit/loss
+    // Calculate P&L based on actual signal data
+    // Use signal.is_win if available from backend, otherwise use user's manual marking
     const payout = signal.payout || 85;
     const profitLoss = result === 'WON' ? payout : -100;
-    const resultPrice = signal.entry_price; // No random price variation
+    const resultPrice = signal.entry_price;
     
     updateSignalStatus(signal.id, result, { result_price: resultPrice, profit_loss: profitLoss });
     toast.success(`Signal marqué comme ${result === 'WON' ? 'gagné' : 'perdu'} !`);
@@ -177,7 +180,7 @@ export function SignalCard({ signal }: SignalCardProps) {
         {/* Prix et Temps */}
         <div className="flex items-center justify-between p-3.5 bg-[#050507] rounded-xl mb-4 border border-white/5">
           <div>
-            <p className="text-[8px] text-gray-500 uppercase font-black mb-0.5 tracking-wider">Prix d'entrée</p>
+            <p className="text-[8px] text-gray-500 uppercase font-black mb-0.5 tracking-wider">Prix d&apos;entrée</p>
             <p className="text-sm font-mono font-black text-white">{signal.entry_price.toFixed(5)}</p>
           </div>
           
@@ -194,12 +197,26 @@ export function SignalCard({ signal }: SignalCardProps) {
           </div>
         </div>
 
-        {/* Result Profit/Loss */}
-        {signal.profit_loss !== undefined && (
+        {/* Result status — show Pending if is_win is unknown, otherwise show P&L */}
+        {signal.is_win === null || signal.is_win === undefined ? (
+          signal.status !== 'ACTIVE' && (
+            <div className="flex items-center justify-between mb-4 px-3 py-2 bg-[#050507] border border-dashed border-yellow-500/20 rounded-xl">
+              <span className="text-[10px] text-gray-500 font-bold uppercase">Résultat</span>
+              <span className="text-xs font-black text-yellow-500">En attente</span>
+            </div>
+          )
+        ) : signal.profit_loss !== undefined ? (
           <div className="flex items-center justify-between mb-4 px-3 py-2 bg-[#050507] border border-dashed border-white/10 rounded-xl">
             <span className="text-[10px] text-gray-500 font-bold uppercase">Résultat Brut</span>
             <span className={`text-xs font-black ${signal.profit_loss > 0 ? 'text-green-500' : 'text-red-500'}`}>
               {signal.profit_loss > 0 ? '+' : ''}${Math.abs(signal.profit_loss).toFixed(2)}
+            </span>
+          </div>
+        ) : (
+          <div className="flex items-center justify-between mb-4 px-3 py-2 bg-[#050507] border border-dashed border-white/10 rounded-xl">
+            <span className="text-[10px] text-gray-500 font-bold uppercase">Résultat</span>
+            <span className={`text-xs font-black ${signal.is_win ? 'text-green-500' : 'text-red-500'}`}>
+              {signal.is_win ? 'GAGNÉ' : 'PERDU'}
             </span>
           </div>
         )}
@@ -318,7 +335,7 @@ export function SignalCard({ signal }: SignalCardProps) {
 
                 {/* Entry Price */}
                 <div className="p-3 bg-[#050507] rounded-xl border border-white/5">
-                  <p className="text-[9px] text-gray-500 font-bold uppercase tracking-wider mb-1">Prix d'entrée SNIPER</p>
+                  <p className="text-[9px] text-gray-500 font-bold uppercase tracking-wider mb-1">Prix d&apos;entrée SNIPER</p>
                   <p className="text-md font-mono font-black text-white">{signal.entry_price.toFixed(5)}</p>
                 </div>
 
@@ -357,7 +374,7 @@ export function SignalCard({ signal }: SignalCardProps) {
 
                 {/* Time stamp */}
                 <div className="p-3 bg-[#050507] rounded-xl border border-white/5">
-                  <p className="text-[9px] text-gray-500 font-bold uppercase mb-1">Date d'émission</p>
+                  <p className="text-[9px] text-gray-500 font-bold uppercase mb-1">Date d&apos;émission</p>
                   <p className="text-xs font-bold text-gray-300">
                     {signal.timestamp.toLocaleString('fr-FR')}
                   </p>

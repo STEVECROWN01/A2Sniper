@@ -115,8 +115,9 @@ export class MonitoringSystem {
   }
 
   // Collecte des métriques système
+  // NOTE: All metric values use random variation because this is a client-side
+  // monitoring stub. In production, replace with real system monitoring APIs.
   private collectMetrics(): void {
-    // Collect stub: in production, these would come from actual system monitoring APIs
     const lastMetrics = this.metrics.length > 0 ? this.metrics[this.metrics.length - 1] : null;
     
     const metrics: SystemMetrics = {
@@ -433,7 +434,7 @@ export class MonitoringSystem {
 
   // Export des données pour analyse
   exportData(type: 'metrics' | 'alerts' | 'performance', format: 'json' | 'csv' = 'json'): string {
-    let data: any[];
+    let data: SystemMetrics[] | Alert[] | PerformanceLog[];
     
     switch (type) {
       case 'metrics':

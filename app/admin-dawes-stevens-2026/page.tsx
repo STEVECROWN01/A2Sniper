@@ -38,18 +38,18 @@ export default function AdminDashboard() {
   const [isBreakerOpen, setIsBreakerOpen] = useState(false);
   const [mrr, setMrr] = useState(15900);
   const [isSuspended, setIsSuspended] = useState(false);
-  const [perfData, setPerfData] = useState<any>(null);
+  const [perfData, setPerfData] = useState<Record<string, unknown> | null>(null);
 
   const aiVotes = [
     { name: 'LSTM', value: 'N/A', weight: `${weights.LSTM}%`, status: 'Operational' },
     { name: 'Transformer', value: 'N/A', weight: `${weights.Transformer}%`, status: 'Operational' },
     { name: 'XGBoost', value: 'N/A', weight: `${weights.XGBoost}%`, status: 'Operational' },
   ];
-  const [statusData, setStatusData] = useState<any>(null);
+  const [statusData, setStatusData] = useState<Record<string, unknown> | null>(null);
 
   useEffect(() => {
     const fetchData = async () => {
-      const url = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
+      const url = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
       const token = typeof window !== 'undefined' ? localStorage.getItem('a2sniper_token') : null;
       const authHeaders = token ? { Authorization: `Bearer ${token}` } : {};
       try {
@@ -87,7 +87,7 @@ export default function AdminDashboard() {
     setIsSuspended(nextState);
     
     try {
-      const url = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
+      const url = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
       const token = typeof window !== 'undefined' ? localStorage.getItem('a2sniper_token') : null;
       const res = await fetch(`${url}/api/admin/circuit-breaker`, {
         method: 'POST',

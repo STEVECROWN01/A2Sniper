@@ -7,10 +7,10 @@ from datetime import datetime, timezone
 
 
 class SniperEntrySystem:
-    # Winrate minimum pour validation Sniper (ex: 70%)
-    WINRATE_THRESHOLD = 70
-    # Maximum realistic winrate cap (85% for binary options)
-    MAX_REALISTIC_WINRATE = 85.0
+    # Winrate minimum pour validation Sniper (75% = 7.5/10 equivalent)
+    WINRATE_THRESHOLD = 75.0
+    # Maximum realistic winrate cap (95% — honest upper bound, never claims higher)
+    MAX_REALISTIC_WINRATE = 95.0
 
     def __init__(self):
         pass
@@ -104,15 +104,15 @@ class SniperEntrySystem:
             points += div_bonus
             details['divergences'] = f"Divergence Bonus (+{div_bonus})"
 
-        # CALCUL DU WINRATE RÉEL (Normalisation basée sur confluences techniques réelles)
-        # On resserre la formule pour ne valider que les signaux très forts.
-        # Le winrate de base pour un signal à 0 points nets de confluences est de 45% (pile ou face)
-        base_winrate = 45
-        # Chaque point positif apporte +5.5% de confiance
-        bonus_points = points * 5.5
-        final_winrate = round(base_winrate + bonus_points, 2)
+        # CALCUL DU WINRATE (Bounded realistic formula)
+        # Base of 50% (random baseline / coin flip)
+        # +3.0% per positive point (max ~13 points = +39% = 89% max from points alone)
+        # -3.0% per negative point
+        # Clamped between 0% and 95% — never claims >95% (honest upper bound)
+        base_winrate = 50
+        final_winrate = round(base_winrate + (points * 3.0), 2)
         
-        # Cap winrate at realistic maximum (85%)
+        # Clamp between 0% and 95%
         final_winrate = max(0.0, min(self.MAX_REALISTIC_WINRATE, final_winrate))
 
         # PAYOUT (Doit être récupéré du scanner en temps réel)

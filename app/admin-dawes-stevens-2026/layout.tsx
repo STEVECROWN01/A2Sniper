@@ -1,6 +1,7 @@
 'use client';
 
-import { usePathname } from 'next/navigation';
+import { useEffect } from 'react';
+import { usePathname, useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
 import { 
   LayoutDashboard, 
@@ -13,6 +14,7 @@ import {
   LogOut
 } from 'lucide-react';
 import Link from 'next/link';
+import { useAppStore } from '@/lib/store';
 
 export default function AdminLayout({
   children,
@@ -20,7 +22,19 @@ export default function AdminLayout({
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
+  const router = useRouter();
+  const { isAuthenticated, user, isInitialized } = useAppStore();
   const isLoginPage = pathname === '/admin-dawes-stevens-2026/login';
+
+  // Auth protection: redirect to admin login if not authenticated or not admin
+  useEffect(() => {
+    if (!isInitialized) return;
+    if (isLoginPage) return; // Don't redirect on login page itself
+    
+    if (!isAuthenticated || !user?.is_admin) {
+      router.push('/admin-dawes-stevens-2026/login');
+    }
+  }, [isAuthenticated, user, isInitialized, isLoginPage, router]);
 
   if (isLoginPage) return <>{children}</>;
 

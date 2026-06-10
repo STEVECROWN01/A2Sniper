@@ -45,15 +45,61 @@ class XGBoostModel:
 
     def predict(self, features_dict: dict) -> dict:
         """Prédiction tabulaire basée sur 47 features."""
-        # Simulation si non entraîné
-        prob = 80.0
-        direction = "CALL" if features_dict.get('rsi', 50) < 45 else "PUT"
+        # Use trained model if available
+        if self.is_trained and self.model is not None and XGB_AVAILABLE:
+            try:
+                import numpy as np
+                # Build feature vector from dict, filling missing with 0
+                feature_vector = np.zeros(self.n_features)
+                for i, key in enumerate(sorted(features_dict.keys())):
+                    if i < self.n_features:
+                        val = features_dict[key]
+                        feature_vector[i] = float(val) if val is not None else 0.0
+                
+                dmatrix = xgb.DMatrix(feature_vector.reshape(1, -1))
+                probs = self.model.predict(dmatrix)[0]  # [CALL_prob, PUT_prob, NO_TRADE_prob]
+                
+                labels = ["CALL", "PUT", "NO_TRADE"]
+                idx = int(np.argmax(probs))
+                return {
+                    "direction": labels[idx],
+                    "probability": round(float(probs[idx]) * 100, 2),
+                    "probabilities": {labels[i]: round(float(probs[i]), 4) for i in range(len(labels))}
+                }
+            except Exception as e:
+                logger.warning(f"XGBoost prediction failed, falling back to simulation: {e}")
         
-        if features_dict.get('has_ob'): prob += 5
-        if features_dict.get('has_fvg'): prob += 5
+        # Fallback: simulation mode (NOT trained)
+        return self._simulate_predict(features_dict)
+    
+    def _simulate_predict(self, features_dict: dict) -> dict:
+        """Simulation basée sur des heuristiques simples. MODE SIMULATION — modèle non entraîné."""
+        rsi = features_dict.get('rsi', 50)
+        momentum = features_dict.get('price_change_1m', 0)
+        
+        # Simple momentum-based heuristic
+        if rsi < 35 and momentum > 0:
+            direction = "CALL"
+            call_prob = 0.45
+            put_prob = 0.30
+        elif rsi > 65 and momentum < 0:
+            direction = "PUT"
+            call_prob = 0.30
+            put_prob = 0.45
+        else:
+            direction = "NO_TRADE"
+            call_prob = 0.30
+            put_prob = 0.30
+        
+        no_trade_prob = 1.0 - call_prob - put_prob
         
         return {
             "direction": direction,
-            "probability": round(min(99.99, prob), 2),
-            "probabilities": {"CALL": 0.45, "PUT": 0.45, "NO_TRADE": 0.10}
+            "probability": round(max(call_prob, put_prob, no_trade_prob) * 100, 2),
+            "probabilities": {
+                "CALL": round(call_prob, 4),
+                "PUT": round(put_prob, 4),
+                "NO_TRADE": round(no_trade_prob, 4)
+            },
+            "simulation_mode": True
         }

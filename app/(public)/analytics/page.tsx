@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { RefreshCw, Download } from 'lucide-react';
 import { AdvancedAnalytics } from '@/components/ui/advanced-analytics';
@@ -13,13 +13,20 @@ export default function AnalyticsPage() {
   const [selectedTimeframe, setSelectedTimeframe] = useState('24H');
   const [isRefreshing, setIsRefreshing] = useState(false);
 
-  const handleRefresh = () => {
+  // Fetch data on mount
+  useEffect(() => {
+    fetchSignals().catch(() => {});
+    fetchPerformance().catch(() => {});
+  }, [fetchSignals, fetchPerformance]);
+
+  const handleRefresh = async () => {
     setIsRefreshing(true);
-    fetchSignals();
-    fetchPerformance();
+    try {
+      await Promise.all([fetchSignals(), fetchPerformance()]);
+    } catch {}
     setTimeout(() => {
       setIsRefreshing(false);
-    }, 1500);
+    }, 800);
   };
 
   const handleExport = () => {
@@ -59,10 +66,10 @@ export default function AnalyticsPage() {
             Analyses Avancées
           </h1>
           <p className="text-sm text-gray-400 font-bold">
-            Analyses détaillées des performances et métriques en temps réel
+            Analyses détaillées des performances et métriques
           </p>
         </motion.div>
-        
+
         <div className="flex items-center space-x-3">
           <select
             value={selectedTimeframe}
@@ -74,7 +81,7 @@ export default function AnalyticsPage() {
             <option value="7D">7 Jours</option>
             <option value="30D">30 Jours</option>
           </select>
-          
+
           <button
             onClick={handleRefresh}
             disabled={isRefreshing}
@@ -82,7 +89,7 @@ export default function AnalyticsPage() {
           >
             <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
           </button>
-          
+
           <button
             onClick={handleExport}
             className="p-2.5 bg-gradient-to-r from-[#D4AF37] to-[#C5A059] text-black rounded-xl hover:from-[#C5A059] hover:to-[#D4AF37] transition-all active:scale-95"

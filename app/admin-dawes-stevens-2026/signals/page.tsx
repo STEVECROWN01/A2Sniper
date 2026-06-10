@@ -134,7 +134,7 @@ export default function AdminSignalsPage() {
 
   const confirmDelete = async (id: string) => {
     try {
-      const url = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
+      const url = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
       const token = typeof window !== 'undefined' ? localStorage.getItem('a2sniper_token') : null;
       const res = await fetch(`${url}/api/admin/signals/${id}`, {
         method: 'DELETE',

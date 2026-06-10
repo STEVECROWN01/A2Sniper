@@ -18,7 +18,8 @@ class RiskManager:
     MAX_SESSION_RISK = 0.15       # 15% capital max en jeu
     MAX_DAILY_RISK = 0.10         # 10% risque journalier max
     CONSECUTIVE_LOSS_LIMIT = 3    # 3 pertes → avertissement
-    SESSION_STOP_AUTO_RESET_HOURS = 1  # Auto-reset session_stopped after 1 hour
+    SESSION_STOP_COOLDOWN_HOURS = 1  # Cooldown period after session stop
+    SESSION_STOP_AUTO_RESET_HOURS = 2  # Auto-reset only after 2 hours with cooldown
 
     def __init__(self):
         self.daily_trades = []
@@ -27,6 +28,7 @@ class RiskManager:
         self.session_risk = 0.0
         self.is_session_stopped = False
         self.session_stopped_at = None
+        self.requires_manual_acknowledgment = False  # Flag for manual acknowledgment
         self.last_reset = datetime.now(timezone.utc).date()
         # Load persisted state
         self._load_state()
@@ -41,6 +43,7 @@ class RiskManager:
                     self.daily_risk_used = data.get('daily_risk_used', 0.0)
                     self.session_risk = data.get('session_risk', 0.0)
                     self.is_session_stopped = data.get('is_session_stopped', False)
+                    self.requires_manual_acknowledgment = data.get('requires_manual_acknowledgment', False)
                     if data.get('session_stopped_at'):
                         self.session_stopped_at = datetime.fromisoformat(data['session_stopped_at'])
                     if data.get('last_reset'):
@@ -57,6 +60,7 @@ class RiskManager:
                 'daily_risk_used': self.daily_risk_used,
                 'session_risk': self.session_risk,
                 'is_session_stopped': self.is_session_stopped,
+                'requires_manual_acknowledgment': self.requires_manual_acknowledgment,
                 'session_stopped_at': self.session_stopped_at.isoformat() if self.session_stopped_at else None,
                 'last_reset': self.last_reset.isoformat() if hasattr(self.last_reset, 'isoformat') else str(self.last_reset),
             }
@@ -77,14 +81,25 @@ class RiskManager:
             logger.info("[RISK] Daily counters reset")
 
     def _auto_reset_session_stopped(self):
-        """Auto-reset session_stopped after a cool-down period."""
+        """Auto-reset session_stopped after a cooldown period.
+        Requires manual acknowledgment before full trading can resume.
+        If the cooldown period has passed without acknowledgment, a warning is logged
+        and the session enters a cooldown state instead of a full reset.
+        """
         if self.is_session_stopped and self.session_stopped_at:
             elapsed = (datetime.now(timezone.utc) - self.session_stopped_at).total_seconds() / 3600
             if elapsed >= self.SESSION_STOP_AUTO_RESET_HOURS:
+                logger.warning(
+                    f"[RISK] Session stop auto-reset triggered after {elapsed:.1f} hours "
+                    f"(cooldown: {self.SESSION_STOP_AUTO_RESET_HOURS}h). "
+                    f"Manual acknowledgment is recommended before resuming trading."
+                )
+                # Instead of full reset, set cooldown state
                 self.is_session_stopped = False
+                self.requires_manual_acknowledgment = True
                 self.session_stopped_at = None
                 self._save_state()
-                logger.info("[RISK] Session stop auto-reset after cool-down period")
+                logger.info("[RISK] Session stop lifted — cooldown period elapsed. Manual acknowledgment still required.")
 
     def get_recommended_stake(self, winrate: float) -> dict:
         """CDC: 1% winrate 85-90%, 2% winrate 90-95%, 3% winrate 95%+."""
@@ -95,6 +110,15 @@ class RiskManager:
         elif winrate >= 85:
             return {'percentage': 1.0, 'label': '1% du capital', 'reason': 'Signal acceptable'}
         return {'percentage': 0, 'label': 'Signal rejeté', 'reason': f'Winrate {winrate}% < seuil minimum'}
+
+    def acknowledge_session_stop(self):
+        """Manual acknowledgment of session stop — clears the requires_manual_acknowledgment flag."""
+        if self.requires_manual_acknowledgment:
+            self.requires_manual_acknowledgment = False
+            self._save_state()
+            logger.info("[RISK] Session stop manually acknowledged — trading can fully resume")
+            return True
+        return False
 
     def check_can_trade(self, capital: float = 10000) -> dict:
         """Vérifie toutes les règles de risque avant d'émettre un signal."""
@@ -123,17 +147,20 @@ class RiskManager:
             'daily_risk_used': round(self.daily_risk_used * 100, 1),
             'session_risk': round(self.session_risk * 100, 1),
             'is_session_stopped': self.is_session_stopped,
+            'requires_manual_acknowledgment': self.requires_manual_acknowledgment,
         }
 
     def record_trade_result(self, is_win: bool, risk_pct: float):
         """Enregistre le résultat d'un trade pour le suivi."""
         self._reset_daily()
 
+        # Count ALL trades toward daily_risk_used, not just losses
+        self.daily_risk_used += risk_pct
+
         if is_win:
             self.consecutive_losses = 0
         else:
             self.consecutive_losses += 1
-            self.daily_risk_used += risk_pct
             if self.consecutive_losses >= self.CONSECUTIVE_LOSS_LIMIT:
                 logger.warning(f"[RISK] {self.CONSECUTIVE_LOSS_LIMIT} pertes consécutives — Arrêt de session recommandé")
                 self.is_session_stopped = True

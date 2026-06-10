@@ -15,6 +15,7 @@ class MonitoringEngine:
     DEGRADATION_WINDOW = 50        # Sur 50 signaux
     CIRCUIT_BREAKER_LOSSES = 3     # 3 pertes consécutives
     CIRCUIT_BREAKER_PAUSE = 30     # 30 minutes de pause
+    SUSPENSION_AUTO_LIFT_HOURS = 1  # H7 Fix: Auto-lift degradation suspension after 1 hour
 
     def __init__(self, initial_signals: list = None):
         self.signal_history = deque(maxlen=10000)
@@ -25,6 +26,7 @@ class MonitoringEngine:
         self.circuit_breaker_until = None
         self.is_suspended = False
         self.suspension_reason = None
+        self.suspension_time = None  # H7 Fix: Timestamp when suspension was triggered
 
     def record_signal(self, signal_id: str, pair: str, direction: str,
                       winrate: float, is_win: bool = None):
@@ -55,6 +57,7 @@ class MonitoringEngine:
             self.circuit_breaker_until = datetime.now(timezone.utc) + timedelta(minutes=self.CIRCUIT_BREAKER_PAUSE)
             self.is_suspended = True
             self.suspension_reason = f"Circuit Breaker: {self.consecutive_losses} pertes consécutives"
+            self.suspension_time = datetime.now(timezone.utc)  # H7 Fix: Record suspension time
             logger.warning(f"[CIRCUIT BREAKER] Activé — Pause {self.CIRCUIT_BREAKER_PAUSE}min")
 
         # Vérifier dégradation
@@ -73,18 +76,32 @@ class MonitoringEngine:
         if wr < self.DEGRADATION_THRESHOLD:
             self.is_suspended = True
             self.suspension_reason = f"Dégradation: Win rate {wr*100:.1f}% < {self.DEGRADATION_THRESHOLD*100}% sur {self.DEGRADATION_WINDOW} signaux"
+            self.suspension_time = datetime.now(timezone.utc)  # H7 Fix: Record suspension time
             logger.warning(f"[DEGRADATION] {self.suspension_reason}")
 
     def check_circuit_breaker(self) -> dict:
-        """Vérifie si le circuit breaker est actif."""
-        if self.circuit_breaker_until:
-            now = datetime.now(timezone.utc)
-            if now >= self.circuit_breaker_until:
-                self.circuit_breaker_until = None
+        """Vérifie si le circuit breaker est actif. H7 Fix: Auto-lift degradation suspension after 1 hour."""
+        now = datetime.now(timezone.utc)
+
+        # Circuit breaker with time-based expiry
+        if self.circuit_breaker_until and now >= self.circuit_breaker_until:
+            self.circuit_breaker_until = None
+            self.is_suspended = False
+            self.suspension_reason = None
+            self.suspension_time = None
+            self.consecutive_losses = 0
+            logger.info("[CIRCUIT BREAKER] Levé — Reprise du système")
+
+        # H7 Fix: Auto-lift degradation suspension after SUSPENSION_AUTO_LIFT_HOURS
+        if self.is_suspended and self.suspension_time is not None:
+            elapsed = (now - self.suspension_time).total_seconds()
+            if elapsed >= self.SUSPENSION_AUTO_LIFT_HOURS * 3600:
+                logger.info(f"[DEGRADATION] Auto-lift after {self.SUSPENSION_AUTO_LIFT_HOURS}h — Reprise du système")
                 self.is_suspended = False
                 self.suspension_reason = None
+                self.suspension_time = None
+                self.circuit_breaker_until = None
                 self.consecutive_losses = 0
-                logger.info("[CIRCUIT BREAKER] Levé — Reprise du système")
 
         return {
             'is_active': self.is_suspended,
@@ -173,11 +190,13 @@ class MonitoringEngine:
     def force_suspend(self, reason: str = "Manual suspension"):
         self.is_suspended = True
         self.suspension_reason = reason
+        self.suspension_time = datetime.now(timezone.utc)  # H7 Fix: Record suspension time
         logger.warning(f"[MONITORING] Système suspendu: {reason}")
 
     def force_resume(self):
         self.is_suspended = False
         self.suspension_reason = None
+        self.suspension_time = None  # H7 Fix: Clear suspension time
         self.circuit_breaker_until = None
         self.consecutive_losses = 0
         logger.info("[MONITORING] Système relancé manuellement")

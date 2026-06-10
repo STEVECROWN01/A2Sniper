@@ -7,11 +7,12 @@ Pipeline complet : OTC Engine → SMC → Indicateurs → Patterns → Chartist 
 import asyncio
 import logging
 import os
-import random
+import secrets
 import json
 from collections import deque
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone, timedelta
+from time import time
 from fastapi import FastAPI, HTTPException, Request, Security, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import select
@@ -65,6 +66,19 @@ RATE_LIMIT_WINDOW = 3600 # 1 hour
 rate_limit_data = {}
 
 
+def check_rate_limit(request: Request, max_requests: int = 100, window_seconds: int = 60):
+    """Simple in-memory rate limiting per IP."""
+    client_ip = request.client.host if request.client else "unknown"
+    now = time()
+    if client_ip not in rate_limit_data:
+        rate_limit_data[client_ip] = []
+    # Remove old entries
+    rate_limit_data[client_ip] = [t for t in rate_limit_data[client_ip] if now - t < window_seconds]
+    if len(rate_limit_data[client_ip]) >= max_requests:
+        raise HTTPException(status_code=429, detail="Rate limit exceeded. Please try again later.")
+    rate_limit_data[client_ip].append(now)
+
+
 # Admin authentication dependency
 async def require_admin(credentials: HTTPAuthorizationCredentials = Security(security)):
     """Verify the user is an admin. Must be used on all admin endpoints."""
@@ -111,7 +125,8 @@ async def analyze_pair_internal(pair: str, force: bool = False) -> dict:
 
     payout = po_scanner.get_payout(pair)
     if payout is None:
-        payout = 80 # défaut
+        logger.warning(f"[{pair}] Cannot determine payout from scanner — skipping signal generation")
+        return None
 
     # Si pas de force, on exige un payout >= 70%
     if not force and payout < 70:
@@ -127,8 +142,14 @@ async def analyze_pair_internal(pair: str, force: bool = False) -> dict:
     df_m1 = indicators.calculate_all(df_m1)
     
     # Calcul des timeframes supérieurs
-    df_m5 = df_m1.resample('5Min').ohlc().dropna()
-    df_m15 = df_m1.resample('15Min').ohlc().dropna()
+    df_m5 = df_m1.resample('5Min').agg({
+        'open': 'first', 'high': 'max', 'low': 'min',
+        'close': 'last', 'volume': 'sum'
+    }).dropna()
+    df_m15 = df_m1.resample('15Min').agg({
+        'open': 'first', 'high': 'max', 'low': 'min',
+        'close': 'last', 'volume': 'sum'
+    }).dropna()
     if df_m5 is not None and len(df_m5) >= 52:
         df_m5 = indicators.calculate_all(df_m5)
     if df_m15 is not None and len(df_m15) >= 52:
@@ -314,8 +335,15 @@ async def analyze_pair_internal(pair: str, force: bool = False) -> dict:
     now = datetime.now(timezone.utc)
     current_price = float(df_m1['close'].iloc[-1])
 
-    # Expirations CDC
-    expiration = random.choice([2, 5, 10, 15, 25, 30])
+    # CDC: 1min or 5min based on structure (ATR-based)
+    if atr > 0:
+        atr_ratio = atr / current_price if current_price > 0 else 0
+        if atr_ratio > 0.001:  # High volatility → 5 min
+            expiration = 5
+        else:  # Low volatility → 1 min
+            expiration = 1
+    else:
+        expiration = 5  # Default to 5min (safer)
 
     signal = {
         'id': f'SIG-{now.strftime("%Y%m%d")}-{uuid.uuid4().hex[:6].upper()}',
@@ -543,7 +571,8 @@ app.add_middleware(
         "http://localhost:3000",
         "http://127.0.0.1:3000",
         "http://localhost:8000",
-        "http://127.0.0.1:8000"
+        "http://127.0.0.1:8000",
+        os.getenv("FRONTEND_URL", "http://localhost:3000"),
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -552,7 +581,7 @@ app.add_middleware(
 
 
 @app.post("/api/signals/request")
-async def request_live_signal(request: Request, credentials: HTTPAuthorizationCredentials = Security(security)):
+async def request_live_signal(request: Request, credentials: HTTPAuthorizationCredentials = Security(security), rate_limit: None = Depends(lambda req: check_rate_limit(req))):
     """Génère un signal en direct à la demande pour une paire. Requires authentication."""
     # Verify auth
     payload = decode_token(credentials.credentials)
@@ -573,11 +602,11 @@ async def request_live_signal(request: Request, credentials: HTTPAuthorizationCr
     if not po_scanner.is_connected:
         raise HTTPException(status_code=400, detail="Le scanner A2Sniper n'est pas connecté au marché réel.")
 
-    signal = await force_analyze_pair(pair)
+    signal = await analyze_pair(pair)
     if signal:
         return {"status": "success", "signal": signal}
     else:
-        raise HTTPException(status_code=500, detail="Impossible de générer le signal. Vérifiez l'état de la connexion.")
+        raise HTTPException(status_code=500, detail="Impossible de générer le signal. Le marché ne remplit pas les critères de sécurité ou la connexion est inactive.")
 
 
 @app.get("/api/signals")
@@ -628,7 +657,7 @@ async def delete_signal(signal_id: str, admin_payload = Depends(require_admin)):
 # ═══════════ AUTH ENDPOINTS ═══════════
 
 @app.post("/api/auth/register")
-async def register(request: Request):
+async def register(request: Request, rate_limit: None = Depends(lambda req: check_rate_limit(req))):
     data = await request.json()
     email = data.get("email")
     password = data.get("password")
@@ -639,7 +668,7 @@ async def register(request: Request):
         
     from auth import validate_password_strength, MIN_PASSWORD_LENGTH
     if not validate_password_strength(password):
-        raise HTTPException(status_code=400, detail=f"Le mot de passe doit contenir au moins {MIN_PASSWORD_LENGTH} caractères, dont 1 majuscule et 1 chiffre")
+        raise HTTPException(status_code=400, detail=f"Le mot de passe doit contenir au moins {MIN_PASSWORD_LENGTH} caractères, dont 1 majuscule, 1 chiffre et 1 caractère spécial")
         
     async with AsyncSessionLocal() as session:
         # Vérifier si l'utilisateur existe déjà
@@ -670,7 +699,7 @@ async def register(request: Request):
     return {"status": "success", "message": "Compte créé avec succès"}
 
 @app.post("/api/auth/login")
-async def login(request: Request):
+async def login(request: Request, rate_limit: None = Depends(lambda req: check_rate_limit(req))):
     data = await request.json()
     email = data.get("email")
     password = data.get("password")
@@ -816,7 +845,7 @@ async def send_otp_email(recipient_email: str, otp_code: str):
         return False
 
 @app.post("/api/auth/forgot-password")
-async def forgot_password(request: Request):
+async def forgot_password(request: Request, rate_limit: None = Depends(lambda req: check_rate_limit(req))):
     data = await request.json()
     email = data.get("email")
     
@@ -832,7 +861,7 @@ async def forgot_password(request: Request):
             return {"status": "success", "message": "Si l'email existe, un code OTP y a été envoyé."}
             
         # Generate 6-digit OTP
-        otp_code = str(random.randint(100000, 999999))
+        otp_code = str(secrets.randbelow(900000) + 100000)
         
         # Supprimer les anciens OTP pour cet email
         from sqlalchemy import delete
@@ -861,7 +890,7 @@ async def forgot_password(request: Request):
     return {"status": "success", "message": "Si l'email existe, un code OTP y a été envoyé."}
 
 @app.post("/api/auth/verify-otp")
-async def verify_otp(request: Request):
+async def verify_otp(request: Request, rate_limit: None = Depends(lambda req: check_rate_limit(req))):
     data = await request.json()
     email = data.get("email")
     otp_code = data.get("otp_code")
@@ -936,7 +965,7 @@ async def reset_password(request: Request):
         # Validate new password strength
         from auth import validate_password_strength, MIN_PASSWORD_LENGTH
         if not validate_password_strength(new_password):
-            raise HTTPException(status_code=400, detail=f"Le mot de passe doit contenir au moins {MIN_PASSWORD_LENGTH} caractères, dont 1 majuscule et 1 chiffre")
+            raise HTTPException(status_code=400, detail=f"Le mot de passe doit contenir au moins {MIN_PASSWORD_LENGTH} caractères, dont 1 majuscule, 1 chiffre et 1 caractère spécial")
             
         # Mettre à jour le mot de passe
         result = await session.execute(select(User).where(User.email == email))

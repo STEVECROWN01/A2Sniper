@@ -97,7 +97,7 @@ export const pricingPlans = [
     annual: 318, // -20%
     features: [
       'Signaux illimités',
-      'Accès Signaux Sniper Winrate 99.99%',
+      'Accès Signaux Sniper Winrate élevé',
       'Backtesting sur 5 ans',
       'Accès API Full Access',
       'Coaching personnalisé (4h/mois)',
@@ -170,15 +170,15 @@ export const supportedAssets = {
   ],
 };
 
-// Métriques de performance selon le cahier des charges
+// Métriques de performance — valeurs réalistes (N/A jusqu'à ce que les données réelles soient disponibles)
 export const performanceMetrics = {
-  accuracy: 99.99, // 99.99% de précision
-  verified_success_rate: 99.99, // Taux vérifié
-  signals_per_day: { min: 15, max: 35 }, // 15-35 signaux/jour (Sniper)
-  execution_time: 200, // < 200ms
-  profit_loss_ratio: 4.0, // Ratio > 4.0
-  uptime: 99.9, // 99.9% de disponibilité
-  response_time: 50 // < 50ms (WebSocket)
+  accuracy: 0, // À remplir par les données réelles de l'API
+  verified_success_rate: 0, // À remplir par les données réelles de l'API
+  signals_per_day: { min: 0, max: 0 }, // À remplir par les données réelles
+  execution_time: 0, // À remplir par les données réelles
+  profit_loss_ratio: 0, // À remplir par les données réelles
+  uptime: 0, // À remplir par les données réelles
+  response_time: 0 // À remplir par les données réelles
 };
 
 // Nouvelles données selon spécifications du document

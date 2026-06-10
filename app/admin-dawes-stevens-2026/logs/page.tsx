@@ -8,14 +8,19 @@ import { useAuth } from '@/hooks/use-auth';
 
 export default function AdminLogsPage() {
   useAuth(true);
-  const [logs, setLogs] = useState<any[]>([]);
+  interface LogEntry {
+    msg: string;
+    level: string;
+    time: string;
+  }
+  const [logs, setLogs] = useState<LogEntry[]>([]);
   const [filter, setFilter] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const logEndRef = useRef<HTMLDivElement>(null);
 
   const fetchLogs = async () => {
     try {
-      const url = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
+      const url = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
       const token = typeof window !== 'undefined' ? localStorage.getItem('a2sniper_token') : null;
       const res = await fetch(`${url}/api/admin/logs?limit=100`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},

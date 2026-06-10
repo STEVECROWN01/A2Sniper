@@ -18,7 +18,7 @@ export default function AdminEnginePage() {
 
   const fetchWeights = async () => {
     try {
-      const url = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
+      const url = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
       const token = typeof window !== 'undefined' ? localStorage.getItem('a2sniper_token') : null;
       const res = await fetch(`${url}/api/admin/engine/weights`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
@@ -38,7 +38,7 @@ export default function AdminEnginePage() {
   const handleSave = async () => {
     setIsSaving(true);
     try {
-      const url = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
+      const url = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
       const token = typeof window !== 'undefined' ? localStorage.getItem('a2sniper_token') : null;
       const res = await fetch(`${url}/api/admin/engine/weights`, {
         method: 'POST',

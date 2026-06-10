@@ -16,7 +16,7 @@ class AntiManipulationFilters:
         self.news_calendar = []  # Populated via update_news_calendar or fetch_news_calendar
 
     def check_all_filters(self, df, atr_value: float, atr_avg: float,
-                          spread: float = 0, adx_d1: float = 0,
+                          spread: Optional[float] = None, adx_d1: float = 0,
                           signal_direction: str = 'CALL') -> dict:
         """Vérifie tous les filtres. Retourne is_blocked + raisons."""
         blocks = []
@@ -35,10 +35,12 @@ class AntiManipulationFilters:
             blocks.append(f"Suspension active jusqu'à {self.suspended_until.strftime('%H:%M:%S')} UTC")
 
         # 2. Widening Spread
-        if spread > 0:
+        if spread is not None:
             normal_spread = 0.0002  # spread normal OTC
             if spread > normal_spread * 3:
                 blocks.append(f"Spread anormal ({spread:.5f} > 3x normal)")
+        else:
+            logger.warning("[FILTER] Spread value not provided — spread filter check skipped")
 
         # 3. News Filter (±5 min High Impact)
         now = datetime.now(timezone.utc)
@@ -70,10 +72,112 @@ class AntiManipulationFilters:
         self.news_calendar = events
 
     async def fetch_news_calendar(self) -> list:
-        """Fetch news calendar from an external API. Stub for integration."""
-        # In production, integrate with forex factory API or similar
-        # For now, return the current calendar
-        logger.info("[FILTER] News calendar fetch stub called — integrate with external API in production")
+        """Fetch news calendar from an external economic news API.
+        
+        Requires NEWS_API_KEY environment variable to be configured.
+        Supported providers: ForexFactory (via webhook/scraper), or any
+        economic calendar API that returns structured event data.
+        
+        Returns:
+            list: List of news events with 'time', 'impact', 'title' keys.
+                  Returns empty list if API key not configured.
+        """
+        import os
+        import httpx
+        
+        news_api_key = os.getenv('NEWS_API_KEY', '')
+        
+        if not news_api_key:
+            logger.warning(
+                "[FILTER] NEWS_API_KEY not configured. News calendar filtering is disabled. "
+                "Set NEWS_API_KEY environment variable to enable news-based signal filtering. "
+                "Supported: ForexFactory RSS, Investing.com calendar API, or similar."
+            )
+            return self.news_calendar
+        
+        try:
+            # Integration point: Fetch from configured news API
+            # Example: ForexFactory calendar RSS endpoint
+            # Replace this URL with your actual news API endpoint
+            news_api_url = os.getenv(
+                'NEWS_API_URL',
+                'https://nfs.faireconomy.media/ff_calendar_thisweek.json'
+            )
+            
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.get(
+                    news_api_url,
+                    headers={'X-API-KEY': news_api_key} if news_api_key else {}
+                )
+                
+                if response.status_code != 200:
+                    logger.warning(
+                        f"[FILTER] News API returned status {response.status_code}. "
+                        f"Falling back to existing calendar."
+                    )
+                    return self.news_calendar
+                
+                data = response.json()
+                
+                # Parse the response into our standard format
+                # Expected format: list of dicts with 'time', 'impact', 'title'
+                events = []
+                for event in data:
+                    # Handle ForexFactory-style JSON format
+                    if isinstance(event, dict):
+                        # Try common field names from different providers
+                        event_time = None
+                        time_fields = ['date', 'time', 'datetime', 'event_time', 'release_date']
+                        for field in time_fields:
+                            if field in event:
+                                raw_time = event[field]
+                                if isinstance(raw_time, str):
+                                    try:
+                                        # ForexFactory uses format like '2024-01-15T13:30:00-05:00'
+                                        from datetime import datetime as dt
+                                        event_time = dt.fromisoformat(raw_time.replace('Z', '+00:00'))
+                                    except (ValueError, TypeError):
+                                        try:
+                                            event_time = dt.strptime(raw_time[:19], '%Y-%m-%dT%H:%M:%S')
+                                            event_time = event_time.replace(tzinfo=timezone.utc)
+                                        except (ValueError, TypeError):
+                                            pass
+                                elif isinstance(raw_time, datetime):
+                                    event_time = raw_time
+                                break
+                        
+                        impact = event.get('impact', event.get('importance', '')).upper()
+                        # Normalize impact levels
+                        if impact in ('HIGH', '3', 'HIGH IMPACT'):
+                            impact = 'HIGH'
+                        elif impact in ('MEDIUM', '2', 'MEDIUM IMPACT'):
+                            impact = 'MEDIUM'
+                        else:
+                            impact = 'LOW'
+                        
+                        title = event.get('title', event.get('event', event.get('name', 'Unknown Event')))
+                        
+                        if event_time:
+                            events.append({
+                                'time': event_time,
+                                'impact': impact,
+                                'title': str(title),
+                                'currency': event.get('currency', ''),
+                            })
+                
+                if events:
+                    self.news_calendar = events
+                    logger.info(f"[FILTER] News calendar updated with {len(events)} events from API")
+                else:
+                    logger.warning("[FILTER] News API returned data but no events could be parsed")
+                    
+        except httpx.TimeoutException:
+            logger.warning("[FILTER] News API request timed out. Using existing calendar.")
+        except httpx.ConnectError:
+            logger.warning("[FILTER] Could not connect to News API. Using existing calendar.")
+        except Exception as e:
+            logger.error(f"[FILTER] Error fetching news calendar: {e}. Using existing calendar.")
+        
         return self.news_calendar
 
     def check_session_valid(self) -> dict:
@@ -95,6 +199,19 @@ class AntiManipulationFilters:
             return {'valid': True, 'session': 'OTC Weekend', 'quality': 'MODERATE'}
         else:
             return {'valid': False, 'session': 'Hors Session', 'quality': 'LOW'}
+
+    def is_valid_session(self) -> bool:
+        """
+        Returns True if current time is within a valid trading session.
+        
+        Designed for easy integration in the signal pipeline:
+            session_valid = filters.is_valid_session()
+            if not force and not session_valid:
+                logger.info(f"[{pair}] Hors session PO optimale")
+                return None
+        """
+        result = self.check_session_valid()
+        return result.get('valid', False)
 
     def detect_stop_hunt(self, df, liquidity_zones: dict) -> dict:
         """Détecte les chasses de stops (manipulation avant vrai mouvement)."""

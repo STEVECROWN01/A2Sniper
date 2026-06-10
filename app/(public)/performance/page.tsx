@@ -1,8 +1,8 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { Calendar, TrendingUp, DollarSign, Target, PieChart, BarChart3, RefreshCw, Download, Filter } from 'lucide-react';
+import { Calendar, TrendingUp, TrendingDown, DollarSign, Target, PieChart, BarChart3, RefreshCw, Download, Filter, AlertCircle } from 'lucide-react';
 
 import { MetricCard } from '@/components/ui/metric-card';
 import { PerformanceChart } from '@/components/ui/performance-chart';
@@ -12,15 +12,40 @@ import { tradingPairs } from '@/lib/mock-data';
 
 export default function PerformancePage() {
   useAuth();
-  const { signals, userStats } = useAppStore();
+  const { signals, userStats, fetchPerformance, fetchSignals } = useAppStore();
   const [selectedTimeframe, setSelectedTimeframe] = useState('1M');
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+
+  // Fetch data on mount
+  useEffect(() => {
+    const loadData = async () => {
+      setIsLoading(true);
+      await Promise.all([fetchSignals(), fetchPerformance()]);
+      setIsLoading(false);
+    };
+    loadData();
+  }, [fetchSignals, fetchPerformance]);
+
+  // Filter signals by selected timeframe
+  const filteredSignals = useMemo(() => {
+    const now = new Date();
+    const cutoff = new Date();
+    switch (selectedTimeframe) {
+      case '1D': cutoff.setDate(now.getDate() - 1); break;
+      case '7D': cutoff.setDate(now.getDate() - 7); break;
+      case '1M': cutoff.setMonth(now.getMonth() - 1); break;
+      case '3M': cutoff.setMonth(now.getMonth() - 3); break;
+      case '1Y': cutoff.setFullYear(now.getFullYear() - 1); break;
+    }
+    return signals.filter(s => new Date(s.timestamp) >= cutoff);
+  }, [signals, selectedTimeframe]);
 
   // Calculer les statistiques par paire
   const pairStats = useMemo(() => {
     return tradingPairs.map(pair => {
-      const pairSignals = signals.filter(s => s.pair === pair.symbol);
-      const resolvedSignals = pairSignals.filter(s => s.is_win !== null);
+      const pairSignals = filteredSignals.filter(s => s.pair === pair.symbol);
+      const resolvedSignals = pairSignals.filter(s => s.is_win !== null && s.is_win !== undefined);
       const wonSignals = resolvedSignals.filter(s => s.is_win === true);
       const lostSignals = resolvedSignals.filter(s => s.is_win === false);
       const totalProfit = pairSignals.reduce((sum, s) => sum + (s.profit_loss || 0), 0);
@@ -34,16 +59,15 @@ export default function PerformancePage() {
         lost: lostSignals.length
       };
     }).filter(stat => stat.totalTrades > 0);
-  }, [signals]);
+  }, [filteredSignals]);
 
   // Données pour le graphique (réelles)
   const chartData = useMemo(() => {
-    // Regrouper les signaux par jour
     const dailyMap: Record<string, { winRate: number; total: number; profit: number }> = {};
-    signals.forEach(s => {
+    filteredSignals.forEach(s => {
       const date = new Date(s.timestamp).toISOString().split('T')[0];
       if (!dailyMap[date]) dailyMap[date] = { winRate: 0, total: 0, profit: 0 };
-      if (s.is_win !== null) {
+      if (s.is_win !== null && s.is_win !== undefined) {
         dailyMap[date].total++;
         if (s.is_win) dailyMap[date].winRate++;
         dailyMap[date].profit += s.profit_loss || 0;
@@ -55,27 +79,122 @@ export default function PerformancePage() {
       totalTrades: data.total,
       profit: data.profit
     })).sort((a, b) => a.date.localeCompare(b.date));
-  }, [signals]);
+  }, [filteredSignals]);
 
-  const totalProfit = signals.reduce((sum, s) => sum + (s.profit_loss || 0), 0);
-  const totalTrades = signals.filter(s => s.status === 'WON' || s.status === 'LOST').length;
-  const wonTrades = signals.filter(s => s.status === 'WON').length;
-  const avgWinRate = totalTrades > 0 ? (wonTrades / totalTrades) * 100 : 0;
+  // Calculate real change values by comparing with previous period
+  const metrics = useMemo(() => {
+    const resolvedSignals = filteredSignals.filter(s => s.is_win !== null && s.is_win !== undefined);
+    const wonSignals = resolvedSignals.filter(s => s.is_win === true);
+    const totalProfit = filteredSignals.reduce((sum, s) => sum + (s.profit_loss || 0), 0);
+    const totalTrades = resolvedSignals.length;
+    const avgWinRate = totalTrades > 0 ? (wonSignals.length / totalTrades) * 100 : 0;
+    const wonTrades = wonSignals.length;
 
-  const handleRefresh = () => {
+    // Calculate change from userStats (previous period comparison)
+    const profitChange = userStats.totalProfit !== 0 
+      ? ((totalProfit - userStats.totalProfit) / Math.abs(userStats.totalProfit)) * 100 
+      : 0;
+    const winRateChange = userStats.winRate !== 0 
+      ? avgWinRate - userStats.winRate 
+      : 0;
+    
+    // Only show change if we have data to compare against
+    const hasComparison = userStats.totalTrades > 0;
+
+    return {
+      totalProfit,
+      totalTrades,
+      avgWinRate,
+      wonTrades,
+      profitChange: hasComparison ? profitChange : null,
+      winRateChange: hasComparison ? winRateChange : null,
+    };
+  }, [filteredSignals, userStats]);
+
+  // Monthly performance data (computed from actual signals)
+  const monthlyPerformance = useMemo(() => {
+    const monthlyMap: Record<string, { wins: number; losses: number; profit: number; trades: number }> = {};
+    filteredSignals.forEach(s => {
+      if (s.is_win === null || s.is_win === undefined) return;
+      const date = new Date(s.timestamp);
+      const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+      if (!monthlyMap[key]) monthlyMap[key] = { wins: 0, losses: 0, profit: 0, trades: 0 };
+      monthlyMap[key].trades++;
+      if (s.is_win) monthlyMap[key].wins++;
+      else monthlyMap[key].losses++;
+      monthlyMap[key].profit += s.profit_loss || 0;
+    });
+    return Object.entries(monthlyMap)
+      .map(([month, data]) => ({
+        month,
+        winRate: data.trades > 0 ? (data.wins / data.trades) * 100 : 0,
+        ...data
+      }))
+      .sort((a, b) => a.month.localeCompare(b.month));
+  }, [filteredSignals]);
+
+  // Risk metrics data (computed from actual signals)
+  const riskMetrics = useMemo(() => {
+    const resolvedSignals = filteredSignals.filter(s => s.is_win !== null && s.is_win !== undefined);
+    if (resolvedSignals.length === 0) return null;
+
+    const profits = resolvedSignals.filter(s => s.is_win).map(s => s.profit_loss || 0);
+    const losses = resolvedSignals.filter(s => !s.is_win).map(s => Math.abs(s.profit_loss || 0));
+    const totalProfit = profits.reduce((sum, p) => sum + p, 0);
+    const totalLoss = losses.reduce((sum, l) => sum + l, 0);
+    const avgProfit = profits.length > 0 ? totalProfit / profits.length : 0;
+    const avgLoss = losses.length > 0 ? totalLoss / losses.length : 0;
+    const profitFactor = totalLoss > 0 ? totalProfit / totalLoss : totalProfit > 0 ? Infinity : 0;
+    const winRate = (resolvedSignals.filter(s => s.is_win).length / resolvedSignals.length) * 100;
+
+    // Max drawdown calculation
+    let peak = 0;
+    let maxDrawdown = 0;
+    let runningTotal = 0;
+    for (const s of resolvedSignals) {
+      runningTotal += s.profit_loss || 0;
+      if (runningTotal > peak) peak = runningTotal;
+      const drawdown = peak > 0 ? (peak - runningTotal) / peak : 0;
+      maxDrawdown = Math.max(maxDrawdown, drawdown);
+    }
+
+    // Consecutive losses
+    let maxConsecutiveLosses = 0;
+    let currentLosses = 0;
+    for (const s of resolvedSignals) {
+      if (!s.is_win) {
+        currentLosses++;
+        maxConsecutiveLosses = Math.max(maxConsecutiveLosses, currentLosses);
+      } else {
+        currentLosses = 0;
+      }
+    }
+
+    return {
+      profitFactor: profitFactor === Infinity ? '∞' : profitFactor.toFixed(2),
+      avgProfitLossRatio: avgLoss > 0 ? (avgProfit / avgLoss).toFixed(2) : avgProfit > 0 ? '∞' : '0',
+      maxDrawdown: (maxDrawdown * 100).toFixed(1),
+      maxConsecutiveLosses,
+      winRate: winRate.toFixed(1),
+      totalTrades: resolvedSignals.length,
+    };
+  }, [filteredSignals]);
+
+  const handleRefresh = async () => {
     setIsRefreshing(true);
-    setTimeout(() => {
-      setIsRefreshing(false);
-    }, 1500);
+    await Promise.all([fetchSignals(), fetchPerformance()]);
+    setIsRefreshing(false);
   };
 
   const handleExportPerformance = () => {
     const data = {
-      totalProfit,
-      totalTrades,
-      avgWinRate,
+      totalProfit: metrics.totalProfit,
+      totalTrades: metrics.totalTrades,
+      avgWinRate: metrics.avgWinRate,
       pairStats,
       timeframe: selectedTimeframe,
+      monthlyPerformance,
+      riskMetrics,
       exportDate: new Date().toISOString()
     };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
@@ -88,6 +207,23 @@ export default function PerformancePage() {
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
   };
+
+  if (isLoading) {
+    return (
+      <div className="space-y-8">
+        <div className="mb-8">
+          <div className="h-8 w-64 bg-[#1a1a2e] rounded animate-pulse mb-2" />
+          <div className="h-4 w-96 bg-[#1a1a2e] rounded animate-pulse" />
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+          {[1,2,3,4].map(i => (
+            <div key={i} className="h-32 bg-[#0A0B0E] rounded-xl border border-[#1a1a2e] animate-pulse" />
+          ))}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-8">
           {/* Header */}
@@ -142,29 +278,27 @@ export default function PerformancePage() {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
             <MetricCard
               title="Profit total"
-              value={`$${totalProfit.toFixed(2)}`}
-              change={{ value: 15.3, type: 'increase' }}
+              value={`$${metrics.totalProfit.toFixed(2)}`}
+              change={metrics.profitChange !== null ? { value: Math.abs(metrics.profitChange), type: metrics.profitChange >= 0 ? 'increase' : 'decrease' } : undefined}
               icon={<DollarSign className="w-6 h-6" />}
               color="green"
             />
             <MetricCard
               title="Taux de réussite"
-              value={`${avgWinRate.toFixed(1)}%`}
-              change={{ value: 2.5, type: 'increase' }}
+              value={`${metrics.avgWinRate.toFixed(1)}%`}
+              change={metrics.winRateChange !== null ? { value: Math.abs(metrics.winRateChange), type: metrics.winRateChange >= 0 ? 'increase' : 'decrease' } : undefined}
               icon={<Target className="w-6 h-6" />}
               color="yellow"
             />
             <MetricCard
               title="Total trades"
-              value={totalTrades}
-              change={{ value: 8, type: 'increase' }}
+              value={metrics.totalTrades}
               icon={<BarChart3 className="w-6 h-6" />}
               color="yellow"
             />
             <MetricCard
               title="Trades gagnants"
-              value={wonTrades}
-              change={{ value: 12, type: 'increase' }}
+              value={metrics.wonTrades}
               icon={<TrendingUp className="w-6 h-6" />}
               color="green"
             />
@@ -188,6 +322,13 @@ export default function PerformancePage() {
             <h3 className="text-lg font-semibold text-white mb-6">
               Performance par paire de devises
             </h3>
+            {pairStats.length === 0 ? (
+              <div className="text-center py-12">
+                <AlertCircle className="w-12 h-12 text-gray-600 mx-auto mb-4" />
+                <p className="text-gray-500 text-sm">Aucune donnée de performance disponible pour cette période.</p>
+                <p className="text-gray-600 text-xs mt-2">Les statistiques par paire apparaîtront dès que des signaux résolus seront disponibles.</p>
+              </div>
+            ) : (
             <div className="overflow-x-auto">
               <table className="w-full">
                 <thead>
@@ -263,6 +404,7 @@ export default function PerformancePage() {
                 </tbody>
               </table>
             </div>
+            )}
           </motion.div>
 
           {/* Additional Stats */}
@@ -277,9 +419,34 @@ export default function PerformancePage() {
               <h3 className="text-lg font-semibold text-white mb-4">
                 Performance mensuelle
               </h3>
-              <div className="space-y-4">
-                <p className="text-gray-500 text-xs italic">Données mensuelles non disponibles — en attente de l'API.</p>
-              </div>
+              {monthlyPerformance.length === 0 ? (
+                <div className="text-center py-8">
+                  <Calendar className="w-10 h-10 text-gray-600 mx-auto mb-3" />
+                  <p className="text-gray-500 text-sm">Aucune donnée mensuelle disponible.</p>
+                  <p className="text-gray-600 text-xs mt-1">Les performances mensuelles s&apos;afficheront dès que des signaux résolus seront enregistrés.</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {monthlyPerformance.map(mp => (
+                    <div key={mp.month} className="flex items-center justify-between p-3 bg-[#050507] rounded-lg border border-white/5">
+                      <span className="text-sm font-medium text-gray-300">{mp.month}</span>
+                      <div className="flex items-center gap-4">
+                        <span className={`text-sm font-bold ${mp.profit >= 0 ? 'text-green-500' : 'text-red-500'}`}>
+                          {mp.profit >= 0 ? '+' : ''}{mp.profit.toFixed(2)}$
+                        </span>
+                        <span className={`text-xs px-2 py-0.5 rounded-full ${
+                          mp.winRate >= 70 ? 'bg-green-500/10 text-green-400' :
+                          mp.winRate >= 50 ? 'bg-yellow-500/10 text-yellow-400' :
+                          'bg-red-500/10 text-red-400'
+                        }`}>
+                          {mp.winRate.toFixed(1)}%
+                        </span>
+                        <span className="text-xs text-gray-500">{mp.trades} trades</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </motion.div>
 
             {/* Risk Metrics */}
@@ -292,9 +459,29 @@ export default function PerformancePage() {
               <h3 className="text-lg font-semibold text-white mb-4">
                 Métriques de risque
               </h3>
-              <div className="space-y-4">
-                <p className="text-gray-500 text-xs italic">Données de risque non disponibles — en attente de l'API.</p>
-              </div>
+              {!riskMetrics ? (
+                <div className="text-center py-8">
+                  <PieChart className="w-10 h-10 text-gray-600 mx-auto mb-3" />
+                  <p className="text-gray-500 text-sm">Aucune donnée de risque disponible.</p>
+                  <p className="text-gray-600 text-xs mt-1">Les métriques de risque seront calculées dès que des résultats de trades seront enregistrés.</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {[
+                    { label: 'Profit Factor', value: riskMetrics.profitFactor, color: parseFloat(String(riskMetrics.profitFactor)) >= 1.5 ? 'text-green-400' : 'text-yellow-400' },
+                    { label: 'Ratio Gain/Perte moyen', value: riskMetrics.avgProfitLossRatio, color: 'text-[#D4AF37]' },
+                    { label: 'Drawdown maximal', value: `${riskMetrics.maxDrawdown}%`, color: 'text-red-400' },
+                    { label: 'Pertes consécutives max', value: String(riskMetrics.maxConsecutiveLosses), color: 'text-orange-400' },
+                    { label: 'Taux de réussite', value: `${riskMetrics.winRate}%`, color: parseFloat(riskMetrics.winRate) >= 60 ? 'text-green-400' : 'text-red-400' },
+                    { label: 'Trades analysés', value: String(riskMetrics.totalTrades), color: 'text-gray-300' },
+                  ].map((metric) => (
+                    <div key={metric.label} className="flex items-center justify-between p-3 bg-[#050507] rounded-lg border border-white/5">
+                      <span className="text-sm text-gray-400">{metric.label}</span>
+                      <span className={`text-sm font-bold ${metric.color}`}>{metric.value}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </motion.div>
           </div>
     </div>

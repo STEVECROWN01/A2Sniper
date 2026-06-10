@@ -4,7 +4,7 @@ import { motion } from 'framer-motion';
 
 export default function Loading() {
   return (
-    <div className="fixed inset-0 z-[9999] bg-[#050507] flex flex-col items-center justify-center">
+    <div className="fixed inset-0 z-[9999] bg-[#050507] flex flex-col items-center justify-center" role="status" aria-label="Chargement en cours">
       <motion.div
         initial={{ scale: 0.8, opacity: 0 }}
         animate={{ scale: [0.8, 1.1, 1], opacity: 1 }}

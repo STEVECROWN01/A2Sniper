@@ -23,6 +23,7 @@ export interface SignalScore {
   trend_winrate: number;
   final_winrate: number;
   risk_level: 'LOW' | 'MEDIUM' | 'HIGH';
+  isSimulation: boolean;
 }
 
 export interface AISignal {
@@ -192,37 +193,39 @@ export class AITradingEngine {
     }
   }
 
-  // Simulation Random Forest
-  private simulateRandomForest(features: MLFeatures): number {
-    // Simulation basée sur les features
+  // Rule-based analysis using Random Forest-like logic (NOT a trained ML model)
+  // This is a heuristic analysis function, not a machine learning model
+  private analyzeWithRandomForestLogic(features: MLFeatures): number {
+    // Heuristic analysis based on features
     let score = 0.5;
     
-    // Analyse du momentum
+    // Momentum analysis
     if (Math.abs(features.price_change_1m) > 0.001) {
       score += features.price_change_1m > 0 ? 0.1 : -0.1;
     }
     
-    // Analyse du volume
+    // Volume analysis
     if (features.volume_ratio > 1.2) {
       score += 0.15;
     }
     
-    // Analyse de la volatilité
+    // Volatility analysis
     if (features.volatility > 0.02) {
       score += features.trend_strength > 0 ? 0.1 : -0.1;
     }
     
-    // Facteurs temporels
+    // Time factors
     const { hour, is_market_open } = features.time_features;
     if (is_market_open && (hour >= 8 && hour <= 16)) {
-      score += 0.05; // Heures de trading actives
+      score += 0.05; // Active trading hours
     }
     
     return Math.max(0, Math.min(1, score));
   }
 
-  // Simulation XGBoost
-  private simulateXGBoost(features: MLFeatures, technicals: TechnicalIndicators): number {
+  // Rule-based analysis using XGBoost-like logic (NOT a trained ML model)
+  // This is a heuristic analysis function, not a gradient boosting model
+  private analyzeWithXGBoostLogic(features: MLFeatures, technicals: TechnicalIndicators): number {
     let score = 0.5;
     
     // Analyse RSI
@@ -250,8 +253,9 @@ export class AITradingEngine {
     return Math.max(0, Math.min(1, score));
   }
 
-  // Simulation LSTM
-  private simulateLSTM(marketHistory: MarketData[]): number {
+  // Rule-based analysis using LSTM-like logic (NOT a trained ML model)
+  // This is a heuristic pattern analysis, not a recurrent neural network
+  private analyzeWithLSTMLogic(marketHistory: MarketData[]): number {
     if (marketHistory.length < 10) return 0.5;
     
     // Analyse des patterns temporels
@@ -376,7 +380,8 @@ export class AITradingEngine {
     return {
       ...scores,
       final_winrate: finalWinrate,
-      risk_level: riskLevel
+      risk_level: riskLevel,
+      isSimulation: true // All analysis is rule-based, not from trained ML models
     };
   }
 
@@ -424,17 +429,24 @@ export class AITradingEngine {
       const mlFeatures = this.extractMLFeatures(marketData);
       const technicals = TechnicalAnalysis.analyzeMarket(marketData);
       
-      // Calcul des scores des différents modèles
-      const rfScore = this.simulateRandomForest(mlFeatures);
-      const xgbScore = this.simulateXGBoost(mlFeatures, technicals);
-      const lstmScore = this.simulateLSTM(marketData);
+      // Calculate scores from rule-based analysis (NOT trained ML models)
+      if (process.env.NODE_ENV === 'development') {
+        console.warn(
+          '[A2Sniper] AI Engine: All analysis functions are rule-based heuristics, NOT trained ML models. ' +
+          'Results should not be interpreted as ML predictions. isSimulation: true flag is set on all outputs.'
+        );
+      }
       
-      // Scores techniques
+      const rfScore = this.analyzeWithRandomForestLogic(mlFeatures);
+      const xgbScore = this.analyzeWithXGBoostLogic(mlFeatures, technicals);
+      const lstmScore = this.analyzeWithLSTMLogic(marketData);
+      
+      // Technical scores
       const technicalScore = this.calculateTechnicalScore(technicals);
       const volumeScore = Math.min(1, mlFeatures.volume_ratio / 2);
       const trendScore = Math.abs(mlFeatures.trend_strength) * 10;
       
-      // Score final
+      // Final score — marked as simulation since these are heuristics, not trained models
       const signalScore = this.calculateFinalWinrate({
         base_probability: (rfScore + xgbScore + lstmScore) / 3,
         technical_winrate: technicalScore,

@@ -1,6 +1,68 @@
 import { create } from 'zustand';
 import { Signal, mockSignals, mockUserStats, UserStats } from './mock-data';
 
+// ============================================================================
+// SECURITY WARNING: Auth token is stored in localStorage
+// ============================================================================
+// This approach is vulnerable to XSS attacks. If an attacker injects malicious
+// JavaScript into the application, they can read the token from localStorage.
+// 
+// RECOMMENDED FIX: Use httpOnly cookies set by the backend instead. The backend
+// should set the JWT as an httpOnly, Secure, SameSite=Strict cookie on login.
+// This would require backend changes to the auth endpoints.
+//
+// For now, we mitigate by:
+// 1. Checking token expiry before using it
+// 2. Clearing expired tokens automatically
+// 3. Not storing sensitive user data alongside the token
+// ============================================================================
+
+interface SubscriptionPlan {
+  name: string;
+  maxSignalsPerDay: number;
+  canAccessAPI: boolean;
+  canBacktest: boolean;
+  canRequestSignal: boolean;
+  maxSignalRequestsPerHour: number;
+}
+
+const PLAN_LIMITS: Record<string, SubscriptionPlan> = {
+  Standard: {
+    name: 'Standard',
+    maxSignalsPerDay: 20,
+    canAccessAPI: false,
+    canBacktest: false,
+    canRequestSignal: true,
+    maxSignalRequestsPerHour: 3,
+  },
+  Premium: {
+    name: 'Premium',
+    maxSignalsPerDay: 35,
+    canAccessAPI: false,
+    canBacktest: true,
+    canRequestSignal: true,
+    maxSignalRequestsPerHour: 10,
+  },
+  Pro: {
+    name: 'Pro',
+    maxSignalsPerDay: Infinity,
+    canAccessAPI: true,
+    canBacktest: true,
+    canRequestSignal: true,
+    maxSignalRequestsPerHour: Infinity,
+  },
+};
+
+// Default plan for unauthenticated users
+const DEFAULT_PLAN: SubscriptionPlan = {
+  name: 'Free',
+  maxSignalsPerDay: 5,
+  canAccessAPI: false,
+  canBacktest: false,
+  canRequestSignal: false,
+  maxSignalRequestsPerHour: 0,
+};
+
 interface AppState {
   signals: Signal[];
   userStats: UserStats;
@@ -12,6 +74,7 @@ interface AppState {
     name: string;
     avatar?: string;
     is_admin?: boolean;
+    plan?: string;
   } | null;
   liveStatus: 'LIVE' | 'DISCONNECTED';
   marketInfo: {
@@ -37,6 +100,35 @@ interface AppState {
   initialize: () => Promise<void>;
   logout: () => void;
   requestSignal: (pair: string) => Promise<{ success: boolean; signal?: Signal; message?: string }>;
+  checkPlanLimit: (action: string) => { allowed: boolean; reason?: string };
+  getAuthHeaders: () => Record<string, string>;
+  getApiUrl: () => string;
+}
+
+// Check if a JWT token is expired
+function isTokenExpired(token: string): boolean {
+  try {
+    const payload = JSON.parse(atob(token.split('.')[1]));
+    if (payload.exp) {
+      // exp is in seconds since epoch
+      return Date.now() >= payload.exp * 1000;
+    }
+    return false; // Token without exp claim — treat as valid
+  } catch {
+    return true; // Malformed token — treat as expired
+  }
+}
+
+// Get stored token with expiry check
+function getValidToken(): string | null {
+  if (typeof window === 'undefined') return null;
+  const token = localStorage.getItem('a2sniper_token');
+  if (!token) return null;
+  if (isTokenExpired(token)) {
+    localStorage.removeItem('a2sniper_token');
+    return null;
+  }
+  return token;
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -76,24 +168,67 @@ export const useAppStore = create<AppState>((set, get) => ({
     )
   })),
 
-  // Helper to get auth headers
+  // Helper to get auth headers — uses getValidToken() for expiry check
   getAuthHeaders: () => {
-    const token = typeof window !== 'undefined' ? localStorage.getItem('a2sniper_token') : null;
+    const token = getValidToken();
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (token) headers['Authorization'] = `Bearer ${token}`;
     return headers;
   },
 
   // Helper to get API base URL
-  getApiUrl: () => process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000',
+  getApiUrl: () => process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000',
+
+  // Check if the current user's plan allows the requested action
+  checkPlanLimit: (action: string): { allowed: boolean; reason?: string } => {
+    const user = get().user;
+    const planName = user?.plan || 'Free';
+    const plan = PLAN_LIMITS[planName] || DEFAULT_PLAN;
+
+    switch (action) {
+      case 'requestSignal': {
+        if (!plan.canRequestSignal) {
+          return { allowed: false, reason: `Le plan ${plan.name} ne permet pas de demander des signaux. Passez au plan Standard ou supérieur.` };
+        }
+        return { allowed: true };
+      }
+      case 'accessAPI': {
+        if (!plan.canAccessAPI) {
+          return { allowed: false, reason: `L'accès API nécessite le plan Pro.` };
+        }
+        return { allowed: true };
+      }
+      case 'backtest': {
+        if (!plan.canBacktest) {
+          return { allowed: false, reason: `Le backtesting nécessite le plan Premium ou Pro.` };
+        }
+        return { allowed: true };
+      }
+      case 'signalsPerDay': {
+        const todaySignals = get().signals.filter(s => {
+          const today = new Date();
+          const signalDate = new Date(s.timestamp);
+          return signalDate.toDateString() === today.toDateString();
+        }).length;
+        if (todaySignals >= plan.maxSignalsPerDay) {
+          return { allowed: false, reason: `Limite quotidienne atteinte (${plan.maxSignalsPerDay} signaux/jour pour le plan ${plan.name}).` };
+        }
+        return { allowed: true };
+      }
+      default:
+        return { allowed: true };
+    }
+  },
 
   fetchSignals: async () => {
     try {
       const url = get().getApiUrl();
       const startTime = Date.now();
-      const res = await fetch(`${url}/api/signals`, {
-        headers: get().getAuthHeaders()
-      });
+      const headers = get().getAuthHeaders();
+      // If no valid token, skip the fetch
+      if (!headers['Authorization']) return;
+      
+      const res = await fetch(`${url}/api/signals`, { headers });
       if (res.ok) {
         // Calculate clock offset from HTTP Date header
         const serverDateStr = res.headers.get('Date');
@@ -106,16 +241,15 @@ export const useAppStore = create<AppState>((set, get) => ({
         }
 
         const data = await res.json();
-        // The backend returns { signals: [], total: 0 }
-        const parsedSignals = (data.signals || []).map((s: any) => {
-          let tsStr = s.timestamp;
+        const parsedSignals = (data.signals || []).map((s: Record<string, unknown>) => {
+          let tsStr = s.timestamp as string | undefined;
           if (tsStr && !tsStr.endsWith('Z') && !tsStr.includes('+')) {
             tsStr = tsStr + 'Z';
           }
           return {
             ...s,
             status: s.is_win === true ? 'WON' : s.is_win === false ? 'LOST' : 'ACTIVE',
-            timestamp: new Date(tsStr)
+            timestamp: new Date(tsStr || Date.now())
           };
         });
         set({ 
@@ -131,9 +265,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   fetchPerformance: async () => {
     try {
       const url = get().getApiUrl();
-      const res = await fetch(`${url}/api/performance`, {
-        headers: get().getAuthHeaders()
-      });
+      const headers = get().getAuthHeaders();
+      if (!headers['Authorization']) return;
+
+      const res = await fetch(`${url}/api/performance`, { headers });
       if (res.ok) {
         const data = await res.json();
         set((state) => ({
@@ -170,6 +305,17 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   requestSignal: async (pair: string) => {
+    // Check plan limits before requesting
+    const limitCheck = get().checkPlanLimit('requestSignal');
+    if (!limitCheck.allowed) {
+      return { success: false, message: limitCheck.reason };
+    }
+
+    const dailyLimitCheck = get().checkPlanLimit('signalsPerDay');
+    if (!dailyLimitCheck.allowed) {
+      return { success: false, message: dailyLimitCheck.reason };
+    }
+
     try {
       const url = get().getApiUrl();
       const res = await fetch(`${url}/api/signals/request`, {
@@ -188,7 +334,6 @@ export const useAppStore = create<AppState>((set, get) => ({
           status: data.signal.is_win === true ? 'WON' : data.signal.is_win === false ? 'LOST' : 'ACTIVE',
           timestamp: new Date(tsStr)
         };
-        // Add to signals list
         set((state) => ({
           signals: [parsedSignal, ...state.signals.filter(s => s.id !== parsedSignal.id)]
         }));
@@ -216,9 +361,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   fetchMarketStatus: async () => {
     try {
       const url = get().getApiUrl();
-      const res = await fetch(`${url}/api/market/status`, {
-        headers: get().getAuthHeaders()
-      });
+      const headers = get().getAuthHeaders();
+      if (!headers['Authorization']) return;
+
+      const res = await fetch(`${url}/api/market/status`, { headers });
       if (res.ok) {
         const data = await res.json();
         set({ 
@@ -235,7 +381,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   initialize: async () => {
-    const token = typeof window !== 'undefined' ? localStorage.getItem('a2sniper_token') : null;
+    // Use getValidToken() which checks expiry
+    const token = getValidToken();
     if (token) {
       try {
         const url = get().getApiUrl();
@@ -250,6 +397,7 @@ export const useAppStore = create<AppState>((set, get) => ({
           await get().fetchMarketStatus();
           return;
         } else {
+          // Token was rejected by server — clear it (could be revoked or expired server-side)
           localStorage.removeItem('a2sniper_token');
         }
       } catch (err) {
@@ -266,3 +414,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ user: null, isAuthenticated: false });
   }
 }));
+
+// Export plan limits for use in components
+export { PLAN_LIMITS, DEFAULT_PLAN };
+export type { SubscriptionPlan };

@@ -104,12 +104,19 @@ class SMCEngine:
                 })
 
         # IDM: mèche sous HL (uptrend) ou au-dessus LH (downtrend) puis retour rapide
+        # H12 Fix: Removed break statement so ALL IDMs are collected, not just the first one
         for i in range(3, len(df)):
             if len(lows_idx) > 1:
                 recent_hl = l[lows_idx[-1]] if len(lows_idx) > 0 else None
                 if recent_hl and l[i] < recent_hl and c[i] > recent_hl:
                     result['idm'].append({'index': i, 'type': 'bullish_sweep', 'level': recent_hl})
-                    break
+
+        # Also detect bearish IDM: wick above recent LH then close back below
+        for i in range(3, len(df)):
+            if len(highs_idx) > 1:
+                recent_lh = h[highs_idx[-1]] if len(highs_idx) > 0 else None
+                if recent_lh and h[i] > recent_lh and c[i] < recent_lh:
+                    result['idm'].append({'index': i, 'type': 'bearish_sweep', 'level': recent_lh})
 
         return result
 

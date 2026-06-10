@@ -1,7 +1,7 @@
 """
 Voting Classifier Meta-Modèle — CDC A2Sniper 3.0
 Pondérations CDC : LSTM 40% | Transformer 35% | XGBoost 25%
-Seuil consensus : ≥ 95% confiance
+Seuil consensus : ≥ 85% confiance
 """
 
 from .lstm import LSTMModel
@@ -19,16 +19,25 @@ class VotingClassifierModel:
         self.transformer = TransformerModel(n_features=18)
         self.xgboost = XGBoostModel(n_features=47)
         self.weights = {'LSTM': 0.40, 'Transformer': 0.35, 'XGBoost': 0.25}
-        self.threshold = 60.0
+        self.threshold = 85.0
+        self.simulation_mode = True  # True if all sub-models are in simulation mode
 
     def predict(self, features: dict) -> dict:
         """Prédiction par consensus pondéré des 3 modèles."""
         import pandas as pd
         df = pd.DataFrame([features])
-        
+
         lstm_pred = self.lstm.predict(df)
         trans_pred = self.transformer.predict(df)
         xgb_pred = self.xgboost.predict(features)
+
+        # Check if all sub-models are in simulation mode
+        all_simulation = all([
+            lstm_pred.get('simulation_mode', not self.lstm.is_trained),
+            trans_pred.get('simulation_mode', not self.transformer.is_trained),
+            xgb_pred.get('simulation_mode', not self.xgboost.is_trained),
+        ])
+        self.simulation_mode = all_simulation
 
         # Consensus pondéré
         weighted_prob = (
@@ -45,23 +54,27 @@ class VotingClassifierModel:
         )
         direction = 'CALL' if call_weight_sum > 0.5 else 'PUT'
 
-        # Unanimité bonus
+        # Check unanimity (no artificial bonus — honesty matters)
         all_same = lstm_pred['direction'] == trans_pred['direction'] == xgb_pred['direction']
-        if all_same:
-            weighted_prob = min(99.99, weighted_prob * 1.05)
 
         approved = weighted_prob >= self.threshold
 
-        return {
+        result = {
             'approved': approved,
             'probability': round(weighted_prob, 2),
             'direction': direction,
             'unanimous': all_same,
+            'simulation_mode': self.simulation_mode,
             'models': {
                 'LSTM': {'probability': lstm_pred['probability'], 'direction': lstm_pred['direction'], 'weight': self.weights['LSTM']},
                 'Transformer': {'probability': trans_pred['probability'], 'direction': trans_pred['direction'], 'weight': self.weights['Transformer']},
                 'XGBoost': {'probability': xgb_pred['probability'], 'direction': xgb_pred['direction'], 'weight': self.weights['XGBoost']},
             }
         }
+
+        if self.simulation_mode:
+            logger.info("[VOTING] All models in simulation mode — predictions are heuristic-based, not ML-based")
+
+        return result
 
 

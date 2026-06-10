@@ -79,7 +79,7 @@ export default function LegalPage() {
           Notre équipe de support est disponible 24/7 pour répondre à vos questions techniques ou légales.
         </p>
         <a
-          href="mailto:support@a2sniper.ai"
+          href="mailto:support@a2sniper.com"
           className="inline-flex items-center space-x-2 bg-gradient-to-r from-[#D4AF37] to-[#C5A059] text-black px-8 py-3.5 rounded-xl font-black text-xs uppercase tracking-[0.15em] hover:from-[#C5A059] hover:to-[#D4AF37] transition-all active:scale-95"
         >
           <Mail className="w-4 h-4" />

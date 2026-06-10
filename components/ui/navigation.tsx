@@ -22,8 +22,10 @@ import {
   LayoutDashboard,
   Calculator,
   BookOpen,
-  Activity
+  Activity,
+  Crown
 } from 'lucide-react';
+import { toast } from 'sonner';
 import { useAppStore } from '@/lib/store';
 
 const navigationItems = [
@@ -44,6 +46,8 @@ export function Navigation() {
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const { user, logout } = useAppStore();
+  const userPlan = user?.plan || 'Free';
+  const isProUser = userPlan === 'Pro';
   const pathname = usePathname();
   const router = useRouter();
 
@@ -60,12 +64,10 @@ export function Navigation() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // TODO: Replace with API data from /api/notifications
-  const notifications = [
-    { id: 1, title: 'Nouveau signal EUR/USD', time: '2 min', type: 'signal' },
-    { id: 2, title: 'Performance mise à jour', time: '5 min', type: 'performance' },
-    { id: 3, title: 'Maintenance programmée', time: '1h', type: 'system' }
-  ];
+  // TODO: Fetch notifications from /api/notifications when available
+  // For now, default to empty — no fake notification data
+  const notifications: Array<{ id: number; title: string; time: string; type: string }> = [];
+  const notificationCount = 0;
 
   const handleLogout = useCallback(() => {
     logout();
@@ -76,20 +78,19 @@ export function Navigation() {
   const handleSearch = useCallback((e: React.FormEvent) => {
     e.preventDefault();
     if (searchQuery.trim()) {
-      const searchResults = [
-        { type: 'signal', title: 'EUR/USD CALL Signal', url: '/signals' },
-        { type: 'performance', title: 'Performance Analytics', url: '/performance' },
-        { type: 'backtest', title: 'Backtesting Results', url: '/backtesting' }
-      ];
+      const query = searchQuery.toLowerCase().trim();
       
-      const result = searchResults.find(r => 
-        r.title.toLowerCase().includes(searchQuery.toLowerCase())
+      // Match against actual application routes
+      const result = navigationItems.find(item => 
+        item.name.toLowerCase().includes(query) ||
+        item.href.toLowerCase().includes(query)
       );
       
       if (result) {
-        router.push(result.url);
+        router.push(result.href);
       } else {
-        router.push('/signals');
+        // No matching route found — show feedback instead of defaulting to /signals
+        toast.error('Aucun r\u00e9sultat trouv\u00e9 pour \u00ab\u00a0' + searchQuery.trim() + '\u00a0\u00bb');
       }
       setSearchQuery('');
       setIsMobileMenuOpen(false);
@@ -148,9 +149,17 @@ export function Navigation() {
                   <User className="w-5 h-5 text-[#D4AF37]" />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className="text-xs font-black text-white truncate uppercase tracking-wider">
-                    {user?.name || 'Founder Member'}
-                  </p>
+                  <div className="flex items-center gap-2">
+                    <p className="text-xs font-black text-white truncate uppercase tracking-wider">
+                      {user?.name || 'Founder Member'}
+                    </p>
+                    {isProUser && (
+                      <span className="flex items-center gap-0.5 px-1.5 py-0.5 bg-[#D4AF37]/10 border border-[#D4AF37]/30 rounded text-[8px] font-black text-[#D4AF37] uppercase tracking-wider">
+                        <Crown className="w-2.5 h-2.5" />
+                        Pro
+                      </span>
+                    )}
+                  </div>
                   <p className="text-[10px] text-gray-500 truncate font-bold">
                     {user?.email || 'founders@a2sniper.ai'}
                   </p>
@@ -197,9 +206,11 @@ export function Navigation() {
               className="p-2 text-gray-400 hover:text-white hover:bg-white/[0.03] rounded-xl transition-colors relative"
             >
               <Bell className="w-5 h-5" />
-              <span className="absolute top-1 right-1 bg-[#D4AF37] text-black text-[9px] font-black rounded-full w-4 h-4 flex items-center justify-center">
-                {notifications.length}
-              </span>
+              {notificationCount > 0 && (
+                <span className="absolute top-1 right-1 bg-[#D4AF37] text-black text-[9px] font-black rounded-full w-4 h-4 flex items-center justify-center">
+                  {notificationCount}
+                </span>
+              )}
             </button>
 
             {showNotifications && (
@@ -208,21 +219,27 @@ export function Navigation() {
                   <h3 className="font-bold text-xs uppercase tracking-wider text-white">Notifications</h3>
                 </div>
                 <div className="max-h-64 overflow-y-auto">
-                  {notifications.map((notification) => (
-                    <div key={notification.id} className="p-4 border-b border-white/[0.02] hover:bg-white/[0.02] transition-colors">
-                      <div className="flex justify-between items-start gap-2">
-                        <div>
-                          <p className="text-xs font-bold text-gray-200">{notification.title}</p>
-                          <p className="text-[10px] text-gray-500 font-bold mt-1">Il y a {notification.time}</p>
+                  {notifications.length > 0 ? (
+                    notifications.map((notification) => (
+                      <div key={notification.id} className="p-4 border-b border-white/[0.02] hover:bg-white/[0.02] transition-colors">
+                        <div className="flex justify-between items-start gap-2">
+                          <div>
+                            <p className="text-xs font-bold text-gray-200">{notification.title}</p>
+                            <p className="text-[10px] text-gray-500 font-bold mt-1">Il y a {notification.time}</p>
+                          </div>
+                          <span className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                            notification.type === 'signal' ? 'bg-[#D4AF37]' :
+                            notification.type === 'performance' ? 'bg-green-500' :
+                            'bg-red-500'
+                          }`} />
                         </div>
-                        <span className={`w-2 h-2 rounded-full flex-shrink-0 ${
-                          notification.type === 'signal' ? 'bg-[#D4AF37]' :
-                          notification.type === 'performance' ? 'bg-green-500' :
-                          'bg-red-500'
-                        }`} />
                       </div>
+                    ))
+                  ) : (
+                    <div className="p-6 text-center">
+                      <p className="text-xs text-gray-500 font-bold">Aucune notification</p>
                     </div>
-                  ))}
+                  )}
                 </div>
               </div>
             )}

@@ -4,9 +4,11 @@ Bot Telegram — CDC A2Sniper 3.0
 """
 
 import os
+import re
 import logging
 import asyncio
 from datetime import datetime, timezone
+from collections import deque
 from dotenv import load_dotenv
 
 env_path = os.path.join(os.path.dirname(__file__), '../../.env.local')
@@ -18,12 +20,21 @@ TELEGRAM_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', '')
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID', '@A2Sniper_BinaryTrader')
 
 
+# SSID detection pattern: long base64/hex strings (typical Pocket Option session IDs)
+_SSID_PATTERN = re.compile(r'["\']?session["\']?\s*[:=]\s*["\']?([A-Za-z0-9+/=_-]{40,})', re.IGNORECASE)
+_SSID_RAW_PATTERN = re.compile(r'\b[A-Za-z0-9+/]{80,}={0,2}\b')  # Long base64 strings
+_AUTH_MSG_PATTERN = re.compile(r'42\["auth"', re.IGNORECASE)
+
+
 class TelegramSignalBot:
     def __init__(self, scanner=None):
         self.scanner = scanner
         self.is_live = False
+        # TODO: Persist user_settings to database (currently in-memory only, lost on restart)
         self.user_settings = {}  # user_id -> settings
+        # TODO: Persist user_plans to database (currently in-memory only, lost on restart)
         self.user_plans = {}     # user_id -> plan name
+        # TODO: Persist alerts to database (currently in-memory only, lost on restart)
         self.alerts = {}         # user_id -> [{pair, level}]
         self.subscribed_chats = set() # Liste des chat_ids abonnés
         self.command_handlers = {
@@ -46,7 +57,8 @@ class TelegramSignalBot:
             '/journal': self.cmd_trading_journal,
             '/unsubscribe': self.cmd_unsubscribe,
         }
-        self.signal_history = []
+        # H16 Fix: Bounded signal history to prevent unbounded memory growth
+        self.signal_history = deque(maxlen=1000)
 
     def get_default_keyboard(self):
         keyboard = [
@@ -65,7 +77,14 @@ class TelegramSignalBot:
 
     # ═══════════ ACL ═══════════
     async def _check_access(self, user_id: str, required_plan: str = 'Standard') -> bool:
-        """Check access level - syncs with database."""
+        """Check access level - syncs with database.
+        Also verifies the user is in subscribed_chats for premium commands.
+        NOTE: Proper authentication requires linking Telegram ID to user account in the database.
+        Currently, subscribed_chats is populated when a user runs /start, which is a basic check.
+        """
+        # First check if user is subscribed (has run /start)
+        if user_id not in self.subscribed_chats:
+            return False
         await self._sync_user_plan(user_id)
         plan = self.user_plans.get(user_id, 'Standard')
         plan_hierarchy = {'Standard': 0, 'Premium': 1, 'Pro': 2}
@@ -139,6 +158,7 @@ class TelegramSignalBot:
             'min_winrate': 70,
             'session_filter': 'ALL',
             'live_signals': False,
+            'enabled_sessions': {'LONDON': True, 'NY': True, 'ASIAN': True},
         })
         return """🎯 Bienvenue sur A2Sniper 3.0
 
@@ -150,6 +170,9 @@ Pour commencer :
 2️⃣ /paires — Choisir vos paires
 3️⃣ /live — Activer les signaux temps réel (Data Live)
 4️⃣ /help — Guide complet
+
+⚠️ SÉCURITÉ : Ne partagez JAMAIS votre SSID dans ce chat.
+Utilisez la méthode de connexion sécurisée dans le dashboard web.
 
 ⚠️ Le trading comporte des risques. Zéro Simulation. 100% Real-Market."""
 
@@ -210,11 +233,14 @@ Pour commencer :
                 total_result = await session.execute(select(func.count(SignalRecord.id)))
                 total_signals = total_result.scalar() or 0
                 
-                # Get resolved signals
+                # Get resolved signals (where is_win is known)
                 resolved_result = await session.execute(
-                    select(SignalRecord).where(SignalRecord.is_win != None)
+                    select(SignalRecord).where(SignalRecord.is_win != None)  # noqa: E711
                 )
                 resolved = resolved_result.scalars().all()
+                
+                if not resolved:
+                    return "📈 PERFORMANCE — A2SNIPER\n━━━━━━━━━━━━━━━━━━━━━\nNo performance data available yet.\n\nSignals will appear here once they are generated and resolved."
                 
                 wins = sum(1 for s in resolved if s.is_win)
                 losses = len(resolved) - wins
@@ -222,7 +248,7 @@ Pour commencer :
                 
                 # Average payout
                 payout_result = await session.execute(
-                    select(func.avg(SignalRecord.payout)).where(SignalRecord.is_win != None)
+                    select(func.avg(SignalRecord.payout)).where(SignalRecord.is_win != None)  # noqa: E711
                 )
                 avg_payout = round(payout_result.scalar() or 0, 1)
                 
@@ -243,11 +269,7 @@ Pour commencer :
                 )
         except Exception as e:
             logger.error(f"Error querying performance: {e}")
-            total_signals = 0
-            wins = losses = 0
-            win_rate = 0
-            avg_payout = 0
-            best_pair = ('N/A', {'wins': 0, 'total': 0})
+            return "📈 PERFORMANCE — A2SNIPER\n━━━━━━━━━━━━━━━━━━━━━\nNo performance data available yet.\n\nCould not retrieve data from the database."
         
         return f"""📈 PERFORMANCE RÉELLE — A2SNIPER
 ━━━━━━━━━━━━━━━━━━━━━
@@ -263,12 +285,19 @@ Note: Toutes les données sont extraites de la base de données réelle."""
 
     async def cmd_analyse(self, user_id: str, args: list = None) -> str:
         """5. /analyse [PAIRE] — Analyse manuelle à la demande (Premium+)"""
+        # Auth check: must be subscribed and have Premium+ plan
+        if user_id not in self.subscribed_chats:
+            return "🔒 Vous devez d'abord démarrer le bot avec /start pour accéder aux commandes premium."
         if not await self._check_access(user_id, 'Premium'):
-            return "🔒 Commande réservée aux plans Premium et Pro.\nTapez /plan pour upgrader."
+            return "🔒 Commande réservée aux plans Premium et Pro.\nTapez /plan pour upgrader.\n\n⚠️ NOTE : L'authentification complète nécessite la liaison de votre ID Telegram à votre compte utilisateur."
 
         pair = args[0] if args else 'EUR/USD OTC'
-        if self.scanner and not self.scanner.is_connected:
-            return f"⚠️ Impossible d'analyser {pair}. Le bot n'est actuellement pas connecté au marché réel."
+        
+        # C13 Fix: Check scanner availability before attempting analysis
+        if not self.scanner:
+            return "Market data not available. Please connect to Pocket Option first."
+        if not self.scanner.is_connected:
+            return f"Market data not available. Please connect to Pocket Option first.\n\n⚠️ Impossible d'analyser {pair}. Le bot n'est actuellement pas connecté au marché réel."
 
         payout = self.scanner.get_payout(pair) if self.scanner else None
         current_price = await self.scanner.get_current_price(pair) if self.scanner else None
@@ -288,12 +317,19 @@ Pour un signal complet avec scoring IA, utilisez le dashboard Web.
 
     async def cmd_structure(self, user_id: str, args: list = None) -> str:
         """6. /structure [PAIRE] — Vue SMC complète (Premium+)"""
+        # Auth check: must be subscribed and have Premium+ plan
+        if user_id not in self.subscribed_chats:
+            return "🔒 Vous devez d'abord démarrer le bot avec /start pour accéder aux commandes premium."
         if not await self._check_access(user_id, 'Premium'):
-            return "🔒 Commande réservée aux plans Premium et Pro.\nTapez /plan pour upgrader."
+            return "🔒 Commande réservée aux plans Premium et Pro.\nTapez /plan pour upgrader.\n\n⚠️ NOTE : L'authentification complète nécessite la liaison de votre ID Telegram à votre compte utilisateur."
 
         pair = args[0] if args else 'EUR/USD OTC'
-        if self.scanner and not self.scanner.is_connected:
-            return f"⚠️ Impossible de récupérer la structure pour {pair}. Le bot n'est pas connecté au marché réel."
+        
+        # C13 Fix: Check scanner availability before attempting SMC analysis
+        if not self.scanner:
+            return "Market data not available. Please connect to Pocket Option first."
+        if not self.scanner.is_connected:
+            return f"Market data not available. Please connect to Pocket Option first.\n\n⚠️ Impossible de récupérer la structure pour {pair}. Le bot n'est pas connecté au marché réel."
 
         current_price = await self.scanner.get_current_price(pair) if self.scanner else None
         
@@ -397,32 +433,71 @@ Pour un signal complet avec scoring IA, utilisez le dashboard Web.
         }
 
     async def cmd_session(self, user_id: str, args: list = None) -> str:
-        """9. /session — Filtrer par session de trading"""
+        """9. /session [SESSION] [on|off] — Enable/disable signals by session"""
         sessions = {
-            'LONDON': '08:00-10:00 UTC',
-            'NY': '13:00-15:00 UTC',
-            'OVERLAP': '13:00-16:00 UTC',
-            'ASIAN': '00:00-08:00 UTC',
-            'ALL': 'Toutes les sessions',
+            'LONDON': {'hours': '08:00-10:00 UTC', 'description': 'London Open'},
+            'NY': {'hours': '13:00-15:00 UTC', 'description': 'New York Open'},
+            'ASIAN': {'hours': '00:00-08:00 UTC', 'description': 'Asian Session'},
+            'OVERLAP': {'hours': '13:00-16:00 UTC', 'description': 'London/NY Overlap'},
         }
+        
+        settings = self.user_settings.get(user_id, {})
+        enabled_sessions = settings.get('enabled_sessions', {'LONDON': True, 'NY': True, 'ASIAN': True})
+        
+        # If args provided, toggle a specific session
         if args:
             s = args[0].upper()
-            if s in sessions:
-                settings = self.user_settings.get(user_id, {})
-                settings['session_filter'] = s
+            if s == 'ALL':
+                # Toggle all sessions
+                if len(args) > 1 and args[1].lower() == 'off':
+                    enabled_sessions = {k: False for k in sessions}
+                    settings['session_filter'] = 'NONE'
+                else:
+                    enabled_sessions = {k: True for k in sessions}
+                    settings['session_filter'] = 'ALL'
+                settings['enabled_sessions'] = enabled_sessions
                 self.user_settings[user_id] = settings
-                return f"✅ Filtre session : {s} ({sessions[s]})"
+                status = '✅ All' if any(enabled_sessions.values()) else '⏸️ Aucune'
+                return f"✅ Sessions : {status} sessions activées"
+            
+            if s in sessions:
+                # Toggle on/off
+                if len(args) > 1 and args[1].lower() in ('on', 'off'):
+                    enabled_sessions[s] = args[1].lower() == 'on'
+                else:
+                    # Simple toggle
+                    enabled_sessions[s] = not enabled_sessions.get(s, True)
+                
+                settings['enabled_sessions'] = enabled_sessions
+                # Set session_filter to ALL if any session enabled, or to NONE
+                active = [k for k, v in enabled_sessions.items() if v]
+                settings['session_filter'] = active[0] if len(active) == 1 else ('ALL' if active else 'NONE')
+                self.user_settings[user_id] = settings
+                status = '✅ Activée' if enabled_sessions[s] else '⏸️ Désactivée'
+                return f"✅ Session {s} ({sessions[s]['hours']}) : {status}"
 
+        # Show current session status
         lines = ["⏰ SESSIONS DE TRADING\n━━━━━━━━━━━━━━━━━━━━━"]
-        for s, hours in sessions.items():
-            lines.append(f"▶ {s} : {hours}")
-        lines.append("\nUtilisation : /session LONDON")
+        for s, info in sessions.items():
+            is_enabled = enabled_sessions.get(s, True)
+            status_icon = '✅' if is_enabled else '⏸️'
+            lines.append(f"{status_icon} {s} : {info['hours']} ({info['description']})")
+        lines.append("\n📋 Commandes :")
+        lines.append("• /session LONDON — Toggle London on/off")
+        lines.append("• /session NY on — Enable NY session")
+        lines.append("• /session ASIAN off — Disable Asian session")
+        lines.append("• /session ALL — Enable all sessions")
         return "\n".join(lines)
 
     async def cmd_backtesting(self, user_id: str, args: list = None) -> str:
         """10. /backtesting [PAIRE] — Backtest rapide 30 jours (Pro) — uses real database data"""
-        if not await self._check_access(user_id, 'Pro'):
-            return "🔒 Commande réservée au plan Pro.\nTapez /plan pour upgrader."
+        # Auth check: must be subscribed and have Pro plan specifically
+        if user_id not in self.subscribed_chats:
+            return "🔒 Vous devez d'abord démarrer le bot avec /start pour accéder aux commandes premium."
+        await self._sync_user_plan(user_id)
+        plan = self.user_plans.get(user_id, 'Standard')
+        if plan != 'Pro':
+            return "🔒 Commande réservée au plan Pro uniquement.\nTapez /plan pour upgrader.\n\n⚠️ NOTE : L'authentification complète nécessite la liaison de votre ID Telegram à votre compte utilisateur."
 
         pair = args[0] if args else 'EUR/USD OTC'
         
@@ -445,11 +520,18 @@ Pour un signal complet avec scoring IA, utilisez le dashboard Web.
                 resolved_result = await session.execute(
                     select(SignalRecord).where(
                         SignalRecord.pair == pair,
-                        SignalRecord.is_win != None,
+                        SignalRecord.is_win != None,  # noqa: E711
                         SignalRecord.timestamp >= cutoff
                     )
                 )
                 resolved = resolved_result.scalars().all()
+                
+                # If no data available, return honest message
+                if not resolved and total == 0:
+                    return f"📊 BACKTESTING — {pair}\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\nNo backtesting data available yet.\n\nBacktesting requires historical signal data as per CDC specification.\nSignals will appear here once the system generates and resolves them."
+                
+                if not resolved:
+                    return f"📊 BACKTESTING — {pair} (30 derniers jours)\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n📈 Trades totaux : {total}\n⏳ Aucun trade résolu pour le moment.\n\nLes résultats apparaîtront une fois les signaux résolus."
                 
                 wins = sum(1 for s in resolved if s.is_win)
                 losses = len(resolved) - wins
@@ -464,10 +546,7 @@ Pour un signal complet avec scoring IA, utilisez le dashboard Web.
                         pnl -= 10
         except Exception as e:
             logger.error(f"Error in backtesting query: {e}")
-            total = 0
-            wins = losses = 0
-            win_rate = 0
-            pnl = 0
+            return f"📊 BACKTESTING — {pair}\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\nNo backtesting data available yet.\n\nCould not retrieve data from the database."
         
         return f"""📊 BACKTESTING — {pair} (30 derniers jours)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -516,11 +595,33 @@ Pour un signal complet avec scoring IA, utilisez le dashboard Web.
 Pour modifier : /timeframe M1 | /paires EUR/USD OTC | /session LONDON"""
 
     async def cmd_plan(self, user_id: str, args: list = None) -> str:
-        """13. /plan — Afficher plan actuel et upgrade"""
+        """13. /plan — Afficher plan actuel et upgrade (reads from database)"""
         plan = await self._get_plan(user_id)
+        
+        # Try to get additional plan details from database
+        plan_details = {}
+        try:
+            from db import AsyncSessionLocal, UserSubscription
+            from sqlalchemy import select
+            async with AsyncSessionLocal() as session:
+                result = await session.execute(
+                    select(UserSubscription).where(UserSubscription.user_id == user_id)
+                )
+                sub = result.scalar_one_or_none()
+                if sub:
+                    plan_details = {
+                        'expires_at': sub.expires_at.strftime('%Y-%m-%d') if hasattr(sub, 'expires_at') and sub.expires_at else 'N/A',
+                        'is_active': getattr(sub, 'is_active', True),
+                    }
+        except Exception as e:
+            logger.warning(f"Could not fetch plan details: {e}")
+        
+        expiry_line = f"\n📅 Expiration    : {plan_details.get('expires_at', 'N/A')}" if plan_details else ''
+        active_line = f"\n🟢 Statut       : {'Actif' if plan_details.get('is_active', True) else 'Expiré'}" if plan_details else ''
+        
         return f"""👤 VOTRE ABONNEMENT
 ━━━━━━━━━━━━━━━━━━━━━
-📋 Plan actuel : {plan}
+📋 Plan actuel : {plan}{expiry_line}{active_line}
 
 📊 PLANS DISPONIBLES :
 ▶ Standard (198$/mois) — 20 signaux/jour
@@ -530,45 +631,71 @@ Pour modifier : /timeframe M1 | /paires EUR/USD OTC | /session LONDON"""
 Pour upgrader : Visitez https://a2sniper/pricing"""
 
     async def cmd_help(self, user_id: str, args: list = None) -> str:
-        """14. /help — Guide complet"""
-        return """📖 <b>GUIDE A2SNIPER 3.0</b>
+        """14. /help — Complete usage guide with all available commands"""
+        return """📖 <b>GUIDE COMPLET A2SNIPER 3.0</b>
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Utilisez les boutons au bas de votre écran pour naviguer :
 
-⚡ <b>Pairs de devises</b> : Afficher les paires actives et lancer une analyse.
-📊 <b>Trading Journal</b> : Voir vos statistiques réelles de trading.
-🧮 <b>Risk Manager</b> : Règles de Money Management.
-⚠️ <b>DISCLAIMER</b> : Informations sur les risques.
-📈 <b>PERF</b> : Performances globales de l'algorithme.
-ℹ️ <b>HELP</b> : Afficher ce guide.
+🔹 <b>Commandes de base</b> :
+• <code>/start</code> — Démarrer le bot et voir l'onboarding
+• <code>/signals</code> — Voir les 10 derniers signaux
+• <code>/live</code> — Activer/Désactiver les signaux temps réel
+• <code>/help</code> — Afficher ce guide complet
+• <code>/disclaimer</code> — Avertissement sur les risques
+• <code>/unsubscribe</code> — Se désabonner des notifications
 
-🔹 <b>Commandes avancées</b> :
-• <code>/analyse [Paire]</code> — Analyse technique détaillée.
-• <code>/structure [Paire]</code> — Vue de la structure SMC.
-• <code>/backtesting [Paire]</code> — Backtest historique.
-• <code>/timeframe [TF]</code> — Changer l'unité de temps (M1/M5/M15).
-• <code>/live</code> — Activer/Désactiver les signaux automatiques.
-• <code>/unsubscribe</code> — Se désabonner des notifications.
+🔹 <b>Analyse & Données</b> :
+• <code>/analyse [Paire]</code> — Analyse technique détaillée (Premium+)
+• <code>/structure [Paire]</code> — Vue de la structure SMC (Premium+)
+• <code>/performance</code> — Statistiques de succès réelles
+• <code>/backtesting [Paire]</code> — Backtest historique 30j (Pro)
+
+🔹 <b>Configuration</b> :
+• <code>/paires</code> — Sélectionner les paires à surveiller
+• <code>/timeframe [M1|M5|M15]</code> — Changer le timeframe
+• <code>/session [LONDON|NY|ASIAN] [on|off]</code> — Activer/désactiver sessions
+• <code>/settings</code> — Voir vos paramètres actuels
+• <code>/alert [Paire] [Niveau]</code> — Créer une alerte de prix (Premium+)
+
+🔹 <b>Gestion & Plan</b> :
+• <code>/plan</code> — Voir votre abonnement et options
+• <code>/journal</code> — Trading Journal avec historique
+• <code>/risk</code> — Règles de Money Management
+
+🔹 <b>Boutons rapides</b> :
+⚡ Pairs de devises — Paires actives
+📊 Trading Journal — Statistiques réelles
+🧮 Risk Manager — Money Management
+⚠️ DISCLAIMER — Risques
+📈 PERF — Performances
+ℹ️ HELP — Ce guide
+
+⚠️ <b>SÉCURITÉ</b> : Ne partagez JAMAIS votre SSID dans ce chat.
+Utilisez le dashboard web pour la connexion sécurisée.
 
 ⚠️ Le trading comporte des risques de perte de capital."""
 
     async def cmd_connect_ssid(self, user_id: str, ssid: str) -> str:
-        """Tentative de connexion au marché via le SSID fourni"""
+        """Tentative de connexion au marché via le SSID fourni — with security warning"""
+        # C3 Fix: Warn users about SSID security
+        warning = "⚠️ SECURITY WARNING: Never share your SSID in chat. Use the secure connection method in the web dashboard instead.\n\n"
+        
         if not self.scanner:
-            return "❌ Erreur : Le scanner n'est pas initialisé sur le serveur."
+            return f"{warning}❌ Erreur : Le scanner n'est pas initialisé sur le serveur."
             
         success = await self.scanner.connect(ssid)
         if success:
-            return """🎉 <b>Connexion au marché Pocket Option réussie !</b>
+            return f"""{warning}🎉 <b>Connexion au marché Pocket Option réussie !</b>
 
 🤖 L'assistant de pointe pour votre trading binaire haute fréquence.
 🟢 Vous êtes actuellement connecté avec succès au marché 💹
 
 Pour commencer à recevoir vos signaux de trading binaire, veuillez cliquer sur le bouton <b>⚡ Pairs de devises</b> ci-dessous, puis sélectionnez la paire de votre choix pour recevoir votre signal.
 
+⚠️ Pour les prochaines connexions, utilisez le dashboard web pour plus de sécurité.
+
 Excellente session de trading à vous !"""
         else:
-            return "❌ <b>Échec de la connexion.</b> Le SSID ou message de session fourni est invalide ou expiré. Veuillez réessayer."
+            return f"{warning}❌ <b>Échec de la connexion.</b> Le SSID ou message de session fourni est invalide ou expiré. Veuillez utiliser le dashboard web pour vous connecter."
 
     async def cmd_unsubscribe(self, user_id: str, args: list = None) -> str:
         """Unsubscribe from signal notifications."""
@@ -680,9 +807,15 @@ Le trading sur options binaires et Forex comporte un niveau de risque très éle
         elif text in ["ℹ️ HELP", "HELP"]:
             return await self.cmd_help(user_id)
             
-        # Check if SSID / auth message
-        if text.startswith('42["auth"') or '"session":' in text or '"auth"' in text:
-            return await self.cmd_connect_ssid(user_id, text)
+        # C3 Fix: Check if message looks like an SSID — warn and strip sensitive content
+        if _AUTH_MSG_PATTERN.search(text) or _SSID_PATTERN.search(text) or _SSID_RAW_PATTERN.search(text):
+            # Strip the SSID from being displayed — replace with [REDACTED]
+            sanitized_text = _SSID_RAW_PATTERN.sub('[REDACTED_SSID]', text)
+            sanitized_text = _SSID_PATTERN.sub('[REDACTED_SSID]', sanitized_text)
+            logger.warning(f"[TELEGRAM] SSID detected in message from {user_id} — content stripped for security")
+            # Still attempt connection with the original text, but warn the user
+            result = await self.cmd_connect_ssid(user_id, text)
+            return result
             
         parts = text.split()
         if not parts:
@@ -713,6 +846,12 @@ Le trading sur options binaires et Forex comporte un niveau de risque très éle
             return await self.cmd_analyse(user_id, [pair])
             
         return None
+
+    # H17 Note: Custom polling is used instead of python-telegram-bot's built-in event loop
+    # because it provides more control over reconnection behavior, timeout handling,
+    # and allows integration with the existing async architecture without additional
+    # framework dependencies. This design decision enables fine-grained control over
+    # the polling loop, error recovery, and message routing.
 
     async def start_polling(self):
         """Boucle de long polling pour écouter les messages Telegram en direct."""

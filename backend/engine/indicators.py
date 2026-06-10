@@ -11,8 +11,11 @@ Indicateurs CDC :
 11. Ichimoku Kinko Hyo (9/26/52) 12. Fibonacci Auto
 """
 
+import logging
 import pandas as pd
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 
 class TechnicalIndicators:
@@ -41,7 +44,16 @@ class TechnicalIndicators:
 
         # 5. EMA 50 / EMA 200 (biais directionnel macro)
         df['EMA_50'] = df['close'].ewm(span=50, adjust=False).mean()
-        df['EMA_200'] = df['close'].ewm(span=min(200, len(df)), adjust=False).mean()
+        # H19 Fix: EMA 200 is unreliable with insufficient data
+        MIN_EMA200_BARS = 50  # Minimum bars to calculate EMA 200 meaningfully
+        if len(df) >= 200:
+            df['EMA_200'] = df['close'].ewm(span=200, adjust=False).mean()
+        elif len(df) >= MIN_EMA200_BARS:
+            logger.warning(f"[INDICATORS] EMA 200 calculated with only {len(df)} bars (recommended: 200+). Result may be unreliable.")
+            df['EMA_200'] = df['close'].ewm(span=len(df), adjust=False).mean()
+        else:
+            logger.warning(f"[INDICATORS] EMA 200 skipped: only {len(df)} bars available (minimum {MIN_EMA200_BARS} required). Setting to NaN.")
+            df['EMA_200'] = np.nan
 
         # 6. ADX (14)
         df = self._calc_adx(df, period=14)
@@ -153,15 +165,10 @@ class TechnicalIndicators:
 
     # ──────────────── 10. OBV ────────────────
     def _calc_obv(self, df: pd.DataFrame) -> pd.DataFrame:
-        obv = [0]
-        for i in range(1, len(df)):
-            if df['close'].iloc[i] > df['close'].iloc[i-1]:
-                obv.append(obv[-1] + df['volume'].iloc[i])
-            elif df['close'].iloc[i] < df['close'].iloc[i-1]:
-                obv.append(obv[-1] - df['volume'].iloc[i])
-            else:
-                obv.append(obv[-1])
-        df['OBV'] = obv
+        # H18 Fix: Replaced O(n) Python loop with vectorized pandas operations
+        direction = np.where(df['close'] > df['close'].shift(1), 1,
+                            np.where(df['close'] < df['close'].shift(1), -1, 0))
+        df['OBV'] = (direction * df['volume']).cumsum()
         # OBV SMA pour divergence
         df['OBV_SMA'] = df['OBV'].rolling(window=20).mean()
         return df

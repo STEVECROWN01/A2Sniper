@@ -112,10 +112,10 @@ export default function HomePage() {
             </div>
             <div className="flex items-center space-x-4">
               <Link 
-                href="/dashboard" 
+                href="/login" 
                 className="bg-gradient-to-r from-[#D4AF37] to-[#C5A059] hover:from-[#c5a059] hover:to-[#D4AF37] text-black font-black uppercase tracking-wider text-xs px-6 py-2.5 rounded-xl transition-all duration-300 shadow-[0_0_15px_rgba(212,175,55,0.15)] hover:shadow-[0_0_25px_rgba(212,175,55,0.25)]"
               >
-                Dashboard
+                Connexion
               </Link>
             </div>
           </div>
@@ -148,7 +148,7 @@ export default function HomePage() {
               
               <div className="flex flex-col sm:flex-row gap-4 justify-center items-center">
                 <Link 
-                  href="/dashboard" 
+                  href="/signup" 
                   className="w-full sm:w-auto bg-gradient-to-r from-[#D4AF37] to-[#C5A059] hover:from-[#c5a059] hover:to-[#D4AF37] text-black font-black uppercase tracking-[0.2em] text-xs px-10 py-5 rounded-xl transition-all duration-300 shadow-[0_0_30px_rgba(212,175,55,0.2)]"
                 >
                   Découvrir le Cockpit
@@ -357,14 +357,14 @@ export default function HomePage() {
             </p>
             <div className="flex flex-col sm:flex-row gap-4 justify-center">
               <Link 
-                href="/dashboard" 
+                href="/login" 
                 className="inline-flex items-center justify-center space-x-2 bg-gradient-to-r from-[#D4AF37] to-[#C5A059] text-black font-black uppercase tracking-[0.2em] text-xs px-10 py-5 rounded-xl transition-all duration-300 shadow-[0_0_20px_rgba(212,175,55,0.15)]"
               >
                 <span>Accès Immédiat</span>
                 <ArrowRight className="w-4 h-4" />
               </Link>
               <Link 
-                href="/telegram" 
+                href="/signup" 
                 className="inline-flex items-center justify-center space-x-2 border border-[#D4AF37]/30 text-white hover:bg-white/5 px-10 py-5 rounded-xl font-bold transition-all duration-300"
               >
                 <span>Terminal Telegram</span>
@@ -428,7 +428,7 @@ export default function HomePage() {
               <h3 className="text-sm font-bold text-white mb-6 uppercase tracking-widest">Réseaux & Comm</h3>
               <ul className="space-y-3 text-sm font-bold">
                 <li><Link href="/telegram" className="hover:text-white transition-colors">Bot Telegram</Link></li>
-                <li><a href="mailto:support@a2sniper.ai" className="hover:text-white transition-colors">Contact Founder</a></li>
+                <li><a href="mailto:support@a2sniper.com" className="hover:text-white transition-colors">Contact Founder</a></li>
                 <li><Link href="/telegram" className="hover:text-white transition-colors">Salon Founders</Link></li>
               </ul>
             </div>
@@ -444,7 +444,7 @@ export default function HomePage() {
           </div>
           
           <div className="border-t border-white/5 mt-12 pt-8 text-center text-xs text-gray-600 font-bold uppercase tracking-widest">
-            <p>&copy; {new Date().getFullYear()} A2Sniper. Tous droits réservés.</p>
+            <p>&copy; 2024-2026 A2Sniper. Tous droits réservés.</p>
           </div>
         </div>
       </footer>

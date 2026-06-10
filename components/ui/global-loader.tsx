@@ -17,14 +17,10 @@ export function GlobalLoader() {
 
     setIsLoading(true);
     
-    // Reduce loader time to ~2s
-    const minLoadTime = 1800;
-    const maxLoadTime = 2000;
-    
-    // Simulate complex loading and then hide
+    // Fixed loader time (~2s) instead of random duration
     const timer = setTimeout(() => {
       setIsLoading(false);
-    }, Math.random() * (maxLoadTime - minLoadTime) + minLoadTime);
+    }, 2000);
 
     return () => clearTimeout(timer);
   }, [pathname]);
@@ -37,6 +33,8 @@ export function GlobalLoader() {
           exit={{ opacity: 0 }}
           transition={{ duration: 0.5, ease: "easeInOut" }}
           className="fixed inset-0 z-[9999] bg-[#050507] flex flex-col items-center justify-center"
+          role="status"
+          aria-label="Chargement en cours"
         >
           <motion.div
             initial={{ scale: 0.8, opacity: 0 }}

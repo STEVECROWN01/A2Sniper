@@ -29,7 +29,7 @@ export interface BacktestTrade {
   entryPrice: number;
   exitPrice: number;
   direction: 'CALL' | 'PUT';
-  result: 'WIN' | 'LOSS';
+  result: 'WIN' | 'LOSS' | 'PENDING';
   profit: number;
   commission: number;
   netProfit: number;
@@ -83,6 +83,10 @@ export class BacktestEngine {
       
       if (trade) {
         trades.push(trade);
+        
+        // Skip PENDING trades from balance/stats calculations
+        if (trade.result === 'PENDING') continue;
+        
         currentBalance += trade.netProfit;
         
         // Mise à jour des statistiques
@@ -118,10 +122,26 @@ export class BacktestEngine {
     // Calcul de la taille de position
     const positionSize = balance * config.riskPerTrade;
     
-    // Utilisation du résultat réel du signal si disponible, sinon déterministe basé sur winrate
-    const isWin = signal.is_win !== undefined 
-      ? signal.is_win 
-      : signal.winrate >= 85; // Seuil déterministe au lieu de Math.random
+    // If the signal has no actual result (is_win is undefined/null), mark as PENDING
+    // We do NOT fabricate results — if we don't know the outcome, say so
+    if (signal.is_win === undefined || signal.is_win === null) {
+      return {
+        id: `backtest_${signal.id}`,
+        signal,
+        entryTime: new Date(signal.timestamp),
+        exitTime: new Date(signal.timestamp.getTime() + signal.expiration * 60000),
+        entryPrice: signal.entry_price,
+        exitPrice: signal.entry_price, // Unknown exit price
+        direction: signal.direction,
+        result: 'PENDING',
+        profit: 0,
+        commission: 0,
+        netProfit: 0,
+        holdingTime: signal.expiration
+      };
+    }
+    
+    const isWin = signal.is_win;
     
     // Utilisation des prix réels si disponibles
     const entryPrice = signal.entry_price;
@@ -156,41 +176,41 @@ export class BacktestEngine {
     };
   }
 
-  // La probabilité n'est plus calculée aléatoirement mais basée sur le score réel
-
-  // Calcul des résultats finaux
+  // Calcul des résultats finaux — only resolved trades (WIN/LOSS) count toward winrate
+  // PENDING trades are excluded from statistical calculations
   private calculateResults(
     trades: BacktestTrade[],
     initialBalance: number,
     maxDrawdown: number
   ): BacktestResult {
-    const winningTrades = trades.filter(t => t.result === 'WIN');
-    const losingTrades = trades.filter(t => t.result === 'LOSS');
+    const resolvedTrades = trades.filter(t => t.result !== 'PENDING');
+    const winningTrades = resolvedTrades.filter(t => t.result === 'WIN');
+    const losingTrades = resolvedTrades.filter(t => t.result === 'LOSS');
     
     const totalProfit = winningTrades.reduce((sum, t) => sum + t.profit, 0);
     const totalLoss = Math.abs(losingTrades.reduce((sum, t) => sum + t.profit, 0));
-    const netProfit = trades.reduce((sum, t) => sum + t.netProfit, 0);
+    const netProfit = resolvedTrades.reduce((sum, t) => sum + t.netProfit, 0);
     
     const avgWin = winningTrades.length > 0 ? totalProfit / winningTrades.length : 0;
     const avgLoss = losingTrades.length > 0 ? totalLoss / losingTrades.length : 0;
     
     const profitFactor = totalLoss > 0 ? totalProfit / totalLoss : totalProfit > 0 ? Infinity : 0;
     
-    // Calcul du ratio de Sharpe (simplifié)
-    const returns = trades.map(t => t.netProfit / initialBalance);
-    const avgReturn = returns.reduce((sum, r) => sum + r, 0) / returns.length;
-    const returnStdDev = Math.sqrt(
+    // Calcul du ratio de Sharpe (simplifié) — only from resolved trades
+    const returns = resolvedTrades.map(t => t.netProfit / initialBalance);
+    const avgReturn = returns.length > 0 ? returns.reduce((sum, r) => sum + r, 0) / returns.length : 0;
+    const returnStdDev = returns.length > 0 ? Math.sqrt(
       returns.reduce((sum, r) => sum + Math.pow(r - avgReturn, 2), 0) / returns.length
-    );
+    ) : 0;
     const sharpeRatio = returnStdDev > 0 ? avgReturn / returnStdDev : 0;
     
-    // Calcul des séries consécutives
+    // Calcul des séries consécutives — only from resolved trades
     let currentWinStreak = 0;
     let currentLossStreak = 0;
     let maxWinStreak = 0;
     let maxLossStreak = 0;
     
-    for (const trade of trades) {
+    for (const trade of resolvedTrades) {
       if (trade.result === 'WIN') {
         currentWinStreak++;
         currentLossStreak = 0;
@@ -203,10 +223,10 @@ export class BacktestEngine {
     }
     
     return {
-      totalTrades: trades.length,
+      totalTrades: resolvedTrades.length,
       winningTrades: winningTrades.length,
       losingTrades: losingTrades.length,
-      winRate: trades.length > 0 ? (winningTrades.length / trades.length) * 100 : 0,
+      winRate: resolvedTrades.length > 0 ? (winningTrades.length / resolvedTrades.length) * 100 : 0,
       totalProfit,
       totalLoss,
       netProfit,

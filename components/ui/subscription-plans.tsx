@@ -88,17 +88,20 @@ export function SubscriptionPlans() {
 
   const handlePayment = async () => {
     setIsProcessing(true);
-    // TODO: Integrate with real payment processor (Stripe, PayPal SDK, crypto gateway)
-    // For now, validate the flow and show confirmation
     if (selectedPlan === null) {
       toast.error('Aucun plan sélectionné');
       setIsProcessing(false);
       return;
     }
-    await new Promise(resolve => setTimeout(resolve, 1500));
+    // Payment processing is not yet available
+    // This is a Coming Soon state — no payment will be processed
+    await new Promise(resolve => setTimeout(resolve, 800));
     setIsProcessing(false);
     setShowPaymentModal(false);
-    toast.info(`Paiement en attente de l\'intégration du processeur. Plan ${plans[selectedPlan].name} sélectionné.`);
+    toast.info('Les paiements ne sont pas encore disponibles. L\'intégration Stripe est en cours de développement.', {
+      duration: 5000,
+      description: `Plan ${plans[selectedPlan].name} ($${Math.round(plans[selectedPlan].price * getBillingMultiplier())}) — vous serez notifié lors de l'ouverture.`
+    });
   };
 
   return (
@@ -116,7 +119,7 @@ export function SubscriptionPlans() {
               Abonnements <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#D4AF37] to-[#F3E5AB]">Founders</span>
             </h1>
             <p className="text-sm text-gray-400 font-bold max-w-2xl mx-auto mb-8">
-              Débloquez l'accès complet au flux algorithmique A2Sniper et propulsez vos performances.
+              Débloquez l&apos;accès complet au flux algorithmique A2Sniper et propulsez vos performances.
             </p>
             
             {/* Cycle de facturation */}
@@ -252,7 +255,7 @@ export function SubscriptionPlans() {
             <div className="flex flex-col items-center p-4">
               <Shield className="w-10 h-10 text-[#D4AF37] mb-4" />
               <h3 className="text-sm font-bold text-white uppercase mb-2 tracking-wider">Garantie 30 jours</h3>
-              <p className="text-xs text-gray-500 font-bold">Remboursement intégral si vous n'êtes pas satisfait</p>
+              <p className="text-xs text-gray-500 font-bold">Remboursement intégral si vous n&apos;êtes pas satisfait</p>
             </div>
             <div className="flex flex-col items-center p-4">
               <Zap className="w-10 h-10 text-[#D4AF37] mb-4" />
@@ -278,7 +281,7 @@ export function SubscriptionPlans() {
           >
             <div className="text-center mb-6">
               <h3 className="text-lg font-black text-white uppercase tracking-wider mb-2">
-                Sécuriser l'abonnement
+                Sécuriser l&apos;abonnement
               </h3>
               <p className="text-xs text-gray-400 font-bold">
                 Plan {plans[selectedPlan].name} - <span className="text-[#D4AF37] font-black">${Math.round(plans[selectedPlan].price * getBillingMultiplier())}</span>
@@ -306,6 +309,12 @@ export function SubscriptionPlans() {
               ))}
             </div>
 
+            {/* Coming Soon Banner */}
+            <div className="bg-yellow-500/10 border border-yellow-500/20 rounded-xl p-4 mb-4 text-center">
+              <p className="text-yellow-500 text-xs font-bold uppercase tracking-wider mb-1">🚧 Paiement bientôt disponible</p>
+              <p className="text-gray-400 text-[10px]">L&apos;intégration Stripe est en cours. Aucun paiement ne sera traité pour le moment.</p>
+            </div>
+
             {/* Boutons d'action */}
             <div className="flex space-x-3 text-xs font-black uppercase">
               <button
@@ -325,7 +334,7 @@ export function SubscriptionPlans() {
                     <span>Traitement...</span>
                   </>
                 ) : (
-                  <span>Confirmer</span>
+                  <span>Confirmer (bientôt)</span>
                 )}
               </button>
             </div>

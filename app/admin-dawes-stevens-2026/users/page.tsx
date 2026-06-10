@@ -8,13 +8,18 @@ import { useAuth } from '@/hooks/use-auth';
 
 export default function AdminUsersPage() {
   useAuth(true);
-  const [users, setUsers] = useState<any[]>([]);
+  interface UserEntry {
+    user_id: string;
+    email: string;
+    plan_name: string;
+  }
+  const [users, setUsers] = useState<UserEntry[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
   const fetchUsers = async () => {
     setIsLoading(true);
     try {
-      const url = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
+      const url = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
       const token = typeof window !== 'undefined' ? localStorage.getItem('a2sniper_token') : null;
       const res = await fetch(`${url}/api/admin/users`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
@@ -36,7 +41,7 @@ export default function AdminUsersPage() {
 
   const updatePlan = async (userId: string, newPlan: string) => {
     try {
-      const url = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
+      const url = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
       const token = typeof window !== 'undefined' ? localStorage.getItem('a2sniper_token') : null;
       const res = await fetch(`${url}/api/admin/users/${userId}/plan`, {
         method: 'POST',

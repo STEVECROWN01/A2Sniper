@@ -13,7 +13,7 @@ interface Message {
   sender: 'user' | 'bot';
   timestamp: Date;
   type: 'text' | 'signal' | 'performance' | 'pairs_list' | 'ssid_input';
-  pair_data?: any;
+  pair_data?: Record<string, unknown>;
 }
 
 // Composant pour l'arrière-plan avec les bougies (ChartBackground)
@@ -205,7 +205,7 @@ export function TelegramBotSimulator() {
   // Message ID counter to avoid collisions
   const messageIdCounter = useRef(0);
 
-  const addMessage = (content: string, sender: 'user' | 'bot', type: 'text' | 'signal' | 'performance' | 'pairs_list' | 'ssid_input' = 'text', pair_data?: any) => {
+  const addMessage = (content: string, sender: 'user' | 'bot', type: 'text' | 'signal' | 'performance' | 'pairs_list' | 'ssid_input' = 'text', pair_data?: Record<string, unknown>) => {
     messageIdCounter.current += 1;
     const newMessage: Message = {
       id: `msg_${Date.now()}_${messageIdCounter.current}`,
@@ -299,7 +299,7 @@ export function TelegramBotSimulator() {
         // Normalise les anciens messages: si un message bot contient les instructions
         // SSID mais a le type 'text' (sauvegardé avant l'implémentation de ssid_input),
         // on lui restitue le bon type pour que le formulaire inline s'affiche correctement.
-        const loaded = parsed.map((m: any) => {
+        const loaded = parsed.map((m: Record<string, unknown>) => {
           let type = m.type || 'text';
           if (
             type === 'text' &&
@@ -774,7 +774,7 @@ function RiskManagerPanel({ onClose }: { onClose: () => void }) {
 
   const results = calculateResults();
 
-  const handleUpdateTrade = (idx: number, field: string, val: any) => {
+  const handleUpdateTrade = (idx: number, field: string, val: string | number | boolean) => {
     const newTrades = [...trades];
     newTrades[idx] = { ...newTrades[idx], [field]: val };
     setTrades(newTrades);
@@ -976,7 +976,12 @@ function RiskManagerPanel({ onClose }: { onClose: () => void }) {
 
 // Composant Trading Journal
 function TradingJournalPanel({ onClose }: { onClose: () => void }) {
-  const [sessionData, setSessionData] = useState<any>(null);
+  interface SessionData {
+    trades: Array<Record<string, unknown>>;
+    payout: number;
+    [key: string]: unknown;
+  }
+  const [sessionData, setSessionData] = useState<SessionData | null>(null);
 
   useEffect(() => {
     const saved = localStorage.getItem('a2sniper_risk_session');
@@ -993,7 +998,7 @@ function TradingJournalPanel({ onClose }: { onClose: () => void }) {
     let losses = 0;
     let profit = 0;
     
-    sessionData.trades.forEach((t: any) => {
+    sessionData.trades.forEach((t: Record<string, unknown>) => {
       if (t.result === 'WIN' && t.amount > 0) {
         wins++;
         profit += t.amount * (sessionData.payout / 100);
@@ -1013,7 +1018,7 @@ function TradingJournalPanel({ onClose }: { onClose: () => void }) {
   };
 
   const stats = getStats();
-  const validTrades = sessionData ? sessionData.trades.filter((t: any) => t.result && t.amount > 0) : [];
+  const validTrades = sessionData ? sessionData.trades.filter((t: Record<string, unknown>) => t.result && t.amount > 0) : [];
 
   return (
     <motion.div 
@@ -1081,7 +1086,7 @@ function TradingJournalPanel({ onClose }: { onClose: () => void }) {
                 <p className="text-xs text-gray-500 italic text-center py-4 bg-[#121216] rounded-xl">Aucun trade enregistré dans cette session.</p>
               ) : (
                 <div className="space-y-2">
-                  {validTrades.map((t: any, idx: number) => {
+                  {validTrades.map((t: Record<string, unknown>, idx: number) => {
                     const isWin = t.result === 'WIN';
                     const profitLoss = isWin ? t.amount * (sessionData.payout / 100) : -t.amount;
                     return (
@@ -1116,7 +1121,7 @@ function TradingJournalPanel({ onClose }: { onClose: () => void }) {
 }
 
 // Composant Modals d'information
-function InfoModal({ type, onClose, stats }: { type: 'DISCLAIMER' | 'AIDE' | 'PERF' | null, onClose: () => void, stats: any }) {
+function InfoModal({ type, onClose, stats }: { type: 'DISCLAIMER' | 'AIDE' | 'PERF' | null, onClose: () => void, stats: Record<string, unknown> }) {
   const content = {
     DISCLAIMER: {
       title: "Risque & Conformité",
