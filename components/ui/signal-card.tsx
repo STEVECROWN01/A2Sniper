@@ -67,21 +67,21 @@ export function SignalCard({ signal }: SignalCardProps) {
   };
 
   const handleCopySignal = () => {
-    const signalText = `🎯 SIGNAL TRADING - A2Sniper
-📊 Paire: ${signal.pair}
-📈 Direction: ${signal.direction} ${signal.direction === 'CALL' ? '✅ CALL' : '🔻 PUT'}
-⏰ Expiration: ${signal.expiration} minutes
-🎯 Winrate: ${signal.winrate}% • Payout: ${signal.payout}%
-💰 Prix d'entrée: ${signal.entry_price.toFixed(4)}
+    const signalText = `SIGNAL TRADING - A2Sniper
+Paire: ${signal.pair}
+Direction: ${signal.direction === 'CALL' ? 'CALL' : 'PUT'}
+Expiration: ${signal.expiration} minutes
+Score: ${signal.score ?? '-'}/10 | Winrate: ${signal.winrate}% | Payout: ${signal.payout}%
+Prix d'entree: ${signal.entry_price.toFixed(4)}
 
-📋 ANALYSE :
-▶ Structure : ${signal.smc_structure}
-▶ Zone      : ${signal.smc_zone}
-▶ Pattern   : ${signal.chart_pattern}
-▶ Fibonacci : ${signal.fibonacci}
-▶ RSI       : ${signal.rsi_status}
+ANALYSE :
+  Structure : ${signal.smc_structure}
+  Zone      : ${signal.smc_zone}
+  Pattern   : ${signal.chart_pattern}
+  Fibonacci : ${signal.fibonacci}
+  RSI       : ${signal.rsi_status}
 
-📍 Timestamp: ${signal.timestamp.toLocaleString('fr-FR')}
+Timestamp: ${signal.timestamp.toLocaleString('fr-FR')}
 #${signal.pair.replace('/', '').replace(' OTC', '')} #${signal.direction} #${signal.expiration}MIN`;
 
     navigator.clipboard.writeText(signalText).then(
@@ -165,14 +165,18 @@ export function SignalCard({ signal }: SignalCardProps) {
           </div>
         </div>
 
-        {/* Winrate et Payout */}
-        <div className="grid grid-cols-2 gap-3 mb-4 font-bold">
+        {/* Score, Winrate et Payout */}
+        <div className="grid grid-cols-3 gap-3 mb-4 font-bold">
           <div className="bg-[#050507] p-2.5 rounded-xl border border-white/5">
-            <p className="text-[8px] text-gray-500 uppercase tracking-wider mb-0.5">Winrate Réel</p>
-            <p className="text-sm font-black text-[#D4AF37]">{signal.winrate}%</p>
+            <p className="text-[8px] text-gray-500 uppercase tracking-wider mb-0.5">Score CDC</p>
+            <p className="text-sm font-black text-[#D4AF37]">{signal.score ?? '-'}/10</p>
           </div>
           <div className="bg-[#050507] p-2.5 rounded-xl border border-white/5">
-            <p className="text-[8px] text-gray-500 uppercase tracking-wider mb-0.5">Payout Marché</p>
+            <p className="text-[8px] text-gray-500 uppercase tracking-wider mb-0.5">Winrate</p>
+            <p className="text-sm font-black text-gray-200">{signal.winrate}%</p>
+          </div>
+          <div className="bg-[#050507] p-2.5 rounded-xl border border-white/5">
+            <p className="text-[8px] text-gray-500 uppercase tracking-wider mb-0.5">Payout</p>
             <p className="text-sm font-black text-gray-200">{signal.payout}%</p>
           </div>
         </div>
@@ -321,14 +325,18 @@ export function SignalCard({ signal }: SignalCardProps) {
                   </div>
                 </div>
 
-                {/* Winrate Stats */}
-                <div className="grid grid-cols-2 gap-4">
+                {/* Score & Winrate Stats */}
+                <div className="grid grid-cols-3 gap-4">
                   <div className="p-3 bg-[#050507] rounded-xl border border-white/5">
-                    <p className="text-[9px] text-gray-500 font-bold uppercase tracking-wider mb-1">Winrate Réel</p>
-                    <p className="text-md font-black text-[#D4AF37]">{signal.winrate}%</p>
+                    <p className="text-[9px] text-gray-500 font-bold uppercase tracking-wider mb-1">Score CDC</p>
+                    <p className="text-md font-black text-[#D4AF37]">{signal.score ?? '-'}/10</p>
                   </div>
                   <div className="p-3 bg-[#050507] rounded-xl border border-white/5">
-                    <p className="text-[9px] text-gray-500 font-bold uppercase tracking-wider mb-1">Payout Marché</p>
+                    <p className="text-[9px] text-gray-500 font-bold uppercase tracking-wider mb-1">Winrate</p>
+                    <p className="text-md font-black text-gray-200">{signal.winrate}%</p>
+                  </div>
+                  <div className="p-3 bg-[#050507] rounded-xl border border-white/5">
+                    <p className="text-[9px] text-gray-500 font-bold uppercase tracking-wider mb-1">Payout</p>
                     <p className="text-md font-black text-gray-200">{signal.payout}%</p>
                   </div>
                 </div>

@@ -5,6 +5,7 @@ Bot Telegram — CDC A2Sniper 3.0
 
 import os
 import re
+import json
 import logging
 import asyncio
 from datetime import datetime, timezone
@@ -25,18 +26,20 @@ _SSID_PATTERN = re.compile(r'["\']?session["\']?\s*[:=]\s*["\']?([A-Za-z0-9+/=_-
 _SSID_RAW_PATTERN = re.compile(r'\b[A-Za-z0-9+/]{80,}={0,2}\b')  # Long base64 strings
 _AUTH_MSG_PATTERN = re.compile(r'42\["auth"', re.IGNORECASE)
 
+# File path for persisting bot state
+BOT_STATE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'bot_state.json')
+
 
 class TelegramSignalBot:
     def __init__(self, scanner=None):
         self.scanner = scanner
         self.is_live = False
-        # TODO: Persist user_settings to database (currently in-memory only, lost on restart)
         self.user_settings = {}  # user_id -> settings
-        # TODO: Persist user_plans to database (currently in-memory only, lost on restart)
         self.user_plans = {}     # user_id -> plan name
-        # TODO: Persist alerts to database (currently in-memory only, lost on restart)
         self.alerts = {}         # user_id -> [{pair, level}]
         self.subscribed_chats = set() # Liste des chat_ids abonnés
+        # Load persisted state from file
+        self._load_state()
         self.command_handlers = {
             '/start': self.cmd_start,
             '/signals': self.cmd_signals,
@@ -59,6 +62,39 @@ class TelegramSignalBot:
         }
         # H16 Fix: Bounded signal history to prevent unbounded memory growth
         self.signal_history = deque(maxlen=1000)
+
+    def _load_state(self):
+        """Load bot state from persistent JSON file."""
+        try:
+            if os.path.exists(BOT_STATE_FILE):
+                with open(BOT_STATE_FILE, 'r') as f:
+                    data = json.load(f)
+                self.user_settings = data.get('user_settings', {})
+                self.user_plans = data.get('user_plans', {})
+                self.alerts = data.get('alerts', {})
+                # Convert subscribed_chats from list back to set
+                self.subscribed_chats = set(data.get('subscribed_chats', []))
+                # Restore is_live flag
+                self.is_live = data.get('is_live', False)
+                logger.info("[TELEGRAM] Bot state loaded from file")
+        except (json.JSONDecodeError, IOError, TypeError) as e:
+            logger.warning(f"[TELEGRAM] Could not load bot state (using defaults): {e}")
+            # Keep the empty defaults already set in __init__
+
+    def _save_state(self):
+        """Persist current bot state to JSON file."""
+        try:
+            data = {
+                'user_settings': self.user_settings,
+                'user_plans': self.user_plans,
+                'alerts': self.alerts,
+                'subscribed_chats': list(self.subscribed_chats),  # Convert set to list for JSON
+                'is_live': self.is_live,
+            }
+            with open(BOT_STATE_FILE, 'w') as f:
+                json.dump(data, f)
+        except (IOError, TypeError) as e:
+            logger.warning(f"[TELEGRAM] Could not save bot state: {e}")
 
     def get_default_keyboard(self):
         keyboard = [
@@ -102,6 +138,7 @@ class TelegramSignalBot:
                 sub = result.scalar_one_or_none()
                 if sub:
                     self.user_plans[user_id] = sub.plan_name
+                    self._save_state()
         except Exception as e:
             logger.warning(f"[TELEGRAM] Could not sync plan for {user_id}: {e}")
 
@@ -160,6 +197,7 @@ class TelegramSignalBot:
             'live_signals': False,
             'enabled_sessions': {'LONDON': True, 'NY': True, 'ASIAN': True},
         })
+        self._save_state()
         return """🎯 Bienvenue sur A2Sniper 3.0
 
 🏆 Système d'Analyse Marché Réel 100% Intègre.
@@ -218,6 +256,7 @@ Utilisez la méthode de connexion sécurisée dans le dashboard web.
         
         # Pour le canal principal
         self.is_live = settings['live_signals']
+        self._save_state()
 
         if settings['live_signals']:
             return "✅ SIGNAUX LIVE ACTIVÉS\nVous recevrez désormais les signaux en temps réel dès qu'ils sont détectés par l'IA."
@@ -401,6 +440,7 @@ Pour un signal complet avec scoring IA, utilisez le dashboard Web.
         settings = self.user_settings.get(user_id, {})
         settings['timeframe'] = tf
         self.user_settings[user_id] = settings
+        self._save_state()
         return f"✅ Timeframe changé à {tf}\nLes signaux seront analysés sur {tf}."
 
     async def cmd_paires(self, user_id: str, args: list = None) -> dict:
@@ -457,6 +497,7 @@ Pour un signal complet avec scoring IA, utilisez le dashboard Web.
                     settings['session_filter'] = 'ALL'
                 settings['enabled_sessions'] = enabled_sessions
                 self.user_settings[user_id] = settings
+                self._save_state()
                 status = '✅ All' if any(enabled_sessions.values()) else '⏸️ Aucune'
                 return f"✅ Sessions : {status} sessions activées"
             
@@ -473,6 +514,7 @@ Pour un signal complet avec scoring IA, utilisez le dashboard Web.
                 active = [k for k, v in enabled_sessions.items() if v]
                 settings['session_filter'] = active[0] if len(active) == 1 else ('ALL' if active else 'NONE')
                 self.user_settings[user_id] = settings
+                self._save_state()
                 status = '✅ Activée' if enabled_sessions[s] else '⏸️ Désactivée'
                 return f"✅ Session {s} ({sessions[s]['hours']}) : {status}"
 
@@ -569,6 +611,7 @@ Pour un signal complet avec scoring IA, utilisez le dashboard Web.
 
         if args[0].lower() == 'clear':
             self.alerts[user_id] = []
+            self._save_state()
             return "✅ Toutes les alertes supprimées."
 
         pair = args[0]
@@ -579,6 +622,7 @@ Pour un signal complet avec scoring IA, utilisez le dashboard Web.
             return "❌ Le niveau de prix doit être un nombre valide. Exemple : /alert EUR/USD 1.0850"
         
         self.alerts.setdefault(user_id, []).append({'pair': pair, 'level': level})
+        self._save_state()
         return f"✅ Alerte créée : {pair} @ {level}\nVous serez notifié quand le prix atteindra ce niveau."
 
     async def cmd_settings(self, user_id: str, args: list = None) -> str:
@@ -610,7 +654,7 @@ Pour modifier : /timeframe M1 | /paires EUR/USD OTC | /session LONDON"""
                 sub = result.scalar_one_or_none()
                 if sub:
                     plan_details = {
-                        'expires_at': sub.expires_at.strftime('%Y-%m-%d') if hasattr(sub, 'expires_at') and sub.expires_at else 'N/A',
+                        'expires_at': sub.active_until.strftime('%Y-%m-%d') if hasattr(sub, 'active_until') and sub.active_until else 'N/A',
                         'is_active': getattr(sub, 'is_active', True),
                     }
         except Exception as e:
@@ -703,6 +747,7 @@ Excellente session de trading à vous !"""
         settings = self.user_settings.get(user_id, {})
         settings['live_signals'] = False
         self.user_settings[user_id] = settings
+        self._save_state()
         return "✅ Vous êtes désabonné des notifications de signaux.\nUtilisez /live ou /start pour vous réabonner."
 
     async def cmd_trading_journal(self, user_id: str, args: list = None) -> str:
@@ -926,6 +971,7 @@ Le trading sur options binaires et Forex comporte un niveau de risque très éle
                                     logger.info(f"[TELEGRAM] Commande {text} de {chat_id}")
                                     
                                     self.subscribed_chats.add(chat_id)
+                                    self._save_state()
                                     reply = await self.handle_command(chat_id, text)
                                     if reply:
                                         if isinstance(reply, dict):

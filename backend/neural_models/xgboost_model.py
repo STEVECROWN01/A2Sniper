@@ -20,6 +20,7 @@ class XGBoostModel:
         self.n_features = n_features
         self.is_trained = False
         self.model = None
+        self.feature_names = None  # Stored during training for consistent prediction
         
         if XGB_AVAILABLE:
             self.params = {
@@ -34,27 +35,58 @@ class XGBoostModel:
         
         logger.info(f"XGBoostModel initialisé (47 features CDC)")
 
-    def train(self, X_train, y_train):
+    def train(self, X_train, y_train, feature_names=None):
         """Entraînement natif XGBoost."""
         if not XGB_AVAILABLE: return
+        
+        self.feature_names = feature_names
+        # Ensure training data has exactly n_features columns
+        import numpy as np
+        if X_train.shape[1] < self.n_features:
+            pad_width = self.n_features - X_train.shape[1]
+            X_train = np.hstack([X_train, np.zeros((X_train.shape[0], pad_width))])
+        elif X_train.shape[1] > self.n_features:
+            X_train = X_train[:, :self.n_features]
         
         dtrain = xgb.DMatrix(X_train, label=y_train)
         self.model = xgb.train(self.params, dtrain, num_boost_round=500)
         self.is_trained = True
-        logger.info("XGBoostModel entraîné avec succès.")
+        logger.info(f"XGBoostModel entraîné avec succès ({X_train.shape[1]} features).")
+
+    def _build_feature_vector(self, features_dict: dict) -> 'np.ndarray':
+        """Build a feature vector of exactly n_features from a dict.
+        Uses stored feature_names for consistent mapping if available,
+        otherwise falls back to sorted keys with zero-padding.
+        """
+        import numpy as np
+        feature_vector = np.zeros(self.n_features)
+        
+        if self.feature_names is not None:
+            # Use training feature order for consistent mapping
+            for i, name in enumerate(self.feature_names):
+                if i >= self.n_features:
+                    break
+                val = features_dict.get(name, 0)
+                feature_vector[i] = float(val) if val is not None else 0.0
+        else:
+            # Fallback: sorted keys
+            for i, key in enumerate(sorted(features_dict.keys())):
+                if i >= self.n_features:
+                    break
+                val = features_dict[key]
+                feature_vector[i] = float(val) if val is not None else 0.0
+        
+        return feature_vector
 
     def predict(self, features_dict: dict) -> dict:
-        """Prédiction tabulaire basée sur 47 features."""
+        """Prédiction tabulaire basée sur 47 features.
+        Always produces exactly n_features values, padding missing with zeros.
+        """
         # Use trained model if available
         if self.is_trained and self.model is not None and XGB_AVAILABLE:
             try:
                 import numpy as np
-                # Build feature vector from dict, filling missing with 0
-                feature_vector = np.zeros(self.n_features)
-                for i, key in enumerate(sorted(features_dict.keys())):
-                    if i < self.n_features:
-                        val = features_dict[key]
-                        feature_vector[i] = float(val) if val is not None else 0.0
+                feature_vector = self._build_feature_vector(features_dict)
                 
                 dmatrix = xgb.DMatrix(feature_vector.reshape(1, -1))
                 probs = self.model.predict(dmatrix)[0]  # [CALL_prob, PUT_prob, NO_TRADE_prob]
@@ -72,6 +104,58 @@ class XGBoostModel:
         # Fallback: simulation mode (NOT trained)
         return self._simulate_predict(features_dict)
     
+    def save(self, path: str) -> bool:
+        """Save XGBoost model to disk."""
+        if not XGB_AVAILABLE or self.model is None:
+            logger.warning("Cannot save XGBoost model: XGBoost unavailable or model not trained")
+            return False
+        try:
+            import os
+            import json
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            self.model.save_model(path)
+            # Save feature names alongside model
+            meta_path = path.replace('.json', '_meta.json') if path.endswith('.json') else path + '_meta.json'
+            with open(meta_path, 'w') as f:
+                json.dump({
+                    'n_features': self.n_features,
+                    'feature_names': self.feature_names,
+                    'is_trained': self.is_trained,
+                }, f)
+            logger.info(f"XGBoost model saved to {path}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to save XGBoost model: {e}")
+            return False
+
+    def load(self, path: str) -> bool:
+        """Load XGBoost model from disk."""
+        if not XGB_AVAILABLE:
+            logger.warning("Cannot load XGBoost model: XGBoost unavailable")
+            return False
+        try:
+            import os
+            import json
+            if not os.path.exists(path):
+                logger.warning(f"XGBoost model file not found: {path}")
+                return False
+            self.model = xgb.Booster()
+            self.model.load_model(path)
+            # Load feature names
+            meta_path = path.replace('.json', '_meta.json') if path.endswith('.json') else path + '_meta.json'
+            if os.path.exists(meta_path):
+                with open(meta_path, 'r') as f:
+                    meta = json.load(f)
+                self.feature_names = meta.get('feature_names')
+                self.is_trained = meta.get('is_trained', True)
+            else:
+                self.is_trained = True
+            logger.info(f"XGBoost model loaded from {path} (trained={self.is_trained})")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to load XGBoost model: {e}")
+            return False
+
     def _simulate_predict(self, features_dict: dict) -> dict:
         """Simulation basée sur des heuristiques simples. MODE SIMULATION — modèle non entraîné."""
         rsi = features_dict.get('rsi', 50)

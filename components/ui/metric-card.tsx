@@ -15,8 +15,8 @@ interface MetricCardProps {
 
 const colorClasses = {
   blue: {
-    bg: 'bg-[#D4AF37]/10 border border-[#D4AF37]/20',
-    text: 'text-[#D4AF37]',
+    bg: 'bg-blue-500/10 border border-blue-500/20',
+    text: 'text-blue-500',
     changePositive: 'text-green-500',
     changeNegative: 'text-red-500'
   },

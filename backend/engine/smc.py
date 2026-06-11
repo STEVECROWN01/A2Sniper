@@ -120,7 +120,7 @@ class SMCEngine:
 
         return result
 
-    # ════════════ ORDER BLOCKS (5 types) ════════════
+    # ════════════ ORDER BLOCKS (5 types CDC Section 4) ════════════
     def detect_order_blocks(self, df: pd.DataFrame, trend: str) -> list:
         obs = []
         body_avg = abs(df['close'] - df['open']).mean()
@@ -150,16 +150,18 @@ class SMCEngine:
                     ob_entry['type'] = 'BEARISH_OB'
                     obs.append(ob_entry)
 
-        # Check mitigation & create Breaker Blocks
+        # Check mitigation, partial mitigation (MITIGATION_OB) & create Breaker Blocks
         final_obs = []
         breakers = []
+        mitigation_obs = []
         current_price = df['close'].iloc[-1]
 
         for ob in obs[-10:]:  # Last 10 OBs
             # Check if mitigated (price passed through)
             subsequent = df.loc[ob['index']:]
             if ob['type'] == 'BULLISH_OB':
-                if any(subsequent['low'] < ob['bottom']):
+                fully_broken = any(subsequent['low'] < ob['bottom'])
+                if fully_broken:
                     ob['mitigated'] = True
                     # Breaker Block: bullish OB broken becomes bearish zone
                     breakers.append({
@@ -168,9 +170,23 @@ class SMCEngine:
                         'index': ob['index']
                     })
                 else:
-                    final_obs.append(ob)
+                    # Check for partial mitigation: price entered zone but didn't break through
+                    partial_touch = any(
+                        (subsequent['low'] < ob['entry_zone_top']) &
+                        (subsequent['close'] > ob['bottom'])
+                    )
+                    if partial_touch:
+                        ob['type'] = 'MITIGATION_OB'
+                        ob['mitigated'] = True
+                        ob['confidence_reduction'] = True
+                        ob['score_bonus'] = -1  # Reduced confidence
+                        ob['ob_direction'] = 'CALL'  # Originally bullish
+                        mitigation_obs.append(ob)
+                    else:
+                        final_obs.append(ob)
             elif ob['type'] == 'BEARISH_OB':
-                if any(subsequent['high'] > ob['top']):
+                fully_broken = any(subsequent['high'] > ob['top'])
+                if fully_broken:
                     ob['mitigated'] = True
                     breakers.append({
                         'type': 'BULLISH_BREAKER',
@@ -178,10 +194,59 @@ class SMCEngine:
                         'index': ob['index']
                     })
                 else:
-                    final_obs.append(ob)
+                    # Check for partial mitigation: price entered zone but didn't break through
+                    partial_touch = any(
+                        (subsequent['high'] > ob['entry_zone_bottom']) &
+                        (subsequent['close'] < ob['top'])
+                    )
+                    if partial_touch:
+                        ob['type'] = 'MITIGATION_OB'
+                        ob['mitigated'] = True
+                        ob['confidence_reduction'] = True
+                        ob['score_bonus'] = -1  # Reduced confidence
+                        ob['ob_direction'] = 'PUT'  # Originally bearish
+                        mitigation_obs.append(ob)
+                    else:
+                        final_obs.append(ob)
 
+        # Detect Rejection Blocks: zones with 2+ violent rejections (wicks touching without closing through)
+        rejection_blocks = self._detect_rejection_blocks(df, obs[-10:])
+        final_obs.extend(mitigation_obs[-2:])
         final_obs.extend(breakers[-3:])
-        return final_obs[-5:]
+        final_obs.extend(rejection_blocks[-2:])
+        return final_obs[-7:]
+
+    def _detect_rejection_blocks(self, df: pd.DataFrame, obs: list) -> list:
+        """CDC Section 4: Rejection Block — zone with multiple violent rejections (2+ wicks)."""
+        rejection_blocks = []
+        for ob in obs:
+            subsequent = df.loc[ob['index']:]
+            if len(subsequent) < 3:
+                continue
+
+            rejection_count = 0
+            if ob['type'] == 'BULLISH_OB':
+                # Count wicks that touch the zone but close back above it
+                for idx, row in subsequent.iterrows():
+                    if row['low'] <= ob['entry_zone_top'] and row['close'] > ob['bottom']:
+                        rejection_count += 1
+            elif ob['type'] == 'BEARISH_OB':
+                # Count wicks that touch the zone but close back below it
+                for idx, row in subsequent.iterrows():
+                    if row['high'] >= ob['entry_zone_bottom'] and row['close'] < ob['top']:
+                        rejection_count += 1
+
+            if rejection_count >= 2:
+                rejection_blocks.append({
+                    'type': 'REJECTION_BLOCK',
+                    'top': ob['top'],
+                    'bottom': ob['bottom'],
+                    'index': ob['index'],
+                    'rejection_count': rejection_count,
+                    'score_bonus': 1,
+                    'original_type': ob['type'],
+                })
+        return rejection_blocks
 
     # ════════════ FVG (4 types) ════════════
     def detect_fvg(self, df: pd.DataFrame) -> list:
@@ -302,8 +367,10 @@ class SMCEngine:
                 overlap_top = min(ob['top'], fvg['top'])
                 overlap_bot = max(ob['bottom'], fvg['bottom'])
                 if overlap_top > overlap_bot:
-                    direction = 'CALL' if 'BULLISH' in ob['type'] and 'BULLISH' in fvg['type'] else \
-                                'PUT' if 'BEARISH' in ob['type'] and 'BEARISH' in fvg['type'] else None
+                    # Determine OB direction considering all 5 types
+                    ob_dir = self._get_ob_direction(ob)
+                    fvg_dir = 'CALL' if 'BULLISH' in fvg['type'] else 'PUT' if 'BEARISH' in fvg['type'] else None
+                    direction = ob_dir if ob_dir and ob_dir == fvg_dir else None
                     if direction:
                         zones.append({
                             'type': 'GOLDEN_ZONE',
@@ -315,6 +382,21 @@ class SMCEngine:
                             'fvg_type': fvg['type'],
                         })
         return zones
+
+    @staticmethod
+    def _get_ob_direction(ob: dict) -> str | None:
+        """Determine the direction of an OB based on its type."""
+        ob_type = ob.get('type', '')
+        if 'BULLISH' in ob_type:
+            return 'CALL'
+        elif 'BEARISH' in ob_type:
+            return 'PUT'
+        elif ob_type == 'MITIGATION_OB':
+            return ob.get('ob_direction', None)
+        elif ob_type == 'REJECTION_BLOCK':
+            original = ob.get('original_type', '')
+            return 'CALL' if 'BULLISH' in original else 'PUT' if 'BEARISH' in original else None
+        return None
 
     # ════════════ MTF ALIGNMENT ════════════
     @staticmethod

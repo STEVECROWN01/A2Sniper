@@ -271,11 +271,16 @@ export const useAppStore = create<AppState>((set, get) => ({
       const res = await fetch(`${url}/api/performance`, { headers });
       if (res.ok) {
         const data = await res.json();
+        // API returns nested objects: { win_rate_all: { win_rate: 75.5, total: 100, ... }, ... }
+        const globalWinRate = data.win_rate_all?.win_rate ?? 0;
+        const totalTrades = data.win_rate_all?.total ?? 0;
         set((state) => ({
           userStats: {
             ...state.userStats,
-            winRate: parseFloat(data.win_rate),
-            todaySignals: data.signals_today,
+            winRate: parseFloat(String(globalWinRate)),
+            totalTrades,
+            todaySignals: data.signals_today ?? 0,
+            performance: totalTrades > 0 ? parseFloat(String(globalWinRate)) : 0,
           }
         }));
       }

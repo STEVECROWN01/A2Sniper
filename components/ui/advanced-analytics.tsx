@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { motion } from 'framer-motion';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line } from 'recharts';
 import { TrendingUp, Zap, Clock, Target, RefreshCw, Download, Loader2, AlertCircle } from 'lucide-react';
@@ -38,13 +38,18 @@ export function AdvancedAnalytics({ timeframe = '24H' }: AdvancedAnalyticsProps)
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<AnalyticsData | null>(null);
+  const prevTimeframeRef = useRef<string>(timeframe);
 
-  const loadAnalyticsData = useCallback(async () => {
+  const loadAnalyticsData = useCallback(async (forceRefresh = false) => {
     setIsLoading(true);
     setError(null);
 
     try {
-      await Promise.all([fetchSignals(), fetchPerformance()]);
+      // Only refetch signals from store if timeframe changed or forced
+      if (forceRefresh || prevTimeframeRef.current !== timeframe) {
+        await Promise.all([fetchSignals(), fetchPerformance()]);
+        prevTimeframeRef.current = timeframe;
+      }
 
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
       const token = typeof window !== 'undefined' ? localStorage.getItem('a2sniper_token') : null;
@@ -67,6 +72,9 @@ export function AdvancedAnalytics({ timeframe = '24H' }: AdvancedAnalyticsProps)
         perfData = await perfRes.json();
       }
 
+      // Read the latest signals from the store directly
+      const currentSignals = useAppStore.getState().signals;
+
       // Compute analytics from real signals data
       const now = new Date();
       const timeframeMs: Record<string, number> = {
@@ -76,7 +84,7 @@ export function AdvancedAnalytics({ timeframe = '24H' }: AdvancedAnalyticsProps)
         '30D': 30 * 24 * 60 * 60 * 1000,
       };
       const cutoff = new Date(now.getTime() - (timeframeMs[timeframe] || timeframeMs['24H']));
-      const filteredSignals = signals.filter((s: Signal) => new Date(s.timestamp) >= cutoff);
+      const filteredSignals = currentSignals.filter((s: Signal) => new Date(s.timestamp) >= cutoff);
 
       // Calculate live metrics from real data
       const resolvedSignals = filteredSignals.filter((s: Signal) => s.is_win !== null);
@@ -151,14 +159,14 @@ export function AdvancedAnalytics({ timeframe = '24H' }: AdvancedAnalyticsProps)
     } finally {
       setIsLoading(false);
     }
-  }, [fetchSignals, fetchPerformance, signals, timeframe]);
+  }, [timeframe, fetchSignals, fetchPerformance]);
 
   useEffect(() => {
-    loadAnalyticsData();
-  }, [loadAnalyticsData]);
+    loadAnalyticsData(true);
+  }, [timeframe]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleRefresh = () => {
-    loadAnalyticsData();
+    loadAnalyticsData(true);
     toast.success('Analytics rafraîchis !');
   };
 

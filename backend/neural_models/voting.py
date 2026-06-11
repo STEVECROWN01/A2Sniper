@@ -46,18 +46,42 @@ class VotingClassifierModel:
             xgb_pred['probability'] * self.weights['XGBoost']
         )
 
-        # Direction par majorité pondérée
-        call_weight_sum = sum(
-            w for m, w in self.weights.items()
-            for p in [{'LSTM': lstm_pred, 'Transformer': trans_pred, 'XGBoost': xgb_pred}[m]]
-            if p['direction'] == 'CALL'
-        )
-        direction = 'CALL' if call_weight_sum > 0.5 else 'PUT'
+        # Direction par majorité pondérée — avec support NO_TRADE
+        predictions_map = {
+            'LSTM': lstm_pred,
+            'Transformer': trans_pred,
+            'XGBoost': xgb_pred,
+        }
+
+        # Calculer la somme des poids pour chaque direction
+        direction_weights = {'CALL': 0.0, 'PUT': 0.0, 'NO_TRADE': 0.0}
+        for model_name, weight in self.weights.items():
+            d = predictions_map[model_name]['direction']
+            if d in direction_weights:
+                direction_weights[d] += weight
+
+        call_w = direction_weights['CALL']
+        put_w = direction_weights['PUT']
+        no_trade_w = direction_weights['NO_TRADE']
+
+        # Règle 1 : Si la majorité des poids est NO_TRADE → NO_TRADE
+        if no_trade_w > 0.5:
+            direction = 'NO_TRADE'
+        # Règle 2 : Si aucun CALL ou PUT n'atteint la majorité (> 0.5) → NO_TRADE
+        # (ex: CALL=0.40, PUT=0.35, NO_TRADE=0.25 → pas de majorité claire)
+        elif call_w > 0.5:
+            direction = 'CALL'
+        elif put_w > 0.5:
+            direction = 'PUT'
+        else:
+            # Pas de majorité claire pour CALL ou PUT → NO_TRADE
+            direction = 'NO_TRADE'
 
         # Check unanimity (no artificial bonus — honesty matters)
         all_same = lstm_pred['direction'] == trans_pred['direction'] == xgb_pred['direction']
 
-        approved = weighted_prob >= self.threshold
+        # NO_TRADE signifie qu'il ne faut pas trader → jamais approuvé
+        approved = (direction != 'NO_TRADE') and (weighted_prob >= self.threshold)
 
         result = {
             'approved': approved,
@@ -71,6 +95,12 @@ class VotingClassifierModel:
                 'XGBoost': {'probability': xgb_pred['probability'], 'direction': xgb_pred['direction'], 'weight': self.weights['XGBoost']},
             }
         }
+
+        if direction == 'NO_TRADE':
+            logger.info(
+                f"[VOTING] NO_TRADE emitted — direction_weights: "
+                f"CALL={call_w:.2f}, PUT={put_w:.2f}, NO_TRADE={no_trade_w:.2f}"
+            )
 
         if self.simulation_mode:
             logger.info("[VOTING] All models in simulation mode — predictions are heuristic-based, not ML-based")

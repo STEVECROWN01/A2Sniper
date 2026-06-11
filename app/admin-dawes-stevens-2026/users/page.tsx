@@ -65,6 +65,10 @@ export default function AdminUsersPage() {
     }
   };
 
+  // Calculate retention rate: users with active (non-Standard) plans / total users
+  const activeSubscriptions = users.filter(u => u.plan_name !== 'Standard').length;
+  const retentionRate = users.length > 0 ? Math.round((activeSubscriptions / users.length) * 100) : 0;
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -91,7 +95,7 @@ export default function AdminUsersPage() {
         </div>
         <div className="bg-gray-900/40 border border-gray-800 p-6 rounded-2xl">
           <p className="text-xs text-gray-500 uppercase font-bold mb-1">Retention</p>
-          <p className="text-3xl font-bold text-green-500">N/A</p>
+          <p className="text-3xl font-bold text-green-500">{users.length > 0 ? `${retentionRate}%` : 'N/A'}</p>
         </div>
       </div>
       

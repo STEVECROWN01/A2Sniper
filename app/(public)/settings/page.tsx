@@ -5,9 +5,11 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { User, Bell, Shield, Palette, Save, Check, Camera, Key, Globe, Clock, Trash2, Download, AlertTriangle, Loader2 } from 'lucide-react';
 
 import { useAppStore } from '@/lib/store';
+import { useAuth } from '@/hooks/use-auth';
 import { toast } from 'sonner';
 
 export default function SettingsPage() {
+  useAuth();
   const { user } = useAppStore();
   const [activeTab, setActiveTab] = useState('profile');
   const [notifications, setNotifications] = useState(() => {

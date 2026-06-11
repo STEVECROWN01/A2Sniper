@@ -370,7 +370,8 @@ export class AITradingEngine {
     };
     
     const finalWinrate = Object.entries(weights).reduce((total, [key, weight]) => {
-      return total + (scores[key as keyof typeof scores] * weight);
+      const value = scores[key as keyof typeof scores];
+      return total + (typeof value === 'number' ? value * weight : 0);
     }, 0) * 100;
     
     let riskLevel: 'LOW' | 'MEDIUM' | 'HIGH' = 'MEDIUM';
@@ -452,7 +453,8 @@ export class AITradingEngine {
         technical_winrate: technicalScore,
         ml_probability: Math.max(rfScore, xgbScore, lstmScore),
         volume_winrate: volumeScore,
-        trend_winrate: trendScore
+        trend_winrate: trendScore,
+        isSimulation: true
       });
       
       // Filtrage par seuil de winrate

@@ -43,6 +43,7 @@ class SignalRecord(Base):
     entry_price = Column(Numeric(18, 5))  # Fixed precision for financial data
     expiration = Column(Integer)
     winrate = Column(Float)
+    score = Column(Integer)  # CDC Section 7: confluence score out of 10
     payout = Column(Integer)
     classification = Column(String)
     timestamp = Column(DateTime)

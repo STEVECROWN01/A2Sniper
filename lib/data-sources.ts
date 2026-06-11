@@ -167,15 +167,15 @@ export class DataSourceManager {
   private handleWebSocketMessage(sourceName: string, data: Record<string, unknown>): void {
     try {
       const marketData: MarketDataPoint = {
-        symbol: data.s || 'EURUSD',
-        timestamp: new Date(data.t || Date.now()),
-        open: data.o || 1.0800,
-        high: data.h || 1.0820,
-        low: data.l || 1.0790,
-        close: data.c || 1.0810,
-        volume: data.v || 1000000,
-        bid: data.c - 0.0001,
-        ask: data.c + 0.0001,
+        symbol: (data.s as string) || 'EURUSD',
+        timestamp: new Date((data.t as string | number | Date) || Date.now()),
+        open: (data.o as number) || 1.0800,
+        high: (data.h as number) || 1.0820,
+        low: (data.l as number) || 1.0790,
+        close: (data.c as number) || 1.0810,
+        volume: (data.v as number) || 1000000,
+        bid: (data.c as number) - 0.0001,
+        ask: (data.c as number) + 0.0001,
         spread: 0.0002,
         source: sourceName
       };

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
 import { 
@@ -16,6 +16,18 @@ import {
 import Link from 'next/link';
 import { useAppStore } from '@/lib/store';
 
+function formatUptime(startTime: number): string {
+  const now = Date.now();
+  const diffMs = now - startTime;
+  const diffSec = Math.floor(diffMs / 1000);
+  const days = Math.floor(diffSec / 86400);
+  const hours = Math.floor((diffSec % 86400) / 3600);
+  const minutes = Math.floor((diffSec % 3600) / 60);
+  if (days > 0) return `${days}d ${String(hours).padStart(2, '0')}h ${String(minutes).padStart(2, '0')}m`;
+  if (hours > 0) return `${hours}h ${String(minutes).padStart(2, '0')}m`;
+  return `${minutes}m`;
+}
+
 export default function AdminLayout({
   children,
 }: {
@@ -26,6 +38,12 @@ export default function AdminLayout({
   const { isAuthenticated, user, isInitialized } = useAppStore();
   const isLoginPage = pathname === '/admin-dawes-stevens-2026/login';
 
+  // Dynamic system info (fetched from API)
+  const [adminIp, setAdminIp] = useState<string>('...');
+  const [twoFaStatus, setTwoFaStatus] = useState<string>('Checking...');
+  const [uptime, setUptime] = useState<string>('...');
+  const [serverStartTime, setServerStartTime] = useState<number | null>(null);
+
   // Auth protection: redirect to admin login if not authenticated or not admin
   useEffect(() => {
     if (!isInitialized) return;
@@ -35,6 +53,76 @@ export default function AdminLayout({
       router.push('/admin-dawes-stevens-2026/login');
     }
   }, [isAuthenticated, user, isInitialized, isLoginPage, router]);
+
+  // Fetch admin config for dynamic IP/2FA/uptime
+  useEffect(() => {
+    if (isLoginPage) return;
+    
+    const fetchAdminInfo = async () => {
+      try {
+        const url = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+        const token = typeof window !== 'undefined' ? localStorage.getItem('a2sniper_token') : null;
+        const headers: Record<string, string> = {};
+        if (token) headers['Authorization'] = `Bearer ${token}`;
+
+        // Fetch admin config (contains IP whitelist)
+        const configRes = await fetch(`${url}/api/admin/config`, { headers });
+        if (configRes.ok) {
+          const configData = await configRes.json();
+          const config = configData.config || configData;
+          setAdminIp(config.admin_ip_whitelist || 'N/A');
+        } else {
+          setAdminIp('N/A');
+        }
+
+        // Fetch system status for uptime
+        const statusRes = await fetch(`${url}/api/status`, { headers });
+        if (statusRes.ok) {
+          const statusData = await statusRes.json();
+          // If the API provides a start_time, use it; otherwise estimate from current time
+          if (statusData.server_start_time) {
+            const start = new Date(statusData.server_start_time).getTime();
+            setServerStartTime(start);
+          } else {
+            // Fallback: approximate from total_signals (rough heuristic)
+            // Just use current session time
+            setServerStartTime(Date.now());
+          }
+        } else {
+          setServerStartTime(Date.now());
+        }
+
+        // 2FA status — check if admin user has 2FA enabled
+        // The backend doesn't have a dedicated 2FA endpoint, so we check the admin config
+        // For now, we report based on the config or show "Not Configured" if unavailable
+        if (configRes.ok) {
+          const configData = await configRes.json();
+          const config = configData.config || configData;
+          setTwoFaStatus(config.twofa_enabled === true ? 'Active (TOTP)' : config.twofa_enabled === false ? 'Disabled' : 'Not Configured');
+        } else {
+          setTwoFaStatus('N/A');
+        }
+      } catch {
+        setAdminIp('N/A');
+        setTwoFaStatus('N/A');
+        setServerStartTime(Date.now());
+      }
+    };
+
+    fetchAdminInfo();
+    const configTimer = setInterval(fetchAdminInfo, 60000); // Refresh every 60s
+    return () => clearInterval(configTimer);
+  }, [isLoginPage]);
+
+  // Update uptime every minute
+  useEffect(() => {
+    if (!serverStartTime) return;
+    setUptime(formatUptime(serverStartTime));
+    const timer = setInterval(() => {
+      setUptime(formatUptime(serverStartTime!));
+    }, 60000);
+    return () => clearInterval(timer);
+  }, [serverStartTime]);
 
   if (isLoginPage) return <>{children}</>;
 
@@ -100,8 +188,8 @@ export default function AdminLayout({
               <ShieldCheck className="w-3 h-3 text-green-500" />
               <span className="text-[10px] font-bold text-green-500 uppercase">System Secure</span>
             </div>
-            <p className="text-[9px] text-gray-500">IP Whitelist: 127.0.0.1 (Verified)</p>
-            <p className="text-[9px] text-gray-500">2FA Status: Active (TOTP)</p>
+            <p className="text-[9px] text-gray-500">IP Whitelist: {adminIp}</p>
+            <p className="text-[9px] text-gray-500">2FA Status: {twoFaStatus}</p>
           </div>
 
           <button 
@@ -124,7 +212,7 @@ export default function AdminLayout({
             </div>
             <div className="h-4 w-px bg-gray-800" />
             <div className="text-xs text-gray-400 font-mono">
-              $ uptime: <span className="text-green-500">14d 06h 22m</span>
+              $ uptime: <span className="text-green-500">{uptime}</span>
             </div>
           </div>
 

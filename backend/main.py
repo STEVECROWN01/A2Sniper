@@ -33,12 +33,45 @@ from engine.scoring import SniperEntrySystem
 from neural_models.voting import VotingClassifierModel
 from engine.chartist import ChartistPatterns
 from engine.filters import AntiManipulationFilters
-from engine.compliance import ComplianceManager
+from engine.compliance import ComplianceManager, geographic_restriction_dependency
 from bot.telegram_bot import TelegramSignalBot
-from db import init_db, SignalRecord, AsyncSessionLocal, User, UserSubscription, PasswordResetOTP
+from db import init_db, SignalRecord, AsyncSessionLocal, User, UserSubscription, PasswordResetOTP, SystemLog
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(name)s] %(levelname)s: %(message)s')
 logger = logging.getLogger('A2Sniper')
+
+
+# ═══════════ DB LOGGING HANDLER ═══════════
+class DatabaseLogHandler(logging.Handler):
+    """Custom logging handler that inserts log records into the SystemLog table."""
+
+    def emit(self, record: logging.LogRecord):
+        try:
+            log_entry = SystemLog(
+                timestamp=datetime.now(timezone.utc),
+                level=record.levelname,
+                module=record.name,
+                message=self.format(record),
+            )
+            # Use a sync-style insertion via a dedicated async helper
+            asyncio.get_event_loop().create_task(self._async_emit(log_entry))
+        except Exception:
+            # Never let logging errors crash the application
+            pass
+
+    async def _async_emit(self, log_entry: SystemLog):
+        try:
+            async with AsyncSessionLocal() as session:
+                session.add(log_entry)
+                await session.commit()
+        except Exception:
+            pass
+
+
+# Attach the DB handler to the root A2Sniper logger
+_db_log_handler = DatabaseLogHandler()
+_db_log_handler.setLevel(logging.INFO)
+logger.addHandler(_db_log_handler)
 
 # ═══════════ INSTANCES GLOBALES ═══════════
 # 8 paires OTC obligatoires CDC
@@ -64,6 +97,12 @@ telegram_bot = TelegramSignalBot(scanner=po_scanner)
 RATE_LIMIT_REQUESTS = 2000 # Augmenté pour permettre le polling du dashboard
 RATE_LIMIT_WINDOW = 3600 # 1 hour
 rate_limit_data = {}
+
+# CDC: Server start time for uptime calculation
+SERVER_START_TIME = datetime.now(timezone.utc)
+
+# CDC: Latency tracking for performance monitoring
+_latency_samples = deque(maxlen=1000)  # Last 1000 request latencies in ms
 
 
 def check_rate_limit(request: Request, max_requests: int = 100, window_seconds: int = 60):
@@ -132,6 +171,12 @@ async def analyze_pair_internal(pair: str, force: bool = False) -> dict:
     if not force and payout < 70:
         logger.info(f"[{pair}] Analyse ignorée : payout ({payout}%) insuffisant.")
         return None
+
+    # CDC Section 2.2: Hors sessions = signaux interdits
+    if not force:
+        if not filters.is_valid_session():
+            logger.info(f"[{pair}] Hors session PO optimale — signal rejeté")
+            return None
 
     df_m1 = await po_scanner.get_candles(pair, timeframe="1m", count=100)
     if df_m1.empty or len(df_m1) < 52:
@@ -255,10 +300,18 @@ async def analyze_pair_internal(pair: str, force: bool = False) -> dict:
     current_ob_type = None
     fvg_confluence = False
     for ob in obs:
-        if ob.get('type') in ['BULLISH_OB'] and direction == 'CALL':
-            current_ob_type = 'BULLISH_OB'
-        elif ob.get('type') in ['BEARISH_OB'] and direction == 'PUT':
-            current_ob_type = 'BEARISH_OB'
+        ob_type = ob.get('type')
+        if ob_type in ['BULLISH_OB', 'MITIGATION_OB'] and direction == 'CALL':
+            current_ob_type = ob_type
+        elif ob_type in ['BEARISH_OB', 'MITIGATION_OB'] and direction == 'PUT':
+            current_ob_type = ob_type
+        elif ob_type == 'REJECTION_BLOCK':
+            # Use the original direction from the rejection block
+            original = ob.get('original_type', '')
+            if 'BULLISH' in original and direction == 'CALL':
+                current_ob_type = 'REJECTION_BLOCK'
+            elif 'BEARISH' in original and direction == 'PUT':
+                current_ob_type = 'REJECTION_BLOCK'
     for fvg in fvgs:
         if (fvg.get('type') == 'BULLISH_FVG' and direction == 'CALL') or \
            (fvg.get('type') == 'BEARISH_FVG' and direction == 'PUT'):
@@ -297,14 +350,15 @@ async def analyze_pair_internal(pair: str, force: bool = False) -> dict:
 
     score_result = ses.evaluate_signal(scoring_context)
     
-    # Si non forcé et winrate trop bas, on rejette. Si forcé, on utilise le vrai winrate
+    # Si non forcé et score trop bas, on rejette. Si forcé, on utilise le vrai score
     winrate = score_result['winrate']
-    # Force mode: use the real calculated winrate (no fabrication)
-    if force and winrate < 70.0:
-        logger.warning(f"[{pair}] Force mode: winrate {winrate}% is low but using real value (no fabrication)")
+    score = score_result['score']
+    # Force mode: use the real calculated score (no fabrication)
+    if force and score < ses.MIN_SCORE_THRESHOLD:
+        logger.warning(f"[{pair}] Force mode: score {score}/10 is low but using real value (no fabrication)")
 
-    if not force and winrate < ses.WINRATE_THRESHOLD:
-        logger.info(f"[{pair}] Winrate {winrate}% < seuil")
+    if not force and score < ses.MIN_SCORE_THRESHOLD:
+        logger.info(f"[{pair}] Score {score}/10 < seuil {ses.MIN_SCORE_THRESHOLD}/10")
         return None
 
     # Risk Check (sauf si forcé)
@@ -354,6 +408,8 @@ async def analyze_pair_internal(pair: str, force: bool = False) -> dict:
         'entry_price': current_price,
         'expiration': expiration,
         'winrate': score_result['winrate'],
+        'score': score_result['score'],
+        'raw_points': score_result['raw_points'],
         'payout': payout,
         'classification': score_result['classification'],
         'smc_structure': score_result['details'].get('smc_structure', trend),
@@ -377,6 +433,7 @@ async def analyze_pair_internal(pair: str, force: bool = False) -> dict:
             entry_price=signal['entry_price'],
             expiration=signal['expiration'],
             winrate=signal['winrate'],
+            score=signal['score'],
             payout=signal['payout'],
             classification=signal['classification'],
             timestamp=now,
@@ -396,7 +453,7 @@ async def analyze_pair_internal(pair: str, force: bool = False) -> dict:
 🟢 Direction : <b>{signal['direction']}</b>
 ⌛ Expiration : <b>{signal['expiration']}m</b>
 💰 Payout : <b>{signal['payout']}%</b>
-🎯 Winrate IA : <b>{signal['winrate']}%</b>
+🎯 Score : <b>{signal['score']}/10</b> | Winrate : <b>{signal['winrate']}%</b>
 
 🏗️ Structure : <i>{signal['smc_structure']}</i>
 ⚡ Confluence : <i>{signal['fibonacci']}</i>
@@ -538,6 +595,40 @@ async def resolution_loop():
             await asyncio.sleep(10)
 
 
+async def daily_report_loop():
+    """Envoi du rapport journalier automatique à 23h59 UTC (CDC Section 11.3)."""
+    while True:
+        now = datetime.now(timezone.utc)
+        # Calculate seconds until 23:59
+        target = now.replace(hour=23, minute=59, second=0, microsecond=0)
+        if now >= target:
+            target = target + timedelta(days=1)
+        wait_seconds = (target - now).total_seconds()
+        await asyncio.sleep(wait_seconds)
+        
+        # Generate and send report
+        try:
+            report = monitor.generate_daily_report()
+            await telegram_bot.send_signal(report)
+            logger.info("[DAILY REPORT] Rapport journalier envoyé")
+        except Exception as e:
+            logger.error(f"[DAILY REPORT] Erreur lors de l'envoi du rapport journalier: {e}")
+
+
+async def retraining_loop():
+    """CDC Section 9.2: Ré-entraînement automatique toutes les 72h."""
+    RETRAIN_INTERVAL_HOURS = 72
+    while True:
+        await asyncio.sleep(RETRAIN_INTERVAL_HOURS * 3600)
+        try:
+            from neural_models.training_pipeline import TrainingPipeline
+            pipeline = TrainingPipeline()
+            pipeline.run_training()
+            logger.info("[RETRAINING] Model retraining completed successfully")
+        except Exception as e:
+            logger.error(f"[RETRAINING] Retraining failed: {e}")
+
+
 # ═══════════ LIFESPAN (replaces deprecated on_event) ═══════════
 
 @asynccontextmanager
@@ -558,6 +649,8 @@ async def lifespan(app):
     asyncio.create_task(trading_loop())
     asyncio.create_task(resolution_loop())
     asyncio.create_task(telegram_bot.start_polling())
+    asyncio.create_task(daily_report_loop())
+    asyncio.create_task(retraining_loop())
     
     yield  # Application runs here
     
@@ -581,8 +674,12 @@ app.add_middleware(
 
 
 @app.post("/api/signals/request")
-async def request_live_signal(request: Request, credentials: HTTPAuthorizationCredentials = Security(security), rate_limit: None = Depends(lambda req: check_rate_limit(req))):
+async def request_live_signal(request: Request, credentials: HTTPAuthorizationCredentials = Security(security), geo: dict = Depends(geographic_restriction_dependency), rate_limit: None = Depends(lambda req: check_rate_limit(req))):
     """Génère un signal en direct à la demande pour une paire. Requires authentication."""
+    # Geographic restriction check
+    if not geo['allowed']:
+        raise HTTPException(status_code=403, detail=geo['reason'])
+
     # Verify auth
     payload = decode_token(credentials.credentials)
     
@@ -631,6 +728,7 @@ async def get_signals(pair: str = None, limit: int = 100):
                 "entry_price": s.entry_price,
                 "expiration": s.expiration,
                 "winrate": s.winrate,
+                "score": getattr(s, 'score', None),
                 "payout": s.payout,
                 "classification": s.classification,
                 "timestamp": s.timestamp.isoformat() if s.timestamp else None,
@@ -654,6 +752,55 @@ async def delete_signal(signal_id: str, admin_payload = Depends(require_admin)):
         await session.execute(delete(SignalRecord).where(SignalRecord.id == signal_id))
         await session.commit()
     return {"status": "success"}
+
+
+@app.get("/api/admin/logs")
+async def admin_get_logs(limit: int = 100, level: str = None, admin_payload = Depends(require_admin)):
+    """Retourne les entrées de log système récentes (CDC Section 11.4)."""
+    async with AsyncSessionLocal() as session:
+        query = select(SystemLog).order_by(SystemLog.timestamp.desc()).limit(limit)
+        if level:
+            query = query.where(SystemLog.level == level.upper())
+        result = await session.execute(query)
+        logs = result.scalars().all()
+        return {"logs": [
+            {
+                "id": l.id,
+                "timestamp": l.timestamp.isoformat() if l.timestamp else None,
+                "level": l.level,
+                "module": l.module,
+                "message": l.message
+            }
+            for l in logs
+        ]}
+
+
+# ═══════════ SYSTEM CONFIG ═══════════
+_system_config = {
+    "maintenance_mode": False,
+    "public_signal_feed": True,
+    "admin_ip_whitelist": "127.0.0.1",
+    "max_drawdown_pct": 10,
+    "api_rate_limit": 2000,
+    "twofa_enabled": False,
+}
+
+
+@app.get("/api/admin/config")
+async def admin_get_config(admin_payload = Depends(require_admin)):
+    """Retourne la configuration système actuelle."""
+    return {"config": _system_config}
+
+
+@app.post("/api/admin/config")
+async def admin_update_config(request: Request, admin_payload = Depends(require_admin)):
+    """Met à jour la configuration système."""
+    global _system_config
+    data = await request.json()
+    _system_config.update(data)
+    return {"status": "success", "config": _system_config}
+
+
 # ═══════════ AUTH ENDPOINTS ═══════════
 
 @app.post("/api/auth/register")
@@ -983,6 +1130,20 @@ async def reset_password(request: Request):
         
     return {"status": "success", "message": "Mot de passe réinitialisé avec succès"}
 
+
+# ═══════════ 2FA STUB ENDPOINTS (CDC Section 7) ═══════════
+
+@app.post("/api/auth/2fa/setup")
+async def setup_2fa(credentials: HTTPAuthorizationCredentials = Security(security)):
+    """CDC Section 7: 2FA setup stub — coming soon."""
+    return {"status": "coming_soon", "message": "2FA setup will be available in a future update"}
+
+@app.post("/api/auth/2fa/verify")
+async def verify_2fa(request: Request):
+    """CDC Section 7: 2FA verification stub — coming soon."""
+    return {"status": "coming_soon", "message": "2FA verification will be available in a future update"}
+
+
 @app.get("/api/auth/me")
 async def get_me(credentials: HTTPAuthorizationCredentials = Security(security)):
     token = credentials.credentials
@@ -1011,12 +1172,18 @@ async def get_performance():
 
 @app.get("/api/status")
 async def get_status():
+    # Calculate average latency from recent samples
+    avg_latency = sum(_latency_samples) / len(_latency_samples) if _latency_samples else 0.0
+    
     return {
         "status": "active" if not monitor.is_suspended else "suspended",
         "circuit_breaker": monitor.check_circuit_breaker(),
         "risk": risk_mgr.check_can_trade(),
         "pairs": OTC_PAIRS,
         "total_signals": len(generated_signals),
+        "server_start_time": SERVER_START_TIME.isoformat(),
+        "uptime_seconds": (datetime.now(timezone.utc) - SERVER_START_TIME).total_seconds(),
+        "avg_latency_ms": round(avg_latency, 2),
     }
 
 
@@ -1089,12 +1256,12 @@ async def admin_update_weights(request: Request, admin_payload = Depends(require
     lstm_w = data.get('lstm', 0.4)
     transformer_w = data.get('transformer', 0.35)
     xgboost_w = data.get('xgboost', 0.25)
-    threshold = data.get('threshold', 0.6)
+    threshold = data.get('threshold', 85.0)
     
     weight_sum = lstm_w + transformer_w + xgboost_w
     if abs(weight_sum - 1.0) > 0.05:
         raise HTTPException(status_code=400, detail=f"Weights must sum to ~1.0 (current sum: {weight_sum:.2f})")
-    if threshold < 0 or threshold > 1:
+    if threshold < 0 or threshold > 100:
         raise HTTPException(status_code=400, detail="Threshold must be between 0 and 1")
     
     voting_model.weights['LSTM'] = lstm_w
@@ -1134,7 +1301,7 @@ async def connect_market(request: Request):
         raise HTTPException(status_code=400, detail=f"Erreur de lecture de la trame: {str(e)}")
 
     success = await po_scanner.connect(ssid_strip)
-    logger.info(f"[MARKET] Connexion effectuée (SSID: {ssid[:15]}...)")
+    logger.info(f"[MARKET] Connexion effectuée (SSID: {ssid[:5]}...)")
         
     if success:
         return {"status": "success", "message": "Connecté au marché"}
@@ -1157,12 +1324,18 @@ async def get_market_status():
 
 @app.middleware("http")
 async def rate_limit_middleware(request, call_next):
+    # CDC Section 8: Measure request latency
+    start_time = time()
+    
     client_ip = request.client.host if request.client else "unknown"
     now = datetime.now(timezone.utc).timestamp()
     
     # Skip rate limiting for health check endpoints
     if request.url.path in ["/api/status", "/api/market/status"]:
-        return await call_next(request)
+        response = await call_next(request)
+        latency_ms = (time() - start_time) * 1000
+        _latency_samples.append(latency_ms)
+        return response
     
     if client_ip not in rate_limit_data:
         rate_limit_data[client_ip] = []
@@ -1174,4 +1347,10 @@ async def rate_limit_middleware(request, call_next):
         raise HTTPException(status_code=429, detail="Rate limit exceeded. Please try again later.")
     
     rate_limit_data[client_ip].append(now)
-    return await call_next(request)
+    response = await call_next(request)
+    
+    # Record latency
+    latency_ms = (time() - start_time) * 1000
+    _latency_samples.append(latency_ms)
+    
+    return response

@@ -5,7 +5,17 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Bot, Zap, TrendingUp, TrendingDown, ChevronRight, ChevronLeft, ShieldAlert, Info, BarChart4, Calculator, X, Play, RefreshCw, Trash2, Save, Download, Send } from 'lucide-react';
 import { useAppStore } from '@/lib/store';
 import { toast } from 'sonner';
-import { tradingPairs, Signal } from '@/lib/mock-data';
+import { tradingPairs, Signal, UserStats } from '@/lib/mock-data';
+
+interface SignalPairData {
+  direction?: string;
+  pair?: string;
+  timestamp?: string | number | Date;
+  winrate?: number | string;
+  expiration?: number | string;
+  smc_structure?: string;
+  [key: string]: unknown;
+}
 
 interface Message {
   id: string;
@@ -13,7 +23,7 @@ interface Message {
   sender: 'user' | 'bot';
   timestamp: Date;
   type: 'text' | 'signal' | 'performance' | 'pairs_list' | 'ssid_input';
-  pair_data?: Record<string, unknown>;
+  pair_data?: SignalPairData;
 }
 
 // Composant pour l'arrière-plan avec les bougies (ChartBackground)
@@ -205,7 +215,7 @@ export function TelegramBotSimulator() {
   // Message ID counter to avoid collisions
   const messageIdCounter = useRef(0);
 
-  const addMessage = (content: string, sender: 'user' | 'bot', type: 'text' | 'signal' | 'performance' | 'pairs_list' | 'ssid_input' = 'text', pair_data?: Record<string, unknown>) => {
+  const addMessage = (content: string, sender: 'user' | 'bot', type: 'text' | 'signal' | 'performance' | 'pairs_list' | 'ssid_input' = 'text', pair_data?: SignalPairData) => {
     messageIdCounter.current += 1;
     const newMessage: Message = {
       id: `msg_${Date.now()}_${messageIdCounter.current}`,
@@ -235,7 +245,7 @@ export function TelegramBotSimulator() {
     
     const res = await requestSignal(pair);
     if (res.success && res.signal) {
-      addMessage(`🎯 SIGNAL EN COURS : ${pair}`, 'bot', 'signal', res.signal);
+      addMessage(`🎯 SIGNAL EN COURS : ${pair}`, 'bot', 'signal', res.signal as unknown as SignalPairData);
     } else {
       addMessage(`⏳ Analyse en cours pour ${pair}... ${res.message || "Le système attend une opportunité Sniper."}`, 'bot');
     }
@@ -270,7 +280,7 @@ export function TelegramBotSimulator() {
       }
       const latestSignal = signals[0];
       if (latestSignal) {
-        addMessage(`🎯 DERNIER SIGNAL : ${latestSignal.pair}`, 'bot', 'signal', latestSignal);
+        addMessage(`🎯 DERNIER SIGNAL : ${latestSignal.pair}`, 'bot', 'signal', latestSignal as unknown as SignalPairData);
       } else {
         addMessage("Aucun signal disponible. Le marché est sous surveillance. ⏳", 'bot');
       }
@@ -300,7 +310,7 @@ export function TelegramBotSimulator() {
         // SSID mais a le type 'text' (sauvegardé avant l'implémentation de ssid_input),
         // on lui restitue le bon type pour que le formulaire inline s'affiche correctement.
         const loaded = parsed.map((m: Record<string, unknown>) => {
-          let type = m.type || 'text';
+          let type = (m.type as string) || 'text';
           if (
             type === 'text' &&
             m.sender === 'bot' &&
@@ -309,9 +319,9 @@ export function TelegramBotSimulator() {
           ) {
             type = 'ssid_input';
           }
-          return { ...m, type, timestamp: new Date(m.timestamp) };
+          return { ...m, type, timestamp: new Date(m.timestamp as string | number | Date) };
         });
-        setMessages(loaded);
+        setMessages(loaded as Message[]);
       } catch (e) {
         console.error("Failed to load messages", e);
       }
@@ -416,7 +426,7 @@ export function TelegramBotSimulator() {
                           <span className="font-black text-sm tracking-tight text-white">{message.pair_data.pair}</span>
                         </div>
                         <span className="text-[10px] font-black text-gray-400/80 bg-black/40 px-2 py-0.5 rounded-full border border-gray-800">
-                          {new Date(message.pair_data.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          {new Date(message.pair_data.timestamp ?? Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                         </span>
                       </div>
                       
@@ -976,10 +986,18 @@ function RiskManagerPanel({ onClose }: { onClose: () => void }) {
 
 // Composant Trading Journal
 function TradingJournalPanel({ onClose }: { onClose: () => void }) {
+  interface TradeEntry {
+    result: string;
+    amount: number;
+    return: number;
+    balance?: string | number;
+  }
+
   interface SessionData {
-    trades: Array<Record<string, unknown>>;
+    trades: TradeEntry[];
     payout: number;
-    [key: string]: unknown;
+    initialCapital: number;
+    sessionCounter: number;
   }
   const [sessionData, setSessionData] = useState<SessionData | null>(null);
 
@@ -998,7 +1016,7 @@ function TradingJournalPanel({ onClose }: { onClose: () => void }) {
     let losses = 0;
     let profit = 0;
     
-    sessionData.trades.forEach((t: Record<string, unknown>) => {
+    sessionData.trades.forEach((t) => {
       if (t.result === 'WIN' && t.amount > 0) {
         wins++;
         profit += t.amount * (sessionData.payout / 100);
@@ -1018,7 +1036,7 @@ function TradingJournalPanel({ onClose }: { onClose: () => void }) {
   };
 
   const stats = getStats();
-  const validTrades = sessionData ? sessionData.trades.filter((t: Record<string, unknown>) => t.result && t.amount > 0) : [];
+  const validTrades = sessionData ? sessionData.trades.filter((t) => t.result && t.amount > 0) : [];
 
   return (
     <motion.div 
@@ -1086,7 +1104,7 @@ function TradingJournalPanel({ onClose }: { onClose: () => void }) {
                 <p className="text-xs text-gray-500 italic text-center py-4 bg-[#121216] rounded-xl">Aucun trade enregistré dans cette session.</p>
               ) : (
                 <div className="space-y-2">
-                  {validTrades.map((t: Record<string, unknown>, idx: number) => {
+                  {validTrades.map((t, idx: number) => {
                     const isWin = t.result === 'WIN';
                     const profitLoss = isWin ? t.amount * (sessionData.payout / 100) : -t.amount;
                     return (
@@ -1121,7 +1139,7 @@ function TradingJournalPanel({ onClose }: { onClose: () => void }) {
 }
 
 // Composant Modals d'information
-function InfoModal({ type, onClose, stats }: { type: 'DISCLAIMER' | 'AIDE' | 'PERF' | null, onClose: () => void, stats: Record<string, unknown> }) {
+function InfoModal({ type, onClose, stats }: { type: 'DISCLAIMER' | 'AIDE' | 'PERF' | null, onClose: () => void, stats: UserStats }) {
   const content = {
     DISCLAIMER: {
       title: "Risque & Conformité",
@@ -1178,7 +1196,7 @@ function InfoModal({ type, onClose, stats }: { type: 'DISCLAIMER' | 'AIDE' | 'PE
           <ul className="space-y-2 text-xs text-gray-400 pt-2 border-t border-gray-800">
             <li className="flex items-center gap-2">
               <div className="w-1.5 h-1.5 bg-green-500 rounded-full"></div>
-              Précision Algorithmique : 99.99%
+              Précision Algorithmique : {stats.winRate > 0 ? `${stats.winRate.toFixed(1)}%` : 'N/A'}
             </li>
             <li className="flex items-center gap-2">
               <div className="w-1.5 h-1.5 bg-green-500 rounded-full"></div>

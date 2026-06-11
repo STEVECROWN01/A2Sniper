@@ -3,6 +3,7 @@ export interface Signal {
   pair: string;
   direction: 'CALL' | 'PUT';
   winrate: number;
+  score: number;  // CDC Section 7: confluence score out of 10
   payout: number;
   entry_price: number;
   expiration: number;

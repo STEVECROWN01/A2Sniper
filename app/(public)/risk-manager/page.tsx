@@ -126,7 +126,7 @@ export default function RiskManagerPage() {
   const handleUpdateTrade = (idx: number, field: string, val: string | number | boolean) => {
     const newTrades = [...trades];
     // Validate negative amounts
-    if (field === 'amount' && val < 0) {
+    if (field === 'amount' && typeof val === 'number' && val < 0) {
       toast.error('Le montant ne peut pas être négatif.');
       return;
     }

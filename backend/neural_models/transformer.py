@@ -79,7 +79,9 @@ class TransformerModel:
         logger.info(f"TransformerModel initialisé | Device: {self.device}")
 
     def prepare_features(self, df) -> np.ndarray:
-        """Prépare les séquences temporelles pour l'entrée du Transformer."""
+        """Prépare les séquences temporelles pour l'entrée du Transformer.
+        Always produces exactly n_features columns, padding missing with zeros.
+        """
         feature_cols = [
             'open', 'high', 'low', 'close', 'volume',
             'RSI_14', 'MACD_12_26_9', 'MACDh_12_26_9', 'MACDs_12_26_9',
@@ -91,6 +93,14 @@ class TransformerModel:
         cols = [c for c in feature_cols if c in df.columns]
         data = df[cols].fillna(0).values
         
+        # Pad or truncate to exactly n_features columns
+        actual_cols = data.shape[1]
+        if actual_cols < self.n_features:
+            pad_width = self.n_features - actual_cols
+            data = np.hstack([data, np.zeros((data.shape[0], pad_width))])
+        elif actual_cols > self.n_features:
+            data = data[:, :self.n_features]
+        
         # Normalisation locale (Z-score)
         mean = data.mean(axis=0)
         std = data.std(axis=0) + 1e-8
@@ -101,7 +111,7 @@ class TransformerModel:
             data_norm = np.vstack([pad, data_norm])
             
         seq = data_norm[-self.sequence_length:]
-        return seq.reshape(1, self.sequence_length, -1).astype(np.float32)
+        return seq.reshape(1, self.sequence_length, self.n_features).astype(np.float32)
 
     def predict(self, df) -> dict:
         """Prédiction avec le modèle PyTorch (si disponible et entraîné) ou simulation."""
@@ -127,6 +137,46 @@ class TransformerModel:
         # Fallback: simulation mode (NOT trained or PyTorch unavailable)
         return self._simulate_predict(df)
     
+    def save(self, path: str) -> bool:
+        """Save model weights to disk."""
+        if not PYTORCH_AVAILABLE or self.model is None:
+            logger.warning("Cannot save Transformer model: PyTorch unavailable or model not initialized")
+            return False
+        try:
+            import os
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            torch.save({
+                'model_state_dict': self.model.state_dict(),
+                'optimizer_state_dict': self.optimizer.state_dict(),
+                'n_features': self.n_features,
+                'is_trained': self.is_trained,
+            }, path)
+            logger.info(f"Transformer model saved to {path}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to save Transformer model: {e}")
+            return False
+
+    def load(self, path: str) -> bool:
+        """Load model weights from disk."""
+        if not PYTORCH_AVAILABLE:
+            logger.warning("Cannot load Transformer model: PyTorch unavailable")
+            return False
+        try:
+            import os
+            if not os.path.exists(path):
+                logger.warning(f"Transformer model file not found: {path}")
+                return False
+            checkpoint = torch.load(path, map_location=self.device, weights_only=False)
+            self.model.load_state_dict(checkpoint['model_state_dict'])
+            self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            self.is_trained = checkpoint.get('is_trained', True)
+            logger.info(f"Transformer model loaded from {path} (trained={self.is_trained})")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to load Transformer model: {e}")
+            return False
+
     def _simulate_predict(self, df) -> dict:
         """Simulation basée sur ADX et Stochastique. MODE SIMULATION — modèle non entraîné."""
         adx = df['ADX_14'].iloc[-1] if 'ADX_14' in df.columns else 25

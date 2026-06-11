@@ -2,10 +2,9 @@
 
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { Bell, Link2, Clock, TrendingUp, TrendingDown, MessageCircle, X, RefreshCw, Download, Settings, BarChart3, Target, DollarSign, Zap, AlertCircle, Loader2 } from 'lucide-react';
+import { Bell, TrendingUp, TrendingDown, RefreshCw, Download, BarChart3, Target, DollarSign, Zap, AlertCircle, Loader2 } from 'lucide-react';
 import { useAppStore } from '@/lib/store';
 import { useAuth } from '@/hooks/use-auth';
-import { toast } from 'sonner';
 
 export default function DashboardPage() {
   useAuth();

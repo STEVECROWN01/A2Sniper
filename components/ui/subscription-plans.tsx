@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { motion } from 'framer-motion';
-import { Check, Star, Zap, Shield, Crown, X, CreditCard } from 'lucide-react';
+import { Check, Star, Zap, Shield, Crown, X, CreditCard, Clock, Mail } from 'lucide-react';
 import { toast } from 'sonner';
 
 const plans = [
@@ -100,7 +100,15 @@ export function SubscriptionPlans() {
     setShowPaymentModal(false);
     toast.info('Les paiements ne sont pas encore disponibles. L\'intégration Stripe est en cours de développement.', {
       duration: 5000,
-      description: `Plan ${plans[selectedPlan].name} ($${Math.round(plans[selectedPlan].price * getBillingMultiplier())}) — vous serez notifié lors de l'ouverture.`
+      description: `Plan ${plans[selectedPlan].name} ($${Math.round(plans[selectedPlan].price * getBillingMultiplier())}/mois) — vous serez notifié lors de l'ouverture.`
+    });
+  };
+
+  const handleJoinWaitlist = () => {
+    setShowPaymentModal(false);
+    toast.success('Vous avez été ajouté à la liste d\'attente !', {
+      duration: 4000,
+      description: 'Vous serez parmi les premiers informés lors de l\'ouverture des paiements.'
     });
   };
 
@@ -316,27 +324,39 @@ export function SubscriptionPlans() {
             </div>
 
             {/* Boutons d'action */}
-            <div className="flex space-x-3 text-xs font-black uppercase">
+            <div className="flex flex-col space-y-3 text-xs font-black uppercase">
               <button
-                onClick={() => setShowPaymentModal(false)}
-                className="flex-1 py-3.5 px-4 bg-white/5 text-gray-400 hover:text-white rounded-xl transition-colors"
+                onClick={handleJoinWaitlist}
+                className="w-full py-3.5 px-4 bg-gradient-to-r from-[#D4AF37] to-[#C5A059] text-black hover:from-[#c5a059] hover:to-[#D4AF37] rounded-xl transition-all flex items-center justify-center space-x-2"
               >
-                Annuler
+                <Mail className="w-4 h-4" />
+                <span>Rejoindre la liste d&apos;attente</span>
               </button>
-              <button
-                onClick={handlePayment}
-                disabled={isProcessing}
-                className="flex-1 py-3.5 px-4 bg-gradient-to-r from-[#D4AF37] to-[#C5A059] text-black hover:from-[#c5a059] hover:to-[#D4AF37] rounded-xl transition-all disabled:opacity-50 flex items-center justify-center space-x-2"
-              >
-                {isProcessing ? (
-                  <>
-                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-black"></div>
-                    <span>Traitement...</span>
-                  </>
-                ) : (
-                  <span>Confirmer (bientôt)</span>
-                )}
-              </button>
+              <div className="flex space-x-3">
+                <button
+                  onClick={() => setShowPaymentModal(false)}
+                  className="flex-1 py-3.5 px-4 bg-white/5 text-gray-400 hover:text-white rounded-xl transition-colors"
+                >
+                  Annuler
+                </button>
+                <button
+                  onClick={handlePayment}
+                  disabled={isProcessing}
+                  className="flex-1 py-3.5 px-4 bg-white/5 text-gray-500 hover:text-gray-300 border border-white/5 rounded-xl transition-all disabled:opacity-50 flex items-center justify-center space-x-2"
+                >
+                  {isProcessing ? (
+                    <>
+                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-gray-500"></div>
+                      <span>Traitement...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Clock className="w-3.5 h-3.5" />
+                      <span>Bientôt disponible</span>
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
           </motion.div>
         </div>

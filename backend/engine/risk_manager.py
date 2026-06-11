@@ -101,15 +101,15 @@ class RiskManager:
                 self._save_state()
                 logger.info("[RISK] Session stop lifted — cooldown period elapsed. Manual acknowledgment still required.")
 
-    def get_recommended_stake(self, winrate: float) -> dict:
-        """CDC: 1% winrate 85-90%, 2% winrate 90-95%, 3% winrate 95%+."""
-        if winrate >= 95:
-            return {'percentage': 3.0, 'label': '3% du capital', 'reason': 'SNIPER SHOT — Winrate maximal'}
-        elif winrate >= 90:
-            return {'percentage': 2.0, 'label': '2% du capital', 'reason': 'Signal fort'}
-        elif winrate >= 85:
-            return {'percentage': 1.0, 'label': '1% du capital', 'reason': 'Signal acceptable'}
-        return {'percentage': 0, 'label': 'Signal rejeté', 'reason': f'Winrate {winrate}% < seuil minimum'}
+    def get_recommended_stake(self, score: int) -> dict:
+        """CDC Section 7: score 10->3%, score 8-9->2%, score 7->1%, <7->rejected."""
+        if score >= 10:
+            return {'percentage': 3.0, 'label': '3% du capital', 'reason': 'SNIPER SHOT — Score 10/10'}
+        elif score >= 8:
+            return {'percentage': 2.0, 'label': '2% du capital', 'reason': f'Signal fort — Score {score}/10'}
+        elif score >= 7:
+            return {'percentage': 1.0, 'label': '1% du capital', 'reason': f'Signal acceptable — Score {score}/10'}
+        return {'percentage': 0, 'label': 'Signal rejete', 'reason': f'Score {score}/10 < seuil minimum 7/10'}
 
     def acknowledge_session_stop(self):
         """Manual acknowledgment of session stop — clears the requires_manual_acknowledgment flag."""
