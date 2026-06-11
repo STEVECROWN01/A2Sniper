@@ -3,7 +3,13 @@ import logging
 import asyncio
 import pandas as pd
 from typing import Optional
-from pocketoptionapi_async.client import AsyncPocketOptionClient
+
+try:
+    from pocketoptionapi_async.client import AsyncPocketOptionClient
+    _PO_LIB_AVAILABLE = True
+except ImportError:
+    _PO_LIB_AVAILABLE = False
+    AsyncPocketOptionClient = None
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +65,10 @@ class PocketOptionScanner:
         """
         Initialise et connecte le client Pocket Option.
         """
+        if not _PO_LIB_AVAILABLE:
+            logger.error("pocketoptionapi-async library not installed. Cannot connect to Pocket Option.")
+            return False
+
         # Pré-traiter le SSID pour garantir isDemo/currentUrl corrects
         prepared_ssid, detected_is_demo = self._prepare_ssid(ssid)
         if is_demo is None:
