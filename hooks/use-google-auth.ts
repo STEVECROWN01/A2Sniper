@@ -40,7 +40,12 @@ export function useGoogleAuth() {
     const searchParams = new URLSearchParams(window.location.search);
     const code = searchParams.get('code');
 
-    if (!accessToken && !code) return false;
+    console.log('[Google Auth Callback] hash:', hash ? 'present' : 'empty', 'code:', code ? 'present' : 'empty', 'accessToken:', accessToken ? 'present' : 'empty');
+
+    if (!accessToken && !code) {
+      console.error('[Google Auth Callback] No access_token or code found in URL');
+      return false;
+    }
 
     try {
       const baseUrl = process.env.NEXT_PUBLIC_API_URL?.replace(/\/+$/, '') || 'http://localhost:8000';
@@ -54,6 +59,7 @@ export function useGoogleAuth() {
           body: JSON.stringify({ code, redirect_uri: redirectUri }),
         });
         const data = await res.json();
+        console.log('[Google Auth] Code exchange response:', res.status, data);
 
         if (res.ok) {
           localStorage.setItem('a2sniper_token', data.token);
