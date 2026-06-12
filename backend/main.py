@@ -681,7 +681,7 @@ _cors_origins = [
     "http://127.0.0.1:3000",
     "http://localhost:8000",
     "http://127.0.0.1:8000",
-    "https://a2-sniper-j4ps.vercel.app",
+    "https://a2sniper.vercel.app",
 ]
 if _frontend_url:
     _cors_origins.append(_frontend_url)
