@@ -25,5 +25,5 @@ ENV PORT=8000
 # Expose the port
 EXPOSE 8000
 
-# Start the app using a shell entrypoint so $PORT is expanded at runtime
-ENTRYPOINT ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port $PORT"]
+# Start the app using Python startup script (avoids $PORT shell expansion issues)
+CMD ["python", "start.py"]
