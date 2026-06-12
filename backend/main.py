@@ -635,7 +635,9 @@ async def retraining_loop():
 async def lifespan(app):
     # Startup — resilient: don't crash if DB or background tasks fail
     try:
-        await init_db()
+        await asyncio.wait_for(init_db(), timeout=30.0)
+    except asyncio.TimeoutError:
+        logger.error("[STARTUP] DB init timed out after 30s. Continuing without DB init.")
     except Exception as e:
         logger.error(f"[STARTUP] DB init failed: {e}. Continuing without DB tables (they may already exist).")
 
@@ -667,6 +669,12 @@ async def lifespan(app):
 
 
 app = FastAPI(title="A2Sniper 3.0", version="3.0.0", lifespan=lifespan)
+
+# Simple root health endpoint — always responds even if DB is down
+@app.get("/")
+async def root():
+    return {"status": "ok", "service": "A2Sniper 3.0", "version": "3.0.0"}
+
 _frontend_url = os.getenv("FRONTEND_URL", "")
 _cors_origins = [
     "http://localhost:3000",
