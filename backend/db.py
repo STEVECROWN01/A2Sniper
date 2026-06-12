@@ -18,16 +18,30 @@ load_dotenv()
 # URL de connexion Supabase (PostgreSQL)
 _raw_db_url = os.getenv("DATABASE_URL", "")
 
-if not _raw_db_url or '[' in _raw_db_url or 'PASSWORD' in _raw_db_url or 'PROJECT_ID' in _raw_db_url:
+# Determine if we should use PostgreSQL or fallback to SQLite
+_use_pg = bool(_raw_db_url and _raw_db_url.startswith("postgresql"))
+
+if _use_pg:
+    DATABASE_URL = _raw_db_url
+    logger.info(f"[DB] Connexion PostgreSQL/Supabase configurée.")
+else:
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
     db_path = os.path.join(os.path.dirname(BASE_DIR), "a2sniper.db")
     DATABASE_URL = f"sqlite+aiosqlite:///{db_path}"
     logger.warning(f"[DB] DATABASE_URL non configurée ou invalide → Fallback SQLite local absolu ({db_path})")
-else:
-    DATABASE_URL = _raw_db_url
-    logger.info(f"[DB] Connexion PostgreSQL/Supabase configurée.")
 
-engine = create_async_engine(DATABASE_URL, echo=False)
+# PgBouncer compatibility: disable prepared statement cache for Supabase pooler
+_is_pg = DATABASE_URL.startswith("postgresql")
+connect_args = {"statement_cache_size": 0} if _is_pg else {}
+
+engine = create_async_engine(
+    DATABASE_URL,
+    echo=False,
+    connect_args=connect_args,
+    pool_pre_ping=True if _is_pg else False,
+    pool_size=5 if _is_pg else None,
+    max_overflow=10 if _is_pg else None,
+)
 AsyncSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 Base = declarative_base()
 

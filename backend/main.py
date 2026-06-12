@@ -633,40 +633,60 @@ async def retraining_loop():
 
 @asynccontextmanager
 async def lifespan(app):
-    # Startup
-    await init_db()
-    
-    async with AsyncSessionLocal() as session:
-        result = await session.execute(select(SignalRecord).order_by(SignalRecord.timestamp.asc()))
-        historical_signals = result.scalars().all()
-        for s in historical_signals:
-            monitor.record_signal(s.id, s.pair, s.direction, s.winrate, is_win=s.is_win)
-            monitor.signal_history[-1]['timestamp'] = s.timestamp.replace(tzinfo=timezone.utc) if s.timestamp.tzinfo is None else s.timestamp
+    # Startup — resilient: don't crash if DB or background tasks fail
+    try:
+        await init_db()
+    except Exception as e:
+        logger.error(f"[STARTUP] DB init failed: {e}. Continuing without DB tables (they may already exist).")
 
-    logger.info(f"Database initialized. Loaded {len(historical_signals)} signals into monitoring history.")
+    try:
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(select(SignalRecord).order_by(SignalRecord.timestamp.asc()))
+            historical_signals = result.scalars().all()
+            for s in historical_signals:
+                monitor.record_signal(s.id, s.pair, s.direction, s.winrate, is_win=s.is_win)
+                monitor.signal_history[-1]['timestamp'] = s.timestamp.replace(tzinfo=timezone.utc) if s.timestamp.tzinfo is None else s.timestamp
+        logger.info(f"Database initialized. Loaded {len(historical_signals)} signals into monitoring history.")
+    except Exception as e:
+        logger.warning(f"[STARTUP] Could not load historical signals: {e}. Starting with empty history.")
+
     logger.info("Waiting for real market connection to start analysis.")
-    
-    asyncio.create_task(trading_loop())
-    asyncio.create_task(resolution_loop())
-    asyncio.create_task(telegram_bot.start_polling())
-    asyncio.create_task(daily_report_loop())
-    asyncio.create_task(retraining_loop())
-    
+
+    try:
+        asyncio.create_task(trading_loop())
+        asyncio.create_task(resolution_loop())
+        asyncio.create_task(telegram_bot.start_polling())
+        asyncio.create_task(daily_report_loop())
+        asyncio.create_task(retraining_loop())
+    except Exception as e:
+        logger.warning(f"[STARTUP] Background task creation issue: {e}")
+
     yield  # Application runs here
-    
+
     # Shutdown cleanup could go here
 
 
 app = FastAPI(title="A2Sniper 3.0", version="3.0.0", lifespan=lifespan)
+_frontend_url = os.getenv("FRONTEND_URL", "")
+_cors_origins = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
+]
+if _frontend_url:
+    _cors_origins.append(_frontend_url)
+# Allow Vercel and Railway domains dynamically
+_vercel_url = os.getenv("VERCEL_URL", "")
+if _vercel_url:
+    _cors_origins.append(f"https://{_vercel_url}")
+_railway_url = os.getenv("RAILWAY_PUBLIC_DOMAIN", "")
+if _railway_url:
+    _cors_origins.append(f"https://{_railway_url}")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        "http://localhost:8000",
-        "http://127.0.0.1:8000",
-        os.getenv("FRONTEND_URL", "http://localhost:3000"),
-    ],
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
