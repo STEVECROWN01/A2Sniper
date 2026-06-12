@@ -903,9 +903,39 @@ async def login(request: Request, rate_limit: None = Depends(lambda req: check_r
 async def auth_google(request: Request):
     data = await request.json()
     access_token = data.get("access_token")
+    code = data.get("code")
+    redirect_uri = data.get("redirect_uri")
+    
+    # Support both: access_token (implicit flow) or code (authorization code flow)
+    if code and redirect_uri:
+        # Exchange authorization code for access token
+        import httpx
+        try:
+            async with httpx.AsyncClient() as client:
+                token_resp = await client.post(
+                    "https://oauth2.googleapis.com/token",
+                    data={
+                        "code": code,
+                        "client_id": os.getenv("GOOGLE_CLIENT_ID", ""),
+                        "client_secret": os.getenv("GOOGLE_CLIENT_SECRET", ""),
+                        "redirect_uri": redirect_uri,
+                        "grant_type": "authorization_code",
+                    }
+                )
+                token_resp.raise_for_status()
+                token_data = token_resp.json()
+                access_token = token_data.get("access_token")
+                if not access_token:
+                    raise HTTPException(status_code=400, detail="Impossible d'obtenir le token Google")
+        except httpx.HTTPStatusError as e:
+            logger.error(f"Google Code Exchange Error: {e.response.text}")
+            raise HTTPException(status_code=400, detail="Code d'autorisation Google invalide ou expiré")
+        except Exception as e:
+            logger.error(f"Google Code Exchange Error: {e}")
+            raise HTTPException(status_code=400, detail="Erreur lors de l'échange du code Google")
     
     if not access_token:
-        raise HTTPException(status_code=400, detail="Access token requis")
+        raise HTTPException(status_code=400, detail="Access token ou code d'autorisation requis")
     
     import httpx
     try:

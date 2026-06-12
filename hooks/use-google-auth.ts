@@ -19,22 +19,55 @@ export function useGoogleAuth() {
       return;
     }
 
-    // Google Sign-In redirect using OAuth 2.0 implicit flow
+    // Use Google OAuth 2.0 Authorization Code flow (more reliable than implicit flow)
     const redirectUri = `${window.location.origin}/google-callback`;
     const scope = 'openid email profile';
-    const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=token&scope=${encodeURIComponent(scope)}`;
+    const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${encodeURIComponent(scope)}&access_type=offline&prompt=consent`;
     window.location.href = authUrl;
   }, []);
 
   const handleGoogleCallback = useCallback(async () => {
+    // Try to get access_token from hash (implicit flow)
     const hash = window.location.hash;
-    const params = new URLSearchParams(hash.substring(1));
-    const accessToken = params.get('access_token');
+    let accessToken = '';
 
-    if (!accessToken) return false;
+    if (hash) {
+      const params = new URLSearchParams(hash.substring(1));
+      accessToken = params.get('access_token') || '';
+    }
+
+    // Try to get code from query params (authorization code flow)
+    const searchParams = new URLSearchParams(window.location.search);
+    const code = searchParams.get('code');
+
+    if (!accessToken && !code) return false;
 
     try {
       const baseUrl = process.env.NEXT_PUBLIC_API_URL?.replace(/\/+$/, '') || 'http://localhost:8000';
+
+      // If we have an authorization code, exchange it via backend
+      if (code && !accessToken) {
+        const redirectUri = `${window.location.origin}/google-callback`;
+        const res = await fetch(`${baseUrl}/api/auth/google`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code, redirect_uri: redirectUri }),
+        });
+        const data = await res.json();
+
+        if (res.ok) {
+          localStorage.setItem('a2sniper_token', data.token);
+          setUser(data.user);
+          setAuthenticated(true);
+          router.push('/dashboard');
+          return true;
+        } else {
+          toast.error('Erreur serveur : ' + (data.detail || 'Impossible de se connecter'));
+          return false;
+        }
+      }
+
+      // If we have an access token (implicit flow), verify it via backend
       const res = await fetch(`${baseUrl}/api/auth/google`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
