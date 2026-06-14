@@ -71,16 +71,18 @@ export default function AdminSignalsPage() {
   const handleConnect = async () => {
     if (!ssid) return;
 
-    const trimmed = ssid.trim();
-    const validation = validateSSID(trimmed);
+    const validation = validateSSID(ssid.trim());
     if (validation.status === 'invalid') {
       setConnectError(validation.message);
       return;
     }
 
+    // Use the normalized SSID (fixes doubled prefix like 42["auth",42["auth",...)
+    const normalizedSSID = validation.normalized || ssid.trim();
+
     setIsConnecting(true);
     setConnectError('');
-    const result = await connectMarket(trimmed);
+    const result = await connectMarket(normalizedSSID);
     if (!result.success) {
       setConnectError(result.message);
     } else {

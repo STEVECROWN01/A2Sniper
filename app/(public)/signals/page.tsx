@@ -92,16 +92,18 @@ export default function SignalsPage() {
   const handleConnect = async () => {
     if (!ssid) return;
 
-    const trimmed = ssid.trim();
-    const validation = validateSSID(trimmed);
+    const validation = validateSSID(ssid.trim());
     if (validation.status === 'invalid') {
       setConnectError(validation.message);
       return;
     }
 
+    // Use the normalized SSID (fixes doubled prefix like 42["auth",42["auth",...)
+    const normalizedSSID = validation.normalized || ssid.trim();
+
     setIsConnecting(true);
     setConnectError('');
-    const result = await connectMarket(trimmed);
+    const result = await connectMarket(normalizedSSID);
     if (!result.success) {
       // Provide a clear message about session expiry
       const msg = result.message.toLowerCase().includes('ssid') || result.message.toLowerCase().includes('expir')
