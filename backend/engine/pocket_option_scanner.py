@@ -345,10 +345,23 @@ class PocketOptionScanner:
                         # Try to decode as UTF-8 (some binary frames are actually text)
                         decoded = message.decode('utf-8')
                         self._last_message_time = datetime.now(timezone.utc)
-                        try:
-                            await self._handle_message(decoded)
-                        except Exception as e:
-                            logger.error(f"[SCANNER] Error handling decoded binary: {e}")
+                        
+                        # Binary attachment data — typically JSON array of assets
+                        # This arrives after a "451-[\"updateAssets\",...]" frame
+                        if decoded.startswith('[') or decoded.startswith('{'):
+                            try:
+                                parsed = json.loads(decoded)
+                                if isinstance(parsed, list):
+                                    await self._parse_assets_list(parsed)
+                                elif isinstance(parsed, dict):
+                                    await self._parse_assets_dict(parsed)
+                            except (json.JSONDecodeError, ValueError):
+                                pass
+                        else:
+                            try:
+                                await self._handle_message(decoded)
+                            except Exception as e:
+                                logger.error(f"[SCANNER] Error handling decoded binary: {e}")
                     except UnicodeDecodeError:
                         # True binary data — parse as assets/payouts
                         self._last_message_time = datetime.now(timezone.utc)
@@ -497,22 +510,29 @@ class PocketOptionScanner:
             logger.debug(f"[SCANNER] Binary data parse error: {e}")
 
     async def _parse_assets_list(self, assets: list):
-        """Parse assets from Pocket Option's list format."""
+        """Parse assets from Pocket Option's list format.
+        
+        PO asset format (19 fields):
+        [id, symbol, name, category, subcategory, payout, ?, ?, ?, ?, ?, ?, ?, ?, ?, timeframes, ?, ?, ?]
+        
+        Examples:
+        [66, "EURUSD_otc", "EUR/USD OTC", "currency", 5, 92, 60, 30, 3, 1, 0, 1, [], ...]
+        [5, "#AAPL", "Apple", "stock", 2, 50, 60, 30, 3, 0, 170, 0, [], ...]
+        """
+        count = 0
         try:
             for asset_info in assets:
                 if not isinstance(asset_info, list) or len(asset_info) < 6:
                     continue
-                # Format: [id, symbol, name, type, ..., payout, ...]
-                # The payout is typically at index 5 or 6
                 symbol = asset_info[1] if len(asset_info) > 1 else None
-                if symbol:
-                    # Try to find payout value
-                    for i, val in enumerate(asset_info):
-                        if isinstance(val, (int, float)) and 50 <= val <= 100 and i >= 4:
-                            self._payouts[symbol] = float(val)
-                            break
-            if self._payouts:
-                logger.info(f"[SCANNER] Parsed {len(self._payouts)} asset payouts from binary data")
+                payout = asset_info[5] if len(asset_info) > 5 else None
+                
+                if symbol and isinstance(payout, (int, float)) and payout > 0:
+                    self._payouts[symbol] = float(payout)
+                    count += 1
+                    
+            if count > 0:
+                logger.info(f"[SCANNER] Parsed {count} asset payouts from updateAssets — samples: {dict(list(self._payouts.items())[:5])}")
         except Exception as e:
             logger.debug(f"[SCANNER] Asset list parse error: {e}")
 
@@ -712,23 +732,29 @@ class PocketOptionScanner:
         if not self._is_authenticated:
             return None
         
-        # Try multiple symbol formats since PO uses different conventions
-        # e.g., "EUR/USD OTC" → "#EURUSD_otc", "EURUSD_otc", "EUR/USD OTC"
-        candidates = [
-            self.get_asset_symbol(pair),  # e.g., "EURUSD_otc"
-            f"#{self.get_asset_symbol(pair)}",  # e.g., "#EURUSD_otc"
-            pair,  # e.g., "EUR/USD OTC"
-            pair.replace('/', ''),  # e.g., "EURUSD OTC"
-            pair.replace(' ', ''),  # e.g., "EUR/USDOTC"
-            pair.replace('/', '').replace(' ', ''),  # e.g., "EURUSDOTC"
-        ]
+        # PO uses symbol formats like:
+        #   "EURUSD_otc" for OTC forex
+        #   "#AAPL" for stocks
+        #   "#AAPL_otc" for OTC stocks
+        # We need to convert "EUR/USD OTC" → "EURUSD_otc"
+        candidates = []
+        
+        # Main conversion: "EUR/USD OTC" → "EURUSD_otc"
+        base = pair.replace('/', '').replace(' ', '_')  # "EUR/USD OTC" → "EURUSD_OTC"
+        # Lowercase the _otc suffix: "EURUSD_otc"
+        base_lower = base.replace('_OTC', '_otc').replace('_otc_OTC', '_otc')
+        candidates.append(base_lower)
+        candidates.append(f"#{base_lower}")  # Some stocks have # prefix
+        
+        # Also try the original pair name
+        candidates.append(pair)
         
         for candidate in candidates:
             payout = self._payouts.get(candidate)
             if payout is not None:
                 return payout
         
-        # If still not found, try partial match
+        # Partial match fallback
         pair_base = pair.split(' ')[0].replace('/', '')  # e.g., "EURUSD"
         for symbol, payout in self._payouts.items():
             if pair_base in symbol:
