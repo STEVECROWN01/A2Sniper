@@ -58,6 +58,7 @@ export default function SettingsPage() {
 
   // Export data state
   const [isExporting, setIsExporting] = useState(false);
+  const [justExported, setJustExported] = useState(false);
 
   // Save notification preferences to localStorage when changed
   useEffect(() => {
@@ -321,6 +322,8 @@ export default function SettingsPage() {
 
       const dateStr = new Date().toISOString().split('T')[0];
       savePDF(doc, `a2sniper-donnees-${dateStr}.pdf`, pdfUser);
+      setJustExported(true);
+      setTimeout(() => setJustExported(false), 2500);
       toast.success('Rapport PDF exporte avec succes !');
     } catch {
       toast.error('Erreur lors de l\'export. Veuillez réessayer.');
@@ -482,10 +485,10 @@ export default function SettingsPage() {
                         <button
                           onClick={handleExportData}
                           disabled={isExporting}
-                          className="bg-[#121216] hover:bg-[#1a1a1f] border border-gray-800 text-white px-4 py-2 rounded-lg transition-colors font-bold flex items-center gap-2 disabled:opacity-50"
+                          className={`px-4 py-2 rounded-lg transition-colors font-bold flex items-center gap-2 disabled:opacity-50 ${justExported ? 'bg-green-500 text-white border border-green-400' : 'bg-[#121216] hover:bg-[#1a1a1f] border border-gray-800 text-white'}`}
                         >
-                          {isExporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
-                          Exporter
+                          {isExporting ? <Loader2 className="w-4 h-4 animate-spin" /> : justExported ? <Check className="w-4 h-4" /> : <Download className="w-4 h-4" />}
+                          {isExporting ? 'Exportation...' : justExported ? 'Exporté !' : 'Exporter'}
                         </button>
                       </div>
                       <div className="border-t border-[#1a1a2e] pt-4">

@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { RefreshCw, Download } from 'lucide-react';
+import { RefreshCw, Download, Check } from 'lucide-react';
 import { AdvancedAnalytics } from '@/components/ui/advanced-analytics';
 import { useAppStore } from '@/lib/store';
 import { useAuth } from '@/hooks/use-auth';
@@ -14,6 +14,7 @@ export default function AnalyticsPage() {
   const { signals, fetchSignals, fetchPerformance, user } = useAppStore();
   const [selectedTimeframe, setSelectedTimeframe] = useState('24H');
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [justExported, setJustExported] = useState(false);
 
   // Fetch data on mount
   useEffect(() => {
@@ -79,6 +80,8 @@ export default function AnalyticsPage() {
 
     const dateStr = new Date().toISOString().split('T')[0];
     savePDF(doc, `a2sniper-analytics-${dateStr}.pdf`, pdfUser);
+    setJustExported(true);
+    setTimeout(() => setJustExported(false), 2500);
     toast.success('Rapport PDF exporte avec succes !');
   };
 
@@ -121,9 +124,9 @@ export default function AnalyticsPage() {
 
           <button
             onClick={handleExport}
-            className="p-2.5 bg-gradient-to-r from-[#D4AF37] to-[#C5A059] text-black rounded-xl hover:from-[#C5A059] hover:to-[#D4AF37] transition-all active:scale-95"
+            className={`p-2.5 rounded-xl transition-all ${justExported ? 'bg-green-500 text-white' : 'bg-gradient-to-r from-[#D4AF37] to-[#C5A059] text-black hover:from-[#C5A059] hover:to-[#D4AF37]'} active:scale-95`}
           >
-            <Download className="w-4 h-4" />
+            {justExported ? <Check className="w-4 h-4" /> : <Download className="w-4 h-4" />}
           </button>
         </div>
       </div>

@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { Calendar, TrendingUp, TrendingDown, DollarSign, Target, PieChart, BarChart3, RefreshCw, Download, Filter, AlertCircle } from 'lucide-react';
+import { Calendar, TrendingUp, TrendingDown, DollarSign, Target, PieChart, BarChart3, RefreshCw, Download, Filter, AlertCircle, Check } from 'lucide-react';
 
 import { MetricCard } from '@/components/ui/metric-card';
 import { PerformanceChart } from '@/components/ui/performance-chart';
@@ -18,6 +18,7 @@ export default function PerformancePage() {
   const [selectedTimeframe, setSelectedTimeframe] = useState('1M');
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [justExported, setJustExported] = useState(false);
 
   // Fetch data on mount
   useEffect(() => {
@@ -272,6 +273,8 @@ export default function PerformancePage() {
 
     const dateStr = new Date().toISOString().split('T')[0];
     savePDF(doc, `a2sniper-performance-${dateStr}.pdf`, pdfUser);
+    setJustExported(true);
+    setTimeout(() => setJustExported(false), 2500);
     toast.success('Rapport PDF exporte avec succes !');
   };
 
@@ -333,9 +336,9 @@ export default function PerformancePage() {
                 
                 <button
                   onClick={handleExportPerformance}
-                  className="p-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+                  className={`p-2 rounded-lg transition-colors ${justExported ? 'bg-green-500 text-white' : 'bg-green-600 text-white hover:bg-green-700'}`}
                 >
-                  <Download className="w-5 h-5" />
+                  {justExported ? <Check className="w-5 h-5" /> : <Download className="w-5 h-5" />}
                 </button>
               </div>
             </motion.div>

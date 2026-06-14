@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { motion } from 'framer-motion';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line } from 'recharts';
-import { TrendingUp, Zap, Clock, Target, RefreshCw, Download, Loader2, AlertCircle } from 'lucide-react';
+import { TrendingUp, Zap, Clock, Target, RefreshCw, Download, Loader2, AlertCircle, Check } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAppStore } from '@/lib/store';
 import { Signal } from '@/lib/mock-data';
@@ -37,6 +37,7 @@ interface AdvancedAnalyticsProps {
 export function AdvancedAnalytics({ timeframe = '24H' }: AdvancedAnalyticsProps) {
   const { signals, fetchSignals, fetchPerformance, userStats, user } = useAppStore();
   const [isLoading, setIsLoading] = useState(true);
+  const [justExported, setJustExported] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<AnalyticsData | null>(null);
   const prevTimeframeRef = useRef<string>(timeframe);
@@ -238,6 +239,8 @@ export function AdvancedAnalytics({ timeframe = '24H' }: AdvancedAnalyticsProps)
 
     const dateStr = new Date().toISOString().split('T')[0];
     savePDF(doc, `a2sniper-advanced-analytics-${dateStr}.pdf`, pdfUser);
+    setJustExported(true);
+    setTimeout(() => setJustExported(false), 2500);
     toast.success('Rapport PDF exporte avec succes !');
   };
 
@@ -328,9 +331,9 @@ export function AdvancedAnalytics({ timeframe = '24H' }: AdvancedAnalyticsProps)
               </button>
               <button
                 onClick={handleExport}
-                className="p-2 bg-white/[0.03] border border-white/5 text-gray-400 rounded-lg hover:border-[#D4AF37]/30 hover:text-[#D4AF37] transition-all"
+                className={`p-2 rounded-lg transition-all ${justExported ? 'bg-green-500 text-white border border-green-400' : 'bg-white/[0.03] border border-white/5 text-gray-400 hover:border-[#D4AF37]/30 hover:text-[#D4AF37]'}`}
               >
-                <Download className="w-3.5 h-3.5" />
+                {justExported ? <Check className="w-3.5 h-3.5" /> : <Download className="w-3.5 h-3.5" />}
               </button>
             </div>
           </div>

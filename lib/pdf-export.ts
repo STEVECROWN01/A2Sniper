@@ -1,5 +1,5 @@
 import jsPDF from 'jspdf';
-import { A2SNIPER_LOGO_BASE64, A2SNIPER_WATERMARK_BASE64 } from './pdf-logo';
+import { A2SNIPER_LOGO_BASE64 } from './pdf-logo';
 
 // ── A2Sniper Brand Colors ──
 const BRAND = {
@@ -82,55 +82,65 @@ function drawHeaderLogo(doc: jsPDF): void {
     const logoSize = 14; // mm
     const logoX = PAGE.width - PAGE.marginR - logoSize - 2;
     const logoY = 5;
+    const cx = logoX + logoSize / 2;
+    const cy = logoY + logoSize / 2;
+    const radius = logoSize / 2;
+
+    // Save graphics state
+    doc.saveGraphicsState();
+
+    // Clip to circle
+    doc.circle(cx, cy, radius);
+    doc.clip();
 
     // White circle background behind logo (for contrast on dark header)
     doc.setFillColor(255, 255, 255);
-    doc.circle(logoX + logoSize / 2, logoY + logoSize / 2, logoSize / 2 + 0.5, 'F');
+    doc.circle(cx, cy, radius, 'F');
 
-    // Gold border around circle
+    // Add logo image filling the full circle area
+    doc.addImage(A2SNIPER_LOGO_BASE64, 'JPEG', logoX, logoY, logoSize, logoSize);
+
+    // Restore graphics state (removes clipping)
+    doc.restoreGraphicsState();
+
+    // Gold border around circle (drawn after restoring, so it's not clipped)
     doc.setDrawColor(212, 175, 55);
     doc.setLineWidth(0.5);
-    doc.circle(logoX + logoSize / 2, logoY + logoSize / 2, logoSize / 2 + 0.5, 'S');
-
-    // Add logo image
-    doc.addImage(A2SNIPER_LOGO_BASE64, 'JPEG', logoX + 1, logoY + 1, logoSize - 2, logoSize - 2);
+    doc.circle(cx, cy, radius + 0.3, 'S');
   } catch {
     // If logo fails, just skip it - text branding is still there
   }
 }
 
-/**
- * Draw the A2Sniper watermark (filigrane) in the center of the page.
- * Very subtle, semi-transparent logo in the background.
- */
-function drawWatermark(doc: jsPDF): void {
-  try {
-    const wmSize = 80; // mm
-    const wmX = (PAGE.width - wmSize) / 2;
-    const wmY = (PAGE.height - wmSize) / 2;
 
-    doc.addImage(A2SNIPER_WATERMARK_BASE64, 'PNG', wmX, wmY, wmSize, wmSize);
-  } catch {
-    // If watermark fails, just skip it
-  }
-}
 
 /**
  * Draw user avatar image in the header (next to user info) or in the user info card.
+ * Uses jsPDF clipping to properly crop the image to a circle, fully filling it.
  */
 function drawUserAvatar(doc: jsPDF, x: number, y: number, size: number, avatarBase64: string): void {
   try {
-    // White circle background
-    doc.setFillColor(255, 255, 255);
-    doc.circle(x + size / 2, y + size / 2, size / 2 + 0.3, 'F');
+    const cx = x + size / 2;
+    const cy = y + size / 2;
+    const radius = size / 2;
 
-    // Gold border
+    // Save current graphics state
+    doc.saveGraphicsState();
+
+    // Define circular clipping path
+    doc.circle(cx, cy, radius);
+    doc.clip();
+
+    // Draw the image filling the entire circle area (edge to edge, no padding)
+    doc.addImage(avatarBase64, 'JPEG', x, y, size, size);
+
+    // Restore graphics state (removes clipping)
+    doc.restoreGraphicsState();
+
+    // Gold border on top of the clipped image
     doc.setDrawColor(212, 175, 55);
-    doc.setLineWidth(0.4);
-    doc.circle(x + size / 2, y + size / 2, size / 2 + 0.3, 'S');
-
-    // Add avatar image
-    doc.addImage(avatarBase64, 'JPEG', x + 0.5, y + 0.5, size - 1, size - 1);
+    doc.setLineWidth(0.5);
+    doc.circle(cx, cy, radius + 0.3, 'S');
   } catch {
     // If avatar fails, fall back to initial letter
     drawUserAvatarFallback(doc, x, y, size, 'U');
@@ -165,9 +175,6 @@ function drawUserAvatarFallback(doc: jsPDF, x: number, y: number, size: number, 
  */
 export function createBrandedPDF(title: string, subtitle?: string, user?: PDFUserInfo): jsPDF {
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
-
-  // ── Watermark (draw first, behind everything else) ──
-  drawWatermark(doc);
 
   // ── Header band ──
   // Dark background band
@@ -302,9 +309,6 @@ export function createBrandedPDF(title: string, subtitle?: string, user?: PDFUse
  */
 export function addBrandedPage(doc: jsPDF, title?: string): void {
   doc.addPage();
-
-  // Watermark first (behind everything)
-  drawWatermark(doc);
 
   // Re-draw header
   doc.setFillColor(10, 11, 14);

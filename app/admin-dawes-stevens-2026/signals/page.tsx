@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { Search, Filter, TrendingUp, Clock, Target, RefreshCw, Download, Settings, Link2, Trash2 } from 'lucide-react';
+import { Search, Filter, TrendingUp, Clock, Target, RefreshCw, Download, Settings, Link2, Trash2, Check } from 'lucide-react';
 import { SignalCard } from '@/components/ui/signal-card';
 import { useAppStore } from '@/lib/store';
 import { tradingPairs } from '@/lib/mock-data';
@@ -24,6 +24,7 @@ export default function AdminSignalsPage() {
   const [selectedDirection, setSelectedDirection] = useState('ALL');
   const [minWinrate, setMinWinrate] = useState(0);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [justExported, setJustExported] = useState(false);
 
   const filteredSignals = useMemo(() => {
     let result = signals.filter(signal => {
@@ -158,6 +159,8 @@ export default function AdminSignalsPage() {
 
     const dateStr = new Date().toISOString().split('T')[0];
     savePDF(doc, `a2sniper-admin-signaux-${dateStr}.pdf`, pdfUser);
+    setJustExported(true);
+    setTimeout(() => setJustExported(false), 2500);
     toast.success('Rapport PDF exporte avec succes !');
   };
 
@@ -243,9 +246,9 @@ export default function AdminSignalsPage() {
           
           <button
             onClick={handleExportSignals}
-            className="p-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+            className={`p-2 rounded-lg transition-colors ${justExported ? 'bg-green-500 text-white' : 'bg-green-600 text-white hover:bg-green-700'}`}
           >
-            <Download className="w-5 h-5" />
+            {justExported ? <Check className="w-5 h-5" /> : <Download className="w-5 h-5" />}
           </button>
         </div>
       </div>

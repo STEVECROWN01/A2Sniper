@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { Bell, TrendingUp, TrendingDown, RefreshCw, Download, BarChart3, Target, DollarSign, Zap, AlertCircle, Loader2 } from 'lucide-react';
+import { Bell, TrendingUp, TrendingDown, RefreshCw, Download, BarChart3, Target, DollarSign, Zap, AlertCircle, Loader2, Check } from 'lucide-react';
 import { useAppStore } from '@/lib/store';
 import { useAuth } from '@/hooks/use-auth';
 import { createBrandedPDF, drawSectionTitle, drawStatCard, drawTable, drawUserInfoCard, savePDF, PAGE, PDFUserInfo, fetchAvatarBase64 } from '@/lib/pdf-export';
@@ -14,6 +14,7 @@ export default function DashboardPage() {
   const [gaugeValue, setGaugeValue] = useState(0);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [justExported, setJustExported] = useState(false);
   const [apiError, setApiError] = useState<string | null>(null);
   const [systemStatus, setSystemStatus] = useState<'checking' | 'online' | 'offline'>('checking');
   const [connectionStatus, setConnectionStatus] = useState<'Connected' | 'Disconnected' | 'Checking...'>('Checking...');
@@ -175,6 +176,8 @@ export default function DashboardPage() {
 
     const dateStr = new Date().toISOString().split('T')[0];
     savePDF(doc, `a2sniper-dashboard-${dateStr}.pdf`, pdfUser);
+    setJustExported(true);
+    setTimeout(() => setJustExported(false), 2500);
     toast.success('Rapport PDF exporte avec succes !');
   };
 
@@ -300,10 +303,10 @@ export default function DashboardPage() {
             </button>
             <button
               onClick={handleExport}
-              className="p-3 bg-[#0a0a0c] border border-white/5 rounded-xl hover:bg-white/[0.03] text-gray-400 hover:text-white transition-all"
-              title="Exporter en PDF"
+              className={`p-3 rounded-xl transition-all ${justExported ? 'bg-green-500 text-white' : 'bg-[#0a0a0c] border border-white/5 hover:bg-white/[0.03] text-gray-400 hover:text-white'}`}
+              title={justExported ? 'PDF exporté !' : 'Exporter en PDF'}
             >
-              <Download className="w-5 h-5" />
+              {justExported ? <Check className="w-5 h-5" /> : <Download className="w-5 h-5" />}
             </button>
           </div>
         </div>

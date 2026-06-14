@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Calendar, BarChart3, Target, DollarSign, Info, Trash2, ArrowUpRight, ArrowDownRight, AlertTriangle, Loader2, Download } from 'lucide-react';
+import { Calendar, BarChart3, Target, DollarSign, Info, Trash2, ArrowUpRight, ArrowDownRight, AlertTriangle, Loader2, Download, Check } from 'lucide-react';
 import { useAuth } from '@/hooks/use-auth';
 import { useAppStore } from '@/lib/store';
 import { toast } from 'sonner';
@@ -37,6 +37,7 @@ export default function TradingJournalPage() {
   const [sessionData, setSessionData] = useState<SessionData | null>(null);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
+  const [justExported, setJustExported] = useState(false);
 
   const loadSession = () => {
     const saved = localStorage.getItem('a2sniper_risk_session');
@@ -203,6 +204,8 @@ export default function TradingJournalPage() {
 
     const dateStr = new Date().toISOString().split('T')[0];
     savePDF(doc, `a2sniper-journal-${dateStr}.pdf`, pdfUser);
+    setJustExported(true);
+    setTimeout(() => setJustExported(false), 2500);
     toast.success('Rapport PDF du journal exporté avec succès !');
   };
 
@@ -222,9 +225,10 @@ export default function TradingJournalPage() {
           <div className="flex items-center gap-3">
             <button
               onClick={handleExportPDF}
-              className="px-6 py-2.5 bg-[#D4AF37] hover:bg-[#c5a059] rounded-xl text-xs font-black text-black flex items-center gap-2 transition-all shadow-lg shadow-[#D4AF37]/20"
+              className={`px-6 py-2.5 rounded-xl text-xs font-black flex items-center gap-2 transition-all ${justExported ? 'bg-green-500 shadow-lg shadow-green-500/20' : 'bg-[#D4AF37] hover:bg-[#c5a059] shadow-lg shadow-[#D4AF37]/20'} text-black`}
             >
-              <Download className="w-4 h-4 text-black" /> EXPORTER PDF
+              {justExported ? <Check className="w-4 h-4" /> : <Download className="w-4 h-4 text-black" />}
+              {justExported ? 'EXPORTÉ !' : 'EXPORTER PDF'}
             </button>
             <button
               onClick={handleResetJournal}

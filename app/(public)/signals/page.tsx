@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { Search, Filter, TrendingUp, Clock, Target, RefreshCw, Download, Settings, Link2 } from 'lucide-react';
+import { Search, Filter, TrendingUp, Clock, Target, RefreshCw, Download, Settings, Link2, Check } from 'lucide-react';
 import { SignalCard } from '@/components/ui/signal-card';
 import { useAppStore } from '@/lib/store';
 import { useAuth } from '@/hooks/use-auth';
@@ -35,6 +35,7 @@ export default function SignalsPage() {
   const [selectedDirection, setSelectedDirection] = useState('ALL');
   const [minWinrate, setMinWinrate] = useState(0);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [justExported, setJustExported] = useState(false);
 
   const filteredSignals = useMemo(() => {
     let result = signals.filter(signal => {
@@ -183,6 +184,8 @@ export default function SignalsPage() {
 
     const dateStr = new Date().toISOString().split('T')[0];
     savePDF(doc, `a2sniper-signaux-${dateStr}.pdf`, pdfUser);
+    setJustExported(true);
+    setTimeout(() => setJustExported(false), 2500);
     toast.success('Rapport PDF exporte avec succes !');
   };
 
@@ -242,10 +245,10 @@ export default function SignalsPage() {
                 
                 <button
                   onClick={handleExportSignals}
-                  className="p-2 bg-[#0a0a0c] text-green-500 border border-white/5 rounded-xl hover:bg-white/[0.03] transition-colors"
-                  title="Exporter les signaux"
+                  className={`p-2 rounded-xl transition-colors ${justExported ? 'bg-green-500 text-white border border-green-400' : 'bg-[#0a0a0c] text-green-500 border border-white/5 hover:bg-white/[0.03]'}`}
+                  title={justExported ? 'PDF exporté !' : 'Exporter les signaux'}
                 >
-                  <Download className="w-5 h-5" />
+                  {justExported ? <Check className="w-5 h-5" /> : <Download className="w-5 h-5" />}
                 </button>
               </div>
             </motion.div>

@@ -73,6 +73,7 @@ export default function RiskManagerPage() {
   });
   const [sessionCounter, setSessionCounter] = useState(0);
   const [isSaving, setIsSaving] = useState(false);
+  const [justExported, setJustExported] = useState(false);
   const [justSaved, setJustSaved] = useState(false);
   const [apiWinRate, setApiWinRate] = useState<number | null>(null);
 
@@ -286,6 +287,8 @@ export default function RiskManagerPage() {
 
     const dateStr = new Date().toISOString().split('T')[0];
     savePDF(doc, `a2sniper-risk-${dateStr}.pdf`, pdfUser);
+    setJustExported(true);
+    setTimeout(() => setJustExported(false), 2500);
     toast.success('Rapport PDF exporte avec succes !');
   };
 
@@ -324,9 +327,10 @@ export default function RiskManagerPage() {
               </button>
               <button
                 onClick={handleExportPDF}
-                className="px-6 py-2 bg-[#D4AF37] hover:bg-[#c5a059] rounded-xl text-xs font-black text-black flex items-center gap-2 transition-all shadow-lg shadow-[#D4AF37]/20"
+                className={`px-6 py-2 rounded-xl text-xs font-black flex items-center gap-2 transition-all ${justExported ? 'bg-green-500 shadow-lg shadow-green-500/20' : 'bg-[#D4AF37] hover:bg-[#c5a059] shadow-lg shadow-[#D4AF37]/20'} text-black`}
               >
-                <Download className="w-4 h-4 text-black" /> EXPORTER PDF
+                {justExported ? <Check className="w-4 h-4" /> : <Download className="w-4 h-4 text-black" />}
+                {justExported ? 'EXPORTÉ !' : 'EXPORTER PDF'}
               </button>
             </div>
           </div>

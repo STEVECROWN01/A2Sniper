@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Bot, Zap, TrendingUp, TrendingDown, ChevronRight, ChevronLeft, ShieldAlert, Info, BarChart4, Calculator, X, Play, RefreshCw, Trash2, Save, Download, Send } from 'lucide-react';
+import { Bot, Zap, TrendingUp, TrendingDown, ChevronRight, ChevronLeft, ShieldAlert, Info, BarChart4, Calculator, X, Play, RefreshCw, Trash2, Save, Download, Send, Check } from 'lucide-react';
 import { useAppStore } from '@/lib/store';
 import { toast } from 'sonner';
 import { tradingPairs, Signal, UserStats } from '@/lib/mock-data';
@@ -739,6 +739,7 @@ function RiskManagerPanel({ onClose }: { onClose: () => void }) {
   const [sessionCounter, setSessionCounter] = useState(0);
 
   const [isDirty, setIsDirty] = useState(false);
+  const [justExported, setJustExported] = useState(false);
   const [showUnsavedModal, setShowUnsavedModal] = useState(false);
 
   useEffect(() => {
@@ -859,6 +860,8 @@ function RiskManagerPanel({ onClose }: { onClose: () => void }) {
 
     const dateStr = new Date().toISOString().split('T')[0];
     savePDF(doc, `a2sniper-risk-telegram-${dateStr}.pdf`, pdfUser);
+    setJustExported(true);
+    setTimeout(() => setJustExported(false), 2500);
     toast.success('Rapport PDF exporte avec succes !');
   };
 
@@ -1003,8 +1006,8 @@ function RiskManagerPanel({ onClose }: { onClose: () => void }) {
         <button onClick={handleSave} className="py-3 bg-[#1a1a1e] border border-gray-800 rounded-2xl text-[10px] font-black text-white flex items-center justify-center gap-2 hover:bg-[#25252b] transition-all">
           <Save className={`w-4 h-4 ${isDirty ? 'text-yellow-500 animate-pulse' : 'text-[#D4AF37]'}`} /> SAUVEGARDER
         </button>
-        <button onClick={handleExportPDF} className="py-2 bg-[#D4AF37] hover:bg-[#c5a059] rounded-2xl text-[10px] font-black text-black flex items-center justify-center gap-2 transition-all shadow-lg shadow-[#D4AF37]/20">
-          <Download className="w-4 h-4 text-black" /> EXPORTER EN PDF
+        <button onClick={handleExportPDF} className={`py-2 rounded-2xl text-[10px] font-black text-black flex items-center justify-center gap-2 transition-all ${justExported ? 'bg-green-500 shadow-lg shadow-green-500/20' : 'bg-[#D4AF37] hover:bg-[#c5a059] shadow-lg shadow-[#D4AF37]/20'}`}>
+          {justExported ? <Check className="w-4 h-4" /> : <Download className="w-4 h-4 text-black" />} {justExported ? 'EXPORTÉ !' : 'EXPORTER EN PDF'}
         </button>
       </div>
 

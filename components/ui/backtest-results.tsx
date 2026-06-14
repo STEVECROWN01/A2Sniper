@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { motion } from 'framer-motion';
-import { X, Download, TrendingUp, TrendingDown, DollarSign, Target, Calendar, BarChart3 } from 'lucide-react';
+import { X, Download, TrendingUp, TrendingDown, DollarSign, Target, Calendar, BarChart3, Check } from 'lucide-react';
 import { BacktestResult } from '@/lib/backtesting';
 import { useAppStore } from '@/lib/store';
 import { createBrandedPDF, drawSectionTitle, drawStatCard, drawTable, drawInfoRow, drawUserInfoCard, savePDF, PAGE, checkPageBreak, PDFUserInfo, fetchAvatarBase64 } from '@/lib/pdf-export';
@@ -14,6 +14,7 @@ interface BacktestResultsProps {
 
 export function BacktestResults({ result, onClose }: BacktestResultsProps) {
   const [activeTab, setActiveTab] = useState('overview');
+  const [justExported, setJustExported] = useState(false);
 
   const handleDownload = async (format: 'pdf' | 'csv' | 'json') => {
     // Get user info for personalization from Zustand store
@@ -85,6 +86,8 @@ export function BacktestResults({ result, onClose }: BacktestResultsProps) {
 
       const dateStr = new Date().toISOString().split('T')[0];
       savePDF(doc, `a2sniper-backtest-${dateStr}.pdf`, pdfUser);
+      setJustExported(true);
+      setTimeout(() => setJustExported(false), 2500);
       return;
     }
 
@@ -152,9 +155,9 @@ export function BacktestResults({ result, onClose }: BacktestResultsProps) {
             <div className="flex items-center space-x-2">
               <button
                 onClick={() => handleDownload('pdf')}
-                className="bg-[#D4AF37] hover:bg-[#c5a059] text-black font-black uppercase tracking-wider text-[10px] px-4 py-2 rounded-xl transition-all"
+                className={`font-black uppercase tracking-wider text-[10px] px-4 py-2 rounded-xl transition-all flex items-center gap-1.5 ${justExported ? 'bg-green-500 text-white' : 'bg-[#D4AF37] hover:bg-[#c5a059] text-black'}`}
               >
-                PDF
+                {justExported ? <><Check className="w-3 h-3" /> EXPORTÉ</> : 'PDF'}
               </button>
               <button
                 onClick={() => handleDownload('csv')}
