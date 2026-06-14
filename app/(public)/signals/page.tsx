@@ -121,7 +121,7 @@ export default function SignalsPage() {
     if (result.success) {
       toast.success('Reconnexion réussie !');
     } else {
-      setConnectError(result.message || 'Reconnexion échouée — le SSID a peut-être expiré. Copiez un nouveau SSID depuis Pocket Option.');
+      setConnectError(result.message || 'Reconnexion échouée. Vérifiez que votre compte Pocket Option est toujours connecté, ou collez un nouveau SSID.');
     }
     setIsConnecting(false);
   };
@@ -313,7 +313,7 @@ export default function SignalsPage() {
 
                   <div className="flex items-center gap-4 p-4 bg-[#D4AF37]/5 border border-[#D4AF37]/10 rounded-xl text-gray-400 text-xs font-bold leading-relaxed">
                     <Target className="w-5 h-5 text-[#D4AF37] flex-shrink-0" />
-                    <p>Le SSID reste actif tant que vous ne fermez pas votre session sur Pocket Option.</p>
+                    <p>Le SSID reste actif tant que vous ne déconnectez pas votre compte Pocket Option — même si vous fermez le navigateur. Il change uniquement si vous vous déconnectez puis reconnectez sur Pocket Option.</p>
                   </div>
                 </div>
 
@@ -384,6 +384,17 @@ export default function SignalsPage() {
                         </>
                       )}
                     </button>
+
+                    {/* Quick Reconnect — uses saved SSID from localStorage */}
+                    {ssid && !isConnecting && (
+                      <button
+                        onClick={handleReconnect}
+                        className="w-full py-3 rounded-xl font-black uppercase tracking-[0.15em] text-[10px] transition-all flex items-center justify-center gap-2 bg-white/[0.03] text-gray-400 border border-white/5 hover:bg-white/[0.06] hover:text-white hover:border-[#D4AF37]/30"
+                      >
+                        <Wifi className="w-3.5 h-3.5" />
+                        Reconnecter avec le SSID sauvegardé
+                      </button>
+                    )}
                     
                     {connectError && (
                       <div className="mt-4 text-[10px] font-bold text-red-400 bg-red-500/10 p-4 rounded-xl border border-red-500/20 space-y-2">
@@ -397,7 +408,7 @@ export default function SignalsPage() {
                           rel="noopener noreferrer"
                           className="inline-block mt-1 text-[#D4AF37] underline hover:text-yellow-300 transition-colors"
                         >
-                          → Aller sur pocketoption.com pour obtenir un nouveau SSID
+                          → Aller sur pocketoption.com (si vous vous êtes déconnecté de votre compte)
                         </a>
                       </div>
                     )}

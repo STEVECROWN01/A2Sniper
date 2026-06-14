@@ -263,7 +263,7 @@ class PocketOptionScanner:
                     return True
                 else:
                     logger.error(f"[SCANNER] ❌ AUTHENTIFICATION REFUSÉE — Mode: {mode_label}")
-                    last_error = "Authentification refusée par Pocket Option — SSID invalide ou expiré"
+                    last_error = "Authentification refusée par Pocket Option — le SSID est invalide ou votre session a été déconnectée"
                     await self._close_ws()
                     continue
 

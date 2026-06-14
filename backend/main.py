@@ -1576,10 +1576,10 @@ async def connect_market(request: Request):
             "uid": payload.get("uid"),
         }
     else:
-        logger.warning(f"[MARKET] Échec de connexion — SSID potentiellement expiré")
+        logger.warning(f"[MARKET] Échec de connexion — SSID refusé par le serveur")
         raise HTTPException(
             status_code=401,
-            detail="Échec de connexion. Causes possibles : (1) SSID expiré — retournez sur pocketoption.com, actualisez la page, et copiez un nouveau SSID depuis F12 → Network → WS. (2) Session fermée sur Pocket Option. (3) Problème réseau temporaire."
+            detail="Échec de connexion. Causes possibles : (1) Votre session Pocket Option a été déconnectée — reconnectez-vous sur pocketoption.com et copiez un nouveau SSID. (2) Le SSID contient encore des caractères invisibles — essayez de le copier à nouveau proprement. (3) Problème réseau temporaire — réessayez dans quelques secondes. Note : le SSID ne change PAS tant que vous ne déconnectez pas votre compte Pocket Option."
         )
 
 @app.post("/api/market/disconnect")

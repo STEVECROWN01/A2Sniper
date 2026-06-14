@@ -86,6 +86,7 @@ interface AppState {
   lastConnectedSSID: string | null;
   reconnectAttempts: number;
   maxReconnectAttempts: number;
+  autoConnectDone: boolean;  // Track if initial auto-connect has been attempted
   
   // Actions
   setSignals: (signals: Signal[]) => void;
@@ -147,7 +148,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   clockOffset: 0,
   lastConnectedSSID: null as string | null,
   reconnectAttempts: 0,
-  maxReconnectAttempts: 5,
+  maxReconnectAttempts: 10,  // Higher limit since SSIDs are long-lived
+  autoConnectDone: false,
   
   setSignals: (signals) => set({ signals }),
   
@@ -187,13 +189,21 @@ export const useAppStore = create<AppState>((set, get) => ({
   getApiUrl: () => process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000',
 
   // Auto-reconnect using the last known SSID
+  // Pocket Option SSIDs do NOT expire as long as the user doesn't
+  // disconnect their Pocket Option account. So reconnection with a
+  // saved SSID can work for days/weeks.
   attemptReconnect: async () => {
     const state = get();
     const ssid = state.lastConnectedSSID || (typeof window !== 'undefined' ? localStorage.getItem('a2sniper_last_ssid') : null);
     
-    if (!ssid || state.reconnectAttempts >= state.maxReconnectAttempts) {
-      console.log('[RECONNECT] No SSID available or max attempts reached');
-      return { success: false, message: 'Max reconnection attempts reached' };
+    if (!ssid) {
+      console.log('[RECONNECT] No saved SSID available');
+      return { success: false, message: 'Aucun SSID sauvegardé pour la reconnexion' };
+    }
+
+    if (state.reconnectAttempts >= state.maxReconnectAttempts) {
+      console.log('[RECONNECT] Max attempts reached — reset on next page load');
+      return { success: false, message: `Limite de ${state.maxReconnectAttempts} tentatives atteinte. Rafraîchissez la page ou collez un nouveau SSID.` };
     }
 
     set({ reconnectAttempts: state.reconnectAttempts + 1 });
@@ -208,7 +218,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       return result;
     } catch (err) {
       console.error('[RECONNECT] Failed:', err);
-      return { success: false, message: 'Reconnection failed' };
+      return { success: false, message: 'Reconnexion échouée' };
     }
   },
 
@@ -421,15 +431,18 @@ export const useAppStore = create<AppState>((set, get) => ({
         });
 
         // Auto-reconnect: if we were LIVE but now disconnected, try to reconnect
+        // SSIDs are long-lived (don't expire unless user disconnects Pocket Option),
+        // so reconnecting with the saved SSID should work reliably.
         if (wasLive && !isNowLive && get().lastConnectedSSID) {
-          console.log('[SESSION] Connection lost — attempting auto-reconnect...');
-          // Delay the reconnect attempt to avoid rapid retry loops
+          console.log('[SESSION] Connection lost — attempting auto-reconnect with saved SSID...');
+          // Progressive delay: 3s first attempt, then 5s, 8s, etc.
+          const delay = Math.min(3000 + (get().reconnectAttempts * 2000), 15000);
           setTimeout(async () => {
             const state = get();
             if (state.liveStatus === 'DISCONNECTED' && state.lastConnectedSSID && state.reconnectAttempts < state.maxReconnectAttempts) {
               await state.attemptReconnect();
             }
-          }, 3000);
+          }, delay);
         }
       }
     } catch (err) {
@@ -452,6 +465,34 @@ export const useAppStore = create<AppState>((set, get) => ({
           await get().fetchSignals();
           await get().fetchPerformance();
           await get().fetchMarketStatus();
+
+          // Auto-connect on page load: if we have a saved SSID but aren't connected,
+          // try to reconnect automatically. SSIDs don't expire (unless user
+          // disconnects Pocket Option), so this is safe and reliable.
+          const savedSSID = typeof window !== 'undefined' ? localStorage.getItem('a2sniper_last_ssid') : null;
+          if (savedSSID && !get().autoConnectDone) {
+            set({ autoConnectDone: true, lastConnectedSSID: savedSSID });
+            // Check market status first — if already connected, skip
+            const statusRes = await fetch(`${url}/api/market/status`, {
+              headers: { 'Authorization': `Bearer ${token}` }
+            });
+            if (statusRes.ok) {
+              const statusData = await statusRes.json();
+              if (!statusData.is_connected) {
+                console.log('[INIT] Auto-connecting with saved SSID...');
+                // Non-blocking: don't await, let it connect in background
+                get().attemptReconnect().then(result => {
+                  if (result.success) {
+                    console.log('[INIT] Auto-connect successful');
+                  } else {
+                    console.log('[INIT] Auto-connect failed — user can connect manually');
+                  }
+                });
+              } else {
+                console.log('[INIT] Already connected to market');
+              }
+            }
+          }
           return;
         } else {
           // Token was rejected by server — clear it (could be revoked or expired server-side)

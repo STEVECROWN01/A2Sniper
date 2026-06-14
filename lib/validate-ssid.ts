@@ -215,7 +215,7 @@ export function validateSSID(ssid: string): SSIDValidationResult {
     const modeLabel = isDemoAccount ? 'COMPTE DÉMO' : 'COMPTE RÉEL';
     return {
       status: 'valid',
-      message: `Format WS valide — ${modeLabel} (uid: ${payload.uid}) — Connexion optimale`,
+      message: `Format WS valide — ${modeLabel} (uid: ${payload.uid}) — Le SSID reste actif tant que vous ne déconnectez pas votre compte Pocket Option`,
       normalized: trimmed,
       details
     };
