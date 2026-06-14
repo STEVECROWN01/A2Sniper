@@ -1339,6 +1339,24 @@ async def get_performance():
     return monitor.get_performance_dashboard()
 
 
+@app.post("/api/risk/settings")
+async def save_risk_settings(request: Request, credentials: HTTPAuthorizationCredentials = Security(security)):
+    """Save user's risk manager settings."""
+    token = credentials.credentials
+    payload = decode_token(token)
+    user_id = payload.get("sub")
+
+    try:
+        data = await request.json()
+        # For now, acknowledge the save — settings are stored client-side in localStorage
+        # This endpoint can be extended later to persist settings in the database
+        logger.info(f"[Risk] Settings saved for user {user_id}: capital={data.get('initial_capital')}, payout={data.get('payout')}")
+        return {"detail": "Risk settings saved successfully"}
+    except Exception as e:
+        logger.error(f"[Risk] Error saving settings for user {user_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to save risk settings")
+
+
 @app.get("/api/status")
 async def get_status():
     # Calculate average latency from recent samples

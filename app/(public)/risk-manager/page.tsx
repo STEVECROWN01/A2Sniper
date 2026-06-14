@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useMemo, useEffect } from 'react';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 
 import { 
   Calculator, 
@@ -141,32 +141,18 @@ export default function RiskManagerPage() {
     localStorage.setItem('a2sniper_risk_trades', JSON.stringify(newTrades));
   };
 
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
+
   const clearSession = () => {
-    toast.custom((t) => (
-      <div className="bg-[#0a0a0c] border border-red-500/30 p-6 rounded-2xl shadow-xl max-w-sm">
-        <p className="text-white font-bold mb-4">Voulez-vous vraiment réinitialiser la session actuelle ?</p>
-        <div className="flex gap-3">
-          <button
-            onClick={() => {
-              setTrades(Array(10).fill({ result: '', amount: 0, return: 0 }));
-              setSessionCounter(0);
-              localStorage.removeItem('a2sniper_risk_trades');
-              toast.success("Session réinitialisée");
-              toast.dismiss(t);
-            }}
-            className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg font-bold text-xs hover:bg-red-700 transition-colors"
-          >
-            Confirmer
-          </button>
-          <button
-            onClick={() => toast.dismiss(t)}
-            className="flex-1 px-4 py-2 bg-gray-800 text-gray-300 rounded-lg font-bold text-xs hover:bg-gray-700 transition-colors"
-          >
-            Annuler
-          </button>
-        </div>
-      </div>
-    ), { duration: Infinity });
+    setShowResetConfirm(true);
+  };
+
+  const confirmClearSession = () => {
+    setTrades(Array(10).fill({ result: '', amount: 0, return: 0 }));
+    setSessionCounter(0);
+    localStorage.removeItem('a2sniper_risk_trades');
+    setShowResetConfirm(false);
+    toast.success("Session réinitialisée");
   };
 
   const handleSave = async () => {
@@ -188,20 +174,22 @@ export default function RiskManagerPage() {
         }),
       });
       if (res.ok) {
-        toast.success('Paramètres sauvegardés avec succès !');
-      } else {
-        // Save locally even if API fails
+        // Also save locally as backup
         localStorage.setItem('a2sniper_risk_capital', String(initialCapital));
         localStorage.setItem('a2sniper_risk_payout', String(payout));
         localStorage.setItem('a2sniper_risk_trades', JSON.stringify(trades));
-        toast.success('Paramètres sauvegardés localement.');
+        toast.success('Paramètres sauvegardés avec succès !');
+      } else {
+        localStorage.setItem('a2sniper_risk_capital', String(initialCapital));
+        localStorage.setItem('a2sniper_risk_payout', String(payout));
+        localStorage.setItem('a2sniper_risk_trades', JSON.stringify(trades));
+        toast.success('Sauvegardé localement (serveur indisponible).');
       }
     } catch {
-      // Save locally when API is unavailable
       localStorage.setItem('a2sniper_risk_capital', String(initialCapital));
       localStorage.setItem('a2sniper_risk_payout', String(payout));
       localStorage.setItem('a2sniper_risk_trades', JSON.stringify(trades));
-      toast.success('Paramètres sauvegardés localement (API indisponible).');
+      toast.success('Sauvegardé localement (serveur indisponible).');
     } finally {
       setIsSaving(false);
     }
@@ -495,6 +483,49 @@ export default function RiskManagerPage() {
 
             </div>
           </div>
+
+          {/* Reset Confirmation Dialog */}
+          <AnimatePresence>
+            {showResetConfirm && (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4"
+                onClick={() => setShowResetConfirm(false)}
+              >
+                <motion.div
+                  initial={{ scale: 0.9, opacity: 0 }}
+                  animate={{ scale: 1, opacity: 1 }}
+                  exit={{ scale: 0.9, opacity: 0 }}
+                  className="bg-[#0A0B0E] border border-red-500/30 rounded-2xl p-8 max-w-md w-full"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <div className="flex items-center gap-3 mb-4">
+                    <AlertTriangle className="w-6 h-6 text-red-500" />
+                    <h3 className="text-lg font-bold text-white">Réinitialiser la session</h3>
+                  </div>
+                  <p className="text-sm text-gray-400 mb-6">
+                    Voulez-vous vraiment réinitialiser la session actuelle ? Toutes les données de trading seront effacées.
+                  </p>
+                  <div className="flex gap-3">
+                    <button
+                      onClick={confirmClearSession}
+                      className="flex-1 bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg font-bold transition-colors"
+                    >
+                      Confirmer
+                    </button>
+                    <button
+                      onClick={() => setShowResetConfirm(false)}
+                      className="flex-1 bg-gray-800 hover:bg-gray-700 text-gray-300 px-4 py-2 rounded-lg font-bold transition-colors"
+                    >
+                      Annuler
+                    </button>
+                  </div>
+                </motion.div>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
   );
 }
