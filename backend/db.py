@@ -75,17 +75,18 @@ class User(Base):
     full_name = Column(String)
     is_active = Column(Boolean, default=True)
     is_admin = Column(Boolean, default=False)
-    created_at = Column(DateTime)
-    subscription = relationship("UserSubscription", backref="user", uselist=False, cascade="all, delete-orphan")
+    created_at = Column(DateTime(timezone=True))
+    subscription = relationship("UserSubscription", back_populates="user", uselist=False, cascade="all, delete-orphan")
 
 class UserSubscription(Base):
     """Gestion des plans utilisateurs."""
     __tablename__ = "subscriptions"
 
-    user_id = Column(String, primary_key=True, index=True, nullable=False)
+    user_id = Column(String, ForeignKey("users.id"), primary_key=True, index=True, nullable=False)
     plan_name = Column(String, default="Standard", nullable=False)
-    active_until = Column(DateTime)
+    active_until = Column(DateTime(timezone=True))
     telegram_chat_id = Column(String, nullable=True)
+    user = relationship("User", back_populates="subscription")
 
 class SystemLog(Base):
     """Logs système pour audit PDF mensuel."""

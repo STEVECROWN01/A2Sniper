@@ -715,24 +715,24 @@ async def request_live_signal(request: Request, credentials: HTTPAuthorizationCr
     try:
         data = await request.json()
     except Exception:
-        raise HTTPException(status_code=400, detail="Corps de requête invalide")
+        raise HTTPException(status_code=400, detail="Invalid request body")
     
     pair = data.get("pair")
     if not pair:
-        raise HTTPException(status_code=400, detail="Paire requise")
+        raise HTTPException(status_code=400, detail="Pair required")
     
     # Validate pair is in OTC_PAIRS
     if pair not in OTC_PAIRS:
-        raise HTTPException(status_code=400, detail=f"Paire invalide. Paires supportées: {', '.join(OTC_PAIRS)}")
+        raise HTTPException(status_code=400, detail=f"Invalid pair. Supported pairs: {', '.join(OTC_PAIRS)}")
         
     if not po_scanner.is_connected:
-        raise HTTPException(status_code=400, detail="Le scanner A2Sniper n'est pas connecté au marché réel.")
+        raise HTTPException(status_code=400, detail="A2Sniper scanner is not connected to the live market.")
 
     signal = await analyze_pair(pair)
     if signal:
         return {"status": "success", "signal": signal}
     else:
-        raise HTTPException(status_code=500, detail="Impossible de générer le signal. Le marché ne remplit pas les critères de sécurité ou la connexion est inactive.")
+        raise HTTPException(status_code=500, detail="Unable to generate signal. Market does not meet safety criteria or connection is inactive.")
 
 
 @app.get("/api/signals")
@@ -840,17 +840,17 @@ async def register(request: Request, rate_limit: None = Depends(lambda req: chec
     full_name = data.get("name")
     
     if not email or not password:
-        raise HTTPException(status_code=400, detail="Email et mot de passe requis")
+        raise HTTPException(status_code=400, detail="Email and password required")
         
     from auth import validate_password_strength, MIN_PASSWORD_LENGTH
     if not validate_password_strength(password):
-        raise HTTPException(status_code=400, detail=f"Le mot de passe doit contenir au moins {MIN_PASSWORD_LENGTH} caractères, dont 1 majuscule, 1 chiffre et 1 caractère spécial")
+        raise HTTPException(status_code=400, detail=f"Password must be at least {MIN_PASSWORD_LENGTH} characters with 1 uppercase, 1 digit, and 1 special character")
         
     async with AsyncSessionLocal() as session:
         # Vérifier si l'utilisateur existe déjà
         result = await session.execute(select(User).where(User.email == email))
         if result.scalar_one_or_none():
-            raise HTTPException(status_code=400, detail="Email déjà utilisé")
+            raise HTTPException(status_code=400, detail="Email already in use")
             
         user_id = str(uuid.uuid4())
         new_user = User(
@@ -885,7 +885,7 @@ async def login(request: Request, rate_limit: None = Depends(lambda req: check_r
         user = result.scalar_one_or_none()
         
         if not user or not verify_password(password, user.hashed_password):
-            raise HTTPException(status_code=401, detail="Email ou mot de passe incorrect")
+            raise HTTPException(status_code=401, detail="Invalid email or password")
             
         token = create_access_token({"sub": user.id, "email": user.email})
         
@@ -926,16 +926,16 @@ async def auth_google(request: Request):
                 token_data = token_resp.json()
                 access_token = token_data.get("access_token")
                 if not access_token:
-                    raise HTTPException(status_code=400, detail="Impossible d'obtenir le token Google")
+                    raise HTTPException(status_code=400, detail="Failed to obtain Google access token")
         except httpx.HTTPStatusError as e:
             logger.error(f"Google Code Exchange Error: {e.response.text}")
-            raise HTTPException(status_code=400, detail="Code d'autorisation Google invalide ou expiré")
+            raise HTTPException(status_code=400, detail="Invalid or expired Google authorization code")
         except Exception as e:
             logger.error(f"Google Code Exchange Error: {e}")
-            raise HTTPException(status_code=400, detail="Erreur lors de l'échange du code Google")
+            raise HTTPException(status_code=400, detail="Error exchanging Google authorization code")
     
     if not access_token:
-        raise HTTPException(status_code=400, detail="Access token ou code d'autorisation requis")
+        raise HTTPException(status_code=400, detail="Access token or authorization code required")
     
     import httpx
     try:
@@ -948,52 +948,76 @@ async def auth_google(request: Request):
             user_info = resp.json()
     except Exception as e:
         logger.error(f"Google Token Verification Error: {e}")
-        raise HTTPException(status_code=400, detail="Token Google invalide ou expiré")
+        raise HTTPException(status_code=400, detail="Invalid or expired Google token")
         
     email = user_info.get("email")
     full_name = user_info.get("name", "Google Sniper")
     
     if not email:
-        raise HTTPException(status_code=400, detail="Email non fourni par Google")
+        raise HTTPException(status_code=400, detail="Email not provided by Google")
         
-    async with AsyncSessionLocal() as session:
-        result = await session.execute(select(User).where(User.email == email))
-        user = result.scalar_one_or_none()
-        
-        if not user:
-            # Auto-register Google user
-            user_id = str(uuid.uuid4())
-            user = User(
-                id=user_id,
-                email=email,
-                hashed_password=get_password_hash(str(uuid.uuid4())), # random password
-                full_name=full_name,
-                created_at=datetime.now(timezone.utc)
-            )
-            session.add(user)
-            
-            sub = UserSubscription(
-                user_id=user_id,
-                plan_name="Standard",
-                active_until=datetime.now(timezone.utc) + timedelta(days=7)
-            )
-            session.add(sub)
-            await session.commit()
-            
-            result = await session.execute(select(User).where(User.id == user_id))
+    try:
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(select(User).where(User.email == email))
             user = result.scalar_one_or_none()
             
-        token = create_access_token({"sub": user.id, "email": user.email})
-        
-        return {
-            "status": "success",
-            "token": token,
-            "user": {
-                "id": user.id,
-                "email": user.email,
-                "name": user.full_name
+            if not user:
+                # Auto-register Google user
+                import secrets as _secrets
+                user_id = str(uuid.uuid4())
+                random_pwd = _secrets.token_hex(16)  # 32-char hex, well within bcrypt 72-byte limit
+                
+                logger.info(f"[Google Auth] Creating new user for email: {email}, pwd_len: {len(random_pwd)}")
+                
+                try:
+                    hashed = get_password_hash(random_pwd)
+                except Exception as he:
+                    logger.error(f"[Google Auth] bcrypt hashing failed even with short pwd: {type(he).__name__}: {he}")
+                    hashed = f"google_oauth_no_password_{user_id}"
+                
+                now_utc = datetime.now(timezone.utc)
+                user = User(
+                    id=user_id,
+                    email=email,
+                    hashed_password=hashed,
+                    full_name=full_name,
+                    created_at=now_utc
+                )
+                session.add(user)
+                
+                sub = UserSubscription(
+                    user_id=user_id,
+                    plan_name="Standard",
+                    active_until=now_utc + timedelta(days=7)
+                )
+                session.add(sub)
+                await session.commit()
+                
+                result = await session.execute(select(User).where(User.id == user_id))
+                user = result.scalar_one_or_none()
+            
+            if not user:
+                logger.error(f"[Google Auth] User not found after creation for email: {email}")
+                raise HTTPException(status_code=500, detail="Failed to create or find user account")
+                
+            token = create_access_token({"sub": user.id, "email": user.email})
+            
+            return {
+                "status": "success",
+                "token": token,
+                "user": {
+                    "id": user.id,
+                    "email": user.email,
+                    "name": user.full_name
+                }
             }
-        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        logger.error(f"[Google Auth] Database error during user lookup/creation: {type(e).__name__}: {e}")
+        logger.error(f"[Google Auth] Full traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Internal error during sign-in: {type(e).__name__}: {str(e)[:150]}")
 
 
 async def send_otp_email(recipient_email: str, otp_code: str):
@@ -1056,7 +1080,7 @@ async def forgot_password(request: Request, rate_limit: None = Depends(lambda re
     email = data.get("email")
     
     if not email:
-        raise HTTPException(status_code=400, detail="Email requis")
+        raise HTTPException(status_code=400, detail="Email required")
         
     async with AsyncSessionLocal() as session:
         result = await session.execute(select(User).where(User.email == email))
@@ -1102,7 +1126,7 @@ async def verify_otp(request: Request, rate_limit: None = Depends(lambda req: ch
     otp_code = data.get("otp_code")
     
     if not email or not otp_code:
-        raise HTTPException(status_code=400, detail="Email et code OTP requis")
+        raise HTTPException(status_code=400, detail="Email and OTP code required")
     
     # Brute force protection: max 5 attempts per email
     from db import otp_attempt_tracker
@@ -1126,7 +1150,7 @@ async def verify_otp(request: Request, rate_limit: None = Depends(lambda req: ch
                 otp_attempt_tracker[email] = {"count": 0, "last_attempt": now}
             otp_attempt_tracker[email]["count"] += 1
             otp_attempt_tracker[email]["last_attempt"] = now
-            raise HTTPException(status_code=400, detail="Code OTP invalide")
+            raise HTTPException(status_code=400, detail="Invalid OTP code")
             
         # Reset tracker on successful verification
         if email in otp_attempt_tracker:
@@ -1136,9 +1160,9 @@ async def verify_otp(request: Request, rate_limit: None = Depends(lambda req: ch
         expires_at = otp_record.expires_at.replace(tzinfo=timezone.utc) if otp_record.expires_at.tzinfo is None else otp_record.expires_at
         
         if now_utc > expires_at:
-            raise HTTPException(status_code=400, detail="Ce code OTP a expiré")
+            raise HTTPException(status_code=400, detail="This OTP code has expired")
             
-        return {"status": "success", "message": "Code OTP vérifié avec succès"}
+        return {"status": "success", "message": "OTP code verified successfully"}
 
 @app.post("/api/auth/reset-password")
 async def reset_password(request: Request):
@@ -1148,7 +1172,7 @@ async def reset_password(request: Request):
     new_password = data.get("new_password")
     
     if not email or not otp_code or not new_password:
-        raise HTTPException(status_code=400, detail="Toutes les informations sont requises")
+        raise HTTPException(status_code=400, detail="All fields are required")
         
     async with AsyncSessionLocal() as session:
         # Re-vérifier l'OTP
@@ -1160,24 +1184,24 @@ async def reset_password(request: Request):
         otp_record = result.scalar_one_or_none()
         
         if not otp_record:
-            raise HTTPException(status_code=400, detail="Code OTP invalide")
+            raise HTTPException(status_code=400, detail="Invalid OTP code")
             
         now = datetime.now(timezone.utc)
         expires_at = otp_record.expires_at.replace(tzinfo=timezone.utc) if otp_record.expires_at.tzinfo is None else otp_record.expires_at
         
         if now > expires_at:
-            raise HTTPException(status_code=400, detail="Ce code OTP a expiré")
+            raise HTTPException(status_code=400, detail="This OTP code has expired")
         
         # Validate new password strength
         from auth import validate_password_strength, MIN_PASSWORD_LENGTH
         if not validate_password_strength(new_password):
-            raise HTTPException(status_code=400, detail=f"Le mot de passe doit contenir au moins {MIN_PASSWORD_LENGTH} caractères, dont 1 majuscule, 1 chiffre et 1 caractère spécial")
+            raise HTTPException(status_code=400, detail=f"Password must be at least {MIN_PASSWORD_LENGTH} characters with 1 uppercase, 1 digit, and 1 special character")
             
         # Mettre à jour le mot de passe
         result = await session.execute(select(User).where(User.email == email))
         user = result.scalar_one_or_none()
         if not user:
-            raise HTTPException(status_code=404, detail="Utilisateur non trouvé")
+            raise HTTPException(status_code=404, detail="User not found")
             
         user.hashed_password = get_password_hash(new_password)
         
@@ -1213,7 +1237,7 @@ async def get_me(credentials: HTTPAuthorizationCredentials = Security(security))
         result = await session.execute(select(User).where(User.id == user_id))
         user = result.scalar_one_or_none()
         if not user:
-            raise HTTPException(status_code=404, detail="Utilisateur non trouvé")
+            raise HTTPException(status_code=404, detail="User not found")
             
         return {
             "id": user.id,
@@ -1337,15 +1361,15 @@ async def connect_market(request: Request):
     try:
         data = await request.json()
     except Exception:
-        raise HTTPException(status_code=400, detail="Corps de requête invalide")
+        raise HTTPException(status_code=400, detail="Invalid request body")
     
     ssid = data.get("ssid")
     if not ssid:
-        raise HTTPException(status_code=400, detail="SSID requis")
+        raise HTTPException(status_code=400, detail="SSID required")
     
     ssid_strip = ssid.strip()
     if not ssid_strip.startswith('42["auth"'):
-        raise HTTPException(status_code=400, detail="Format invalide. Le message doit commencer par 42[\"auth\",{...}].")
+        raise HTTPException(status_code=400, detail="Invalid format. Message must start with 42[\"auth\",{...}].")
     
     try:
         json_start = ssid_strip.find("{")
@@ -1353,19 +1377,19 @@ async def connect_market(request: Request):
         if json_start != -1 and json_end > json_start:
             payload = json.loads(ssid_strip[json_start:json_end])
             if "session" not in payload:
-                raise HTTPException(status_code=400, detail="Format non supporté. Veuillez copier la trame contenant \"session\".")
+                raise HTTPException(status_code=400, detail="Unsupported format. Please copy the frame containing \"session\".")
         else:
-            raise HTTPException(status_code=400, detail="Format JSON de la trame invalide.")
+            raise HTTPException(status_code=400, detail="Invalid frame JSON format.")
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Erreur de lecture de la trame: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Frame parsing error: {str(e)}")
 
     success = await po_scanner.connect(ssid_strip)
     logger.info(f"[MARKET] Connexion effectuée (SSID: {ssid[:5]}...)")
         
     if success:
-        return {"status": "success", "message": "Connecté au marché"}
+        return {"status": "success", "message": "Connected to market"}
     else:
-        raise HTTPException(status_code=401, detail="Échec de la connexion. Vérifiez que votre SSID est frais et valide.")
+        raise HTTPException(status_code=401, detail="Connection failed. Please ensure your SSID is fresh and valid.")
 
 @app.post("/api/market/disconnect")
 async def disconnect_market():

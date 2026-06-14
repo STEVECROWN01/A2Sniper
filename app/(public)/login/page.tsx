@@ -83,13 +83,13 @@ export default function LoginPage() {
         router.push('/dashboard');
       } else {
         if (res.status === 401) {
-          setError("Compte introuvable ou mot de passe incorrect. (Si vous venez de redémarrer le serveur, vos données locales ont été réinitialisées : veuillez vous réinscrire en cliquant ci-dessous !)");
+          setError("Account not found or incorrect password. (If the server was recently restarted, local data may have been reset. Please sign up again!)");
         } else {
-          setError(data.detail || "Email ou mot de passe incorrect");
+          setError(data.detail || 'Invalid email or password');
         }
       }
     } catch (err) {
-      setError('Erreur réseau. Veuillez vérifier que le serveur est bien démarré.');
+      setError('Network error. Please check that the server is running.');
     } finally {
       setIsLoading(false);
     }
@@ -110,10 +110,10 @@ export default function LoginPage() {
       if (res.ok) {
         setStep('FORGOT_OTP');
       } else {
-        setError(data.detail || "Erreur lors de l'envoi");
+        setError(data.detail || 'Error sending reset code');
       }
     } catch (err) {
-      setError('Erreur réseau.');
+      setError('Network error.');
     } finally {
       setIsLoading(false);
     }
@@ -134,10 +134,10 @@ export default function LoginPage() {
       if (res.ok) {
         setStep('FORGOT_NEW_PWD');
       } else {
-        setError(data.detail || "Code OTP invalide");
+        setError(data.detail || 'Invalid OTP code');
       }
     } catch (err) {
-      setError('Erreur réseau.');
+      setError('Network error.');
     } finally {
       setIsLoading(false);
     }
@@ -146,7 +146,7 @@ export default function LoginPage() {
   const handleNewPasswordSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (newPassword !== confirmPassword) {
-      setError("Les mots de passe ne correspondent pas");
+      setError("Passwords do not match");
       return;
     }
     
@@ -161,15 +161,15 @@ export default function LoginPage() {
       });
       const data = await res.json();
       if (res.ok) {
-        setSuccessMsg("Mot de passe modifié avec succès !");
+        setSuccessMsg("Password updated successfully!");
         setStep('LOGIN');
         setEmail(forgotEmail);
         setPassword('');
       } else {
-        setError(data.detail || "Erreur lors de la réinitialisation");
+        setError(data.detail || 'Error during password reset');
       }
     } catch (err) {
-      setError('Erreur réseau.');
+      setError('Network error.');
     } finally {
       setIsLoading(false);
     }
@@ -187,7 +187,7 @@ export default function LoginPage() {
     setSuccessMsg('');
   };
 
-  // Formulaire de connexion standard
+  // Standard login form
   const renderLogin = () => (
     <motion.div
       key="LOGIN"
@@ -213,7 +213,7 @@ export default function LoginPage() {
         </div>
 
         <div>
-          <label className="text-[10px] font-black text-gray-500 uppercase tracking-[0.2em] mb-2 block">Mot de passe</label>
+          <label className="text-[10px] font-black text-gray-500 uppercase tracking-[0.2em] mb-2 block">Password</label>
           <div className="relative">
             <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
             <input
@@ -239,7 +239,7 @@ export default function LoginPage() {
               onClick={() => setStep('FORGOT_EMAIL')}
               className="text-[10px] text-gray-400 hover:text-[#D4AF37] transition-colors"
             >
-              Mot de passe oublié ?
+              Forgot password?
             </button>
           </div>
         </div>
@@ -260,7 +260,7 @@ export default function LoginPage() {
           disabled={isLoading}
           className="w-full bg-gradient-to-r from-[#D4AF37] to-[#C5A059] hover:from-[#c5a059] hover:to-[#D4AF37] text-black py-4 rounded-xl font-black uppercase text-xs tracking-[0.2em] transition-all duration-300 disabled:opacity-50 flex items-center justify-center gap-2 shadow-[0_0_20px_rgba(212,175,55,0.2)] active:scale-[0.98]"
         >
-          {isLoading ? 'Connexion...' : 'Se connecter'}
+          {isLoading ? 'Signing in...' : 'Sign In'}
           <ArrowRight className="w-4 h-4 text-black" />
         </button>
       </form>
@@ -270,7 +270,7 @@ export default function LoginPage() {
           <div className="w-full border-t border-white/5"></div>
         </div>
         <div className="relative flex justify-center text-[10px] uppercase">
-          <span className="bg-[#0a0a0c] px-3 text-gray-500 font-bold tracking-widest">OU</span>
+          <span className="bg-[#0a0a0c] px-3 text-gray-500 font-bold tracking-widest">OR</span>
         </div>
       </div>
 
@@ -290,19 +290,19 @@ export default function LoginPage() {
             <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" fill="#EA4335" />
           </svg>
         )}
-        {isGoogleLoading ? 'Redirection vers Google...' : "Continuer avec Google"}
+        {isGoogleLoading ? 'Redirecting to Google...' : 'Continue with Google'}
       </button>
 
       <p className="mt-8 text-center text-gray-500 text-xs font-bold uppercase tracking-wider">
-        Pas encore de compte ?{' '}
+        Don&apos;t have an account?{' '}
         <Link href="/signup" className="text-[#D4AF37] hover:text-[#F3E5AB] transition-colors ml-1">
-          S'inscrire gratuitement
+          Sign up free
         </Link>
       </p>
     </motion.div>
   );
 
-  // Formulaire d'envoi d'email pour l'OTP
+  // Forgot password - email form
   const renderForgotEmail = () => (
     <motion.div
       key="FORGOT_EMAIL"
@@ -313,15 +313,15 @@ export default function LoginPage() {
     >
       <div className="mb-6">
         <button onClick={resetFlow} className="flex items-center gap-2 text-gray-400 hover:text-white transition-colors text-xs font-bold">
-          <ArrowLeft className="w-3 h-3" /> Retour
+          <ArrowLeft className="w-3 h-3" /> Back
         </button>
       </div>
-      <h2 className="text-xl font-bold text-white mb-2">Mot de passe oublié</h2>
-      <p className="text-gray-400 text-sm mb-6">Saisissez votre email pour recevoir un code de réinitialisation.</p>
+      <h2 className="text-xl font-bold text-white mb-2">Forgot Password</h2>
+      <p className="text-gray-400 text-sm mb-6">Enter your email to receive a reset code.</p>
 
       <form onSubmit={handleForgotEmailSubmit} className="space-y-5">
         <div>
-          <label className="text-[10px] font-black text-gray-500 uppercase tracking-[0.2em] mb-2 block">Email du compte</label>
+          <label className="text-[10px] font-black text-gray-500 uppercase tracking-[0.2em] mb-2 block">Account Email</label>
           <div className="relative">
             <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
             <input
@@ -329,7 +329,7 @@ export default function LoginPage() {
               value={forgotEmail}
               onChange={(e) => setForgotEmail(e.target.value)}
               className="w-full bg-white/[0.02] border border-white/5 rounded-xl py-3.5 pl-12 pr-4 text-white focus:border-[#D4AF37] focus:bg-white/[0.04] outline-none transition-all text-sm font-semibold"
-              placeholder="votre@email.com"
+              placeholder="your@email.com"
               required
             />
           </div>
@@ -346,14 +346,14 @@ export default function LoginPage() {
           disabled={isLoading || !forgotEmail}
           className="w-full bg-gradient-to-r from-[#D4AF37] to-[#C5A059] hover:from-[#c5a059] hover:to-[#D4AF37] text-black py-4 rounded-xl font-black uppercase text-xs tracking-[0.2em] transition-all duration-300 disabled:opacity-50 flex items-center justify-center gap-2"
         >
-          {isLoading ? 'Envoi...' : 'Envoyer le code'}
+          {isLoading ? 'Sending...' : 'Send Code'}
           <ArrowRight className="w-4 h-4 text-black" />
         </button>
       </form>
     </motion.div>
   );
 
-  // Formulaire de saisie du code OTP
+  // OTP verification form
   const renderOtp = () => (
     <motion.div
       key="FORGOT_OTP"
@@ -364,15 +364,15 @@ export default function LoginPage() {
     >
       <div className="mb-6">
         <button onClick={() => setStep('FORGOT_EMAIL')} className="flex items-center gap-2 text-gray-400 hover:text-white transition-colors text-xs font-bold">
-          <ArrowLeft className="w-3 h-3" /> Modifier l'email
+          <ArrowLeft className="w-3 h-3" /> Change email
         </button>
       </div>
-      <h2 className="text-xl font-bold text-white mb-2">Vérification OTP</h2>
-      <p className="text-gray-400 text-sm mb-6">Nous avons envoyé un code à 6 chiffres à <strong>{forgotEmail}</strong>.</p>
+      <h2 className="text-xl font-bold text-white mb-2">OTP Verification</h2>
+      <p className="text-gray-400 text-sm mb-6">We sent a 6-digit code to <strong>{forgotEmail}</strong>.</p>
 
       <form onSubmit={handleOtpSubmit} className="space-y-5">
         <div>
-          <label className="text-[10px] font-black text-gray-500 uppercase tracking-[0.2em] mb-2 block">Code à 6 chiffres</label>
+          <label className="text-[10px] font-black text-gray-500 uppercase tracking-[0.2em] mb-2 block">6-Digit Code</label>
           <div className="relative">
             <KeyRound className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
             <input
@@ -398,14 +398,14 @@ export default function LoginPage() {
           disabled={isLoading || otpCode.length !== 6}
           className="w-full bg-gradient-to-r from-[#D4AF37] to-[#C5A059] hover:from-[#c5a059] hover:to-[#D4AF37] text-black py-4 rounded-xl font-black uppercase text-xs tracking-[0.2em] transition-all duration-300 disabled:opacity-50 flex items-center justify-center gap-2"
         >
-          {isLoading ? 'Vérification...' : 'Vérifier le code'}
+          {isLoading ? 'Verifying...' : 'Verify Code'}
           <ArrowRight className="w-4 h-4 text-black" />
         </button>
       </form>
     </motion.div>
   );
 
-  // Formulaire de nouveau mot de passe
+  // New password form
   const renderNewPassword = () => (
     <motion.div
       key="FORGOT_NEW_PWD"
@@ -414,12 +414,12 @@ export default function LoginPage() {
       exit={{ opacity: 0, x: -20 }}
       transition={{ duration: 0.3 }}
     >
-      <h2 className="text-xl font-bold text-white mb-2">Nouveau mot de passe</h2>
-      <p className="text-gray-400 text-sm mb-6">Choisissez un nouveau mot de passe sécurisé.</p>
+      <h2 className="text-xl font-bold text-white mb-2">New Password</h2>
+      <p className="text-gray-400 text-sm mb-6">Choose a new secure password.</p>
 
       <form onSubmit={handleNewPasswordSubmit} className="space-y-5">
         <div>
-          <label className="text-[10px] font-black text-gray-500 uppercase tracking-[0.2em] mb-2 block">Nouveau mot de passe</label>
+          <label className="text-[10px] font-black text-gray-500 uppercase tracking-[0.2em] mb-2 block">New Password</label>
           <div className="relative">
             <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
             <input
@@ -443,7 +443,7 @@ export default function LoginPage() {
         </div>
 
         <div>
-          <label className="text-[10px] font-black text-gray-500 uppercase tracking-[0.2em] mb-2 block">Confirmer</label>
+          <label className="text-[10px] font-black text-gray-500 uppercase tracking-[0.2em] mb-2 block">Confirm Password</label>
           <div className="relative">
             <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
             <input
@@ -468,7 +468,7 @@ export default function LoginPage() {
           disabled={isLoading || !newPassword || !confirmPassword}
           className="w-full bg-gradient-to-r from-[#D4AF37] to-[#C5A059] hover:from-[#c5a059] hover:to-[#D4AF37] text-black py-4 rounded-xl font-black uppercase text-xs tracking-[0.2em] transition-all duration-300 disabled:opacity-50 flex items-center justify-center gap-2"
         >
-          {isLoading ? 'Mise à jour...' : 'Mettre à jour le mot de passe'}
+          {isLoading ? 'Updating...' : 'Update Password'}
           <ArrowRight className="w-4 h-4 text-black" />
         </button>
       </form>
@@ -503,10 +503,10 @@ export default function LoginPage() {
               </div>
             </div>
             <h1 className="text-2xl font-black text-white mb-2 uppercase tracking-tight">
-              Bon retour <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#D4AF37] to-[#F3E5AB]">sniper</span>
+              Welcome back, <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#D4AF37] to-[#F3E5AB]">Sniper</span>
             </h1>
             <p className="text-gray-400 text-xs font-bold uppercase tracking-widest">
-              Accédez à vos signaux 100% réels
+              Access your 100% real signals
             </p>
           </div>
 

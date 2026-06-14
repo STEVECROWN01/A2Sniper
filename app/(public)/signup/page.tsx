@@ -53,7 +53,7 @@ export default function SignupPage() {
     setError('');
 
     if (password !== confirmPassword) {
-      setError('Les mots de passe ne correspondent pas');
+      setError('Passwords do not match');
       setIsLoading(false);
       return;
     }
@@ -67,15 +67,15 @@ export default function SignupPage() {
       });
       const data = await res.json();
       if (res.ok) {
-        toast.success('Compte créé ! Redirection vers la connexion...');
+        toast.success('Account created! Redirecting to login...');
         setTimeout(() => {
           router.push('/login');
         }, 2000);
       } else {
-        setError(data.detail || "Erreur lors de l'inscription");
+        setError(data.detail || 'Error during registration');
       }
     } catch {
-      setError('Erreur réseau. Veuillez réessayer.');
+      setError('Network error. Please try again.');
     } finally {
       setIsLoading(false);
     }
@@ -116,21 +116,22 @@ export default function SignupPage() {
               </div>
             </div>
             <h1 className="text-2xl font-black text-white mb-2 uppercase tracking-tight">
-              Rejoindre l'élite{' '}
+              Join the{' '}
               <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#D4AF37] to-[#F3E5AB]">
                 A2Sniper
-              </span>
+              </span>{' '}
+              Elite
             </h1>
             <p className="text-gray-400 text-xs font-bold uppercase tracking-widest">
-              Créez votre accès 100% gratuitement !
+              Create your free account!
             </p>
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-5">
-            {/* Nom */}
+            {/* Full Name */}
             <div>
               <label className="text-[10px] font-black text-gray-500 uppercase tracking-[0.2em] mb-2 block">
-                Nom complet
+                Full Name
               </label>
               <div className="relative">
                 <User className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
@@ -148,7 +149,7 @@ export default function SignupPage() {
             {/* Email */}
             <div>
               <label className="text-[10px] font-black text-gray-500 uppercase tracking-[0.2em] mb-2 block">
-                Email Sniper
+                Sniper Email
               </label>
               <div className="relative">
                 <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
@@ -163,10 +164,10 @@ export default function SignupPage() {
               </div>
             </div>
 
-            {/* Mot de passe */}
+            {/* Password */}
             <div>
               <label className="text-[10px] font-black text-gray-500 uppercase tracking-[0.2em] mb-2 block">
-                Mot de passe
+                Password
               </label>
               <div className="relative">
                 <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
@@ -189,15 +190,15 @@ export default function SignupPage() {
               </div>
             </div>
 
-            {/* Confirmez le mot de passe */}
+            {/* Confirm Password */}
             <div>
               <label className="text-[10px] font-black text-gray-500 uppercase tracking-[0.2em] mb-2 block">
-                Confirmez le mot de passe
+                Confirm Password
               </label>
               <div className="relative">
                 <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
                 <input
-                  type={showPassword ? 'text' : 'password'}
+                  type={showPassword ? 'password' : 'password'}
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
                   className="w-full bg-white/[0.02] border border-white/5 rounded-xl py-3.5 pl-12 pr-12 text-white focus:border-[#D4AF37] focus:bg-white/[0.04] outline-none transition-all text-sm font-semibold"
@@ -230,24 +231,24 @@ export default function SignupPage() {
               disabled={isLoading || isGoogleLoading}
               className="w-full bg-gradient-to-r from-[#D4AF37] to-[#C5A059] hover:from-[#c5a059] hover:to-[#D4AF37] text-black py-4 rounded-xl font-black uppercase text-xs tracking-[0.2em] transition-all duration-300 disabled:opacity-50 flex items-center justify-center gap-2 shadow-[0_0_20px_rgba(212,175,55,0.2)] active:scale-[0.98]"
             >
-              {isLoading ? 'Création...' : 'Créer mon accès Sniper'}
+              {isLoading ? 'Creating...' : 'Create My Sniper Account'}
               <ArrowRight className="w-4 h-4 text-black" />
             </button>
           </form>
 
-          {/* Séparateur */}
+          {/* Divider */}
           <div className="relative my-6">
             <div className="absolute inset-0 flex items-center">
               <div className="w-full border-t border-white/5" />
             </div>
             <div className="relative flex justify-center text-[10px] uppercase">
               <span className="bg-[#0a0a0c] px-3 text-gray-500 font-bold tracking-widest">
-                Ou continuer avec
+                Or continue with
               </span>
             </div>
           </div>
 
-          {/* Bouton Google OAuth réel */}
+          {/* Google OAuth button */}
           <button
             type="button"
             onClick={handleGoogleSignup}
@@ -264,13 +265,13 @@ export default function SignupPage() {
                 <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" fill="#EA4335" />
               </svg>
             )}
-            {isGoogleLoading ? 'Redirection vers Google...' : "S'inscrire avec Google"}
+            {isGoogleLoading ? 'Redirecting to Google...' : 'Sign up with Google'}
           </button>
 
           <p className="mt-8 text-center text-gray-500 text-xs font-bold uppercase tracking-wider">
-            Déjà sniper ?{' '}
+            Already a Sniper?{' '}
             <Link href="/login" className="text-[#D4AF37] hover:text-[#F3E5AB] transition-colors ml-1">
-              Se connecter
+              Sign In
             </Link>
           </p>
         </div>

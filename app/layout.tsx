@@ -8,13 +8,16 @@ const inter = Inter({ subsets: ['latin'] });
 
 export const metadata: Metadata = {
   title: 'A2Sniper - TradeAlgo.AI',
-  description: 'TradeAlgo.AI - Système de signaux de trading algorithmique à haute précision pour Pocket Option',
+  description: 'TradeAlgo.AI - High-precision algorithmic trading signals for Pocket Option',
   icons: {
-    icon: '/favicon.ico',
+    icon: [
+      { url: '/favicon.ico' },
+      { url: '/A2Sniper-logo.jpeg', type: 'image/jpeg' },
+    ],
   },
   openGraph: {
     title: 'A2Sniper - TradeAlgo.AI',
-    description: 'Système de signaux de trading algorithmique à haute précision pour Pocket Option',
+    description: 'High-precision algorithmic trading signals for Pocket Option',
     type: 'website',
   },
 };
@@ -25,7 +28,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="fr">
+    <html lang="en">
       <body className={inter.className}>
         <GlobalLoader />
         <StoreInitializer />

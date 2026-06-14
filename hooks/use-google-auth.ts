@@ -14,7 +14,7 @@ export function useGoogleAuth() {
 
     if (!clientId || clientId === 'VOTRE_CLIENT_ID_ICI' || clientId === '') {
       toast.error(
-        'Google OAuth non configuré. Pour activer la connexion Google, l\'administrateur doit configurer NEXT_PUBLIC_GOOGLE_CLIENT_ID dans les variables d\'environnement.'
+        'Google OAuth is not configured. To enable Google sign-in, the administrator must set NEXT_PUBLIC_GOOGLE_CLIENT_ID in environment variables.'
       );
       return;
     }
@@ -68,7 +68,7 @@ export function useGoogleAuth() {
           router.push('/dashboard');
           return true;
         } else {
-          toast.error('Erreur serveur : ' + (data.detail || 'Impossible de se connecter'));
+          toast.error('Server error: ' + (data.detail || 'Unable to sign in'));
           return false;
         }
       }
@@ -88,11 +88,11 @@ export function useGoogleAuth() {
         router.push('/dashboard');
         return true;
       } else {
-        toast.error('Erreur serveur : ' + (data.detail || 'Impossible de se connecter'));
+        toast.error('Server error: ' + (data.detail || 'Unable to sign in'));
       }
     } catch (e) {
       console.error(e);
-      toast.error('Erreur réseau – veuillez réessayer.');
+      toast.error('Network error. Please try again.');
     }
     return false;
   }, [router, setAuthenticated, setUser]);
