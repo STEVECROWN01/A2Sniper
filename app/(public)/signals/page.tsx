@@ -1,8 +1,8 @@
 'use client';
 
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
 import { motion } from 'framer-motion';
-import { Search, Filter, TrendingUp, Clock, Target, RefreshCw, Download, Settings, Link2, Check } from 'lucide-react';
+import { Search, Filter, TrendingUp, Clock, Target, RefreshCw, Download, Settings, Link2, Check, Wifi, WifiOff, AlertTriangle, Zap } from 'lucide-react';
 import { SignalCard } from '@/components/ui/signal-card';
 import { useAppStore } from '@/lib/store';
 import { useAuth } from '@/hooks/use-auth';
@@ -13,7 +13,7 @@ import { toast } from 'sonner';
 
 export default function SignalsPage() {
   useAuth();
-  const { signals, liveStatus, connectMarket, disconnectMarket, fetchMarketStatus, marketInfo, user } = useAppStore();
+  const { signals, liveStatus, connectMarket, disconnectMarket, fetchMarketStatus, marketInfo, user, attemptReconnect, reconnectAttempts, maxReconnectAttempts } = useAppStore();
   // Persist SSID in localStorage so it survives page refreshes
   const [ssid, setSsidState] = useState('');
   const [isConnecting, setIsConnecting] = useState(false);
@@ -92,27 +92,37 @@ export default function SignalsPage() {
   const handleConnect = async () => {
     if (!ssid) return;
 
-    const validation = validateSSID(ssid.trim());
+    const validation = validateSSID(ssid);
     if (validation.status === 'invalid') {
       setConnectError(validation.message);
       return;
     }
 
-    // Use the normalized SSID (fixes doubled prefix like 42["auth",42["auth",...)
-    const normalizedSSID = validation.normalized || ssid.trim();
+    // Use the normalized SSID (deep-cleaned: invisible chars stripped, format fixed)
+    const normalizedSSID = validation.normalized || ssid;
 
     setIsConnecting(true);
     setConnectError('');
     const result = await connectMarket(normalizedSSID);
     if (!result.success) {
-      // Provide a clear message about session expiry
-      const msg = result.message.toLowerCase().includes('ssid') || result.message.toLowerCase().includes('expir')
-        ? 'Session expirée ou invalide. Retournez sur pocketoption.com, reconnectez-vous, et copiez un nouveau message WS depuis l\'onglet Network (F12).'
-        : result.message;
-      setConnectError(msg);
+      setConnectError(result.message);
+    } else {
+      toast.success('Connecté au marché Pocket Option !');
     }
     // NOTE: We intentionally do NOT clear the SSID field on success or failure
     // so the user can see what they pasted and it survives a page refresh.
+    setIsConnecting(false);
+  };
+
+  const handleReconnect = async () => {
+    setIsConnecting(true);
+    setConnectError('');
+    const result = await attemptReconnect();
+    if (result.success) {
+      toast.success('Reconnexion réussie !');
+    } else {
+      setConnectError(result.message || 'Reconnexion échouée — le SSID a peut-être expiré. Copiez un nouveau SSID depuis Pocket Option.');
+    }
     setIsConnecting(false);
   };
 
@@ -312,11 +322,13 @@ export default function SignalsPage() {
                     <label className="block text-[10px] font-black text-gray-400 mb-2 uppercase tracking-widest">Chaîne SSID (Trame d'auth)</label>
                     <textarea
                       value={ssid}
-                      onChange={(e) => setSsid(e.target.value)}
-                      placeholder='42["auth",{"session":"a:4:{...}", "isDemo":0, "uid":..., ...}]'
+                      onChange={(e) => { setSsid(e.target.value); setConnectError(''); }}
+                      placeholder='Collez ici la trame 42["auth",{...}] copiée depuis F12 → Network → WS'
                       className={`w-full h-32 px-4 py-3 bg-white/[0.02] border rounded-xl focus:outline-none text-[10px] font-mono mb-2 resize-none text-white transition-colors overflow-auto ${
-                        ssid && !ssid.trim().startsWith('42["auth"')
+                        ssid && validateSSID(ssid).status === 'invalid'
                           ? 'border-red-500/50 focus:border-red-500'
+                          : ssid && validateSSID(ssid).status === 'valid'
+                          ? 'border-green-500/50 focus:border-green-500'
                           : 'border-white/10 focus:border-[#D4AF37]'
                       }`}
                     />
@@ -335,9 +347,17 @@ export default function SignalsPage() {
                         '✗ ';
 
                       return (
-                        <p className={`text-[10px] ${colorClass} mb-4 font-bold`}>
-                          {prefix}{validation.message}
-                        </p>
+                        <div className={`text-[10px] ${colorClass} mb-4 font-bold`}>
+                          <p>{prefix}{validation.message}</p>
+                          {validation.details?.isDemoAccount !== undefined && (
+                            <p className="mt-1 text-gray-500">
+                              Mode: <span className={validation.details.isDemoAccount ? 'text-yellow-400' : 'text-green-400'}>
+                                {validation.details.isDemoAccount ? 'COMPTE DÉMO' : 'COMPTE RÉEL'}
+                              </span>
+                              {validation.details.uid && <> · UID: {validation.details.uid}</>}
+                            </p>
+                          )}
+                        </div>
                       );
                     })()}
                     
@@ -355,19 +375,21 @@ export default function SignalsPage() {
                       {isConnecting ? (
                         <>
                           <RefreshCw className="w-4 h-4 animate-spin" />
-                          Connexion...
+                          Connexion en cours...
                         </>
                       ) : (
                         <>
-                          <Link2 className="w-4 h-4" />
-                          Lancer le Sniping
+                          <Zap className="w-4 h-4" />
+                          Connecter au Marché
                         </>
                       )}
                     </button>
                     
                     {connectError && (
                       <div className="mt-4 text-[10px] font-bold text-red-400 bg-red-500/10 p-4 rounded-xl border border-red-500/20 space-y-2">
-                        <p className="font-black text-red-500 uppercase tracking-wider">⚠️ Échec de la connexion</p>
+                        <p className="font-black text-red-500 uppercase tracking-wider flex items-center gap-1">
+                          <AlertTriangle className="w-3 h-3" /> Échec de la connexion
+                        </p>
                         <p className="leading-relaxed">{connectError}</p>
                         <a
                           href="https://pocketoption.com"

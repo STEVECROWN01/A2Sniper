@@ -1460,40 +1460,127 @@ async def admin_update_weights(request: Request, admin_payload = Depends(require
 
 # ═══════════ MARKET CONNECTION ENDPOINTS ═══════════
 
+import re as _re
+
+def _deep_clean_ssid(raw: str) -> str:
+    """
+    Nettoyage robuste du SSID — supprime TOUS les caractères invisibles
+    et corrections de format courants lors du copier-coller depuis DevTools.
+    """
+    cleaned = raw
+
+    # 1. Remove BOM (Byte Order Mark) — très commun avec Chrome DevTools
+    cleaned = cleaned.replace('\ufeff', '')
+
+    # 2. Remove ALL zero-width and invisible Unicode characters
+    cleaned = _re.sub(r'[\u200b\u200c\u200d\u2060\ufeff\u200e\u200f\u202a-\u202e\u00ad]', '', cleaned)
+
+    # 3. Replace smart/curly quotes with straight quotes (copié depuis chat/email)
+    cleaned = cleaned.replace('\u201c', '"').replace('\u201d', '"')  # " " → "
+    cleaned = cleaned.replace('\u2018', "'").replace('\u2019', "'")  # ' ' → '
+
+    # 4. Replace non-breaking spaces with regular spaces
+    cleaned = cleaned.replace('\u00a0', ' ')
+
+    # 5. Remove all newlines, carriage returns, and tabs inside the frame
+    # DevTools wraps long frames across multiple lines
+    cleaned = _re.sub(r'[\r\n\t]+', '', cleaned)
+
+    # 6. Trim whitespace
+    cleaned = cleaned.strip()
+
+    # 7. Fix doubled prefix: 42["auth",42["auth",{...}]  →  42["auth",{...}]
+    if '42["auth",42["auth",' in cleaned:
+        cleaned = cleaned.replace('42["auth",42["auth",', '42["auth",')
+    if '42["auth", 42["auth",' in cleaned:
+        cleaned = cleaned.replace('42["auth", 42["auth",', '42["auth",')
+
+    # 8. Handle DevTools frame number prefix (e.g., "4:42["auth"..." or "42:42["auth"...")
+    m = _re.match(r'^\d+:(42\["auth")', cleaned)
+    if m:
+        cleaned = _re.sub(r'^\d+:', '', cleaned)
+
+    # 9. If there's extra text before the actual frame, find the start
+    auth_idx = cleaned.find('42["auth"')
+    if auth_idx > 0:
+        cleaned = cleaned[auth_idx:]
+
+    return cleaned
+
+
 @app.post("/api/market/connect")
 async def connect_market(request: Request):
     try:
         data = await request.json()
     except Exception:
-        raise HTTPException(status_code=400, detail="Invalid request body")
-    
+        raise HTTPException(status_code=400, detail="Corps de requête invalide")
+
     ssid = data.get("ssid")
     if not ssid:
-        raise HTTPException(status_code=400, detail="SSID required")
-    
-    ssid_strip = ssid.strip()
-    if not ssid_strip.startswith('42["auth"'):
-        raise HTTPException(status_code=400, detail="Invalid format. Message must start with 42[\"auth\",{...}].")
-    
-    try:
-        json_start = ssid_strip.find("{")
-        json_end = ssid_strip.rfind("}") + 1
-        if json_start != -1 and json_end > json_start:
-            payload = json.loads(ssid_strip[json_start:json_end])
-            if "session" not in payload:
-                raise HTTPException(status_code=400, detail="Unsupported format. Please copy the frame containing \"session\".")
-        else:
-            raise HTTPException(status_code=400, detail="Invalid frame JSON format.")
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Frame parsing error: {str(e)}")
+        raise HTTPException(status_code=400, detail="SSID requis. Collez la trame d'authentification Pocket Option.")
 
-    success = await po_scanner.connect(ssid_strip)
-    logger.info(f"[MARKET] Connexion effectuée (SSID: {ssid[:5]}...)")
-        
+    # Deep clean the SSID — strip invisible chars, fix encoding issues
+    ssid_clean = _deep_clean_ssid(ssid)
+
+    if not ssid_clean.startswith('42["auth"'):
+        # Provide specific guidance based on what was detected
+        if ssid_clean.startswith('40') or ssid_clean.startswith('40['):
+            raise HTTPException(
+                status_code=400,
+                detail="Ceci est une trame de connexion (40), pas d'authentification. Cherchez la trame commençant par 42[\"auth\",...] dans l'onglet WS."
+            )
+        if 'session' in ssid_clean or 'uid' in ssid_clean:
+            raise HTTPException(
+                status_code=400,
+                detail="Données d'auth détectées mais la trame ne commence pas par 42[\"auth\". Copiez l'intégralité du message depuis le début."
+            )
+        raise HTTPException(
+            status_code=400,
+            detail="Format invalide. Le message doit commencer par 42[\"auth\",{...}]. Ouvrez F12 → Network → WS et copiez la trame \"auth\"."
+        )
+
+    try:
+        json_start = ssid_clean.find("{")
+        json_end = ssid_clean.rfind("}") + 1
+        if json_start != -1 and json_end > json_start:
+            payload = json.loads(ssid_clean[json_start:json_end])
+            if "session" not in payload:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Format non supporté. La clé \"session\" est manquante. Copiez la trame d'authentification complète."
+                )
+        else:
+            raise HTTPException(status_code=400, detail="Format JSON de la trame invalide. Accolades manquantes.")
+    except HTTPException:
+        raise
+    except json.JSONDecodeError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Erreur de parsing JSON: {str(e)}. Vérifiez que vous avez copié le message exact depuis DevTools."
+        )
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Erreur de lecture de la trame: {str(e)}")
+
+    # Attempt connection
+    logger.info(f"[MARKET] Tentative de connexion (SSID: {ssid_clean[:15]}...)")
+    success = await po_scanner.connect(ssid_clean)
+
     if success:
-        return {"status": "success", "message": "Connected to market"}
+        is_demo = po_scanner.is_demo
+        mode = "DÉMO" if is_demo else "RÉEL"
+        logger.info(f"[MARKET] Connecté avec succès — Mode: {mode}")
+        return {
+            "status": "success",
+            "message": f"Connecté au marché Pocket Option — Mode {mode}",
+            "is_demo": is_demo,
+            "uid": payload.get("uid"),
+        }
     else:
-        raise HTTPException(status_code=401, detail="Connection failed. Please ensure your SSID is fresh and valid.")
+        logger.warning(f"[MARKET] Échec de connexion — SSID potentiellement expiré")
+        raise HTTPException(
+            status_code=401,
+            detail="Échec de connexion. Causes possibles : (1) SSID expiré — retournez sur pocketoption.com, actualisez la page, et copiez un nouveau SSID depuis F12 → Network → WS. (2) Session fermée sur Pocket Option. (3) Problème réseau temporaire."
+        )
 
 @app.post("/api/market/disconnect")
 async def disconnect_market():

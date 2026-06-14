@@ -83,6 +83,9 @@ interface AppState {
   } | null;
   isInitialized: boolean;
   clockOffset: number;
+  lastConnectedSSID: string | null;
+  reconnectAttempts: number;
+  maxReconnectAttempts: number;
   
   // Actions
   setSignals: (signals: Signal[]) => void;
@@ -97,6 +100,7 @@ interface AppState {
   connectMarket: (ssid: string) => Promise<{ success: boolean; message: string }>;
   disconnectMarket: () => Promise<void>;
   fetchMarketStatus: () => Promise<void>;
+  attemptReconnect: () => Promise<{ success: boolean; message: string }>;
   initialize: () => Promise<void>;
   logout: () => void;
   requestSignal: (pair: string) => Promise<{ success: boolean; signal?: Signal; message?: string }>;
@@ -141,6 +145,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   marketInfo: null,
   isInitialized: false,
   clockOffset: 0,
+  lastConnectedSSID: null as string | null,
+  reconnectAttempts: 0,
+  maxReconnectAttempts: 5,
   
   setSignals: (signals) => set({ signals }),
   
@@ -178,6 +185,32 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   // Helper to get API base URL
   getApiUrl: () => process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000',
+
+  // Auto-reconnect using the last known SSID
+  attemptReconnect: async () => {
+    const state = get();
+    const ssid = state.lastConnectedSSID || (typeof window !== 'undefined' ? localStorage.getItem('a2sniper_last_ssid') : null);
+    
+    if (!ssid || state.reconnectAttempts >= state.maxReconnectAttempts) {
+      console.log('[RECONNECT] No SSID available or max attempts reached');
+      return { success: false, message: 'Max reconnection attempts reached' };
+    }
+
+    set({ reconnectAttempts: state.reconnectAttempts + 1 });
+    console.log(`[RECONNECT] Attempt ${state.reconnectAttempts + 1}/${state.maxReconnectAttempts}`);
+    
+    try {
+      const result = await state.connectMarket(ssid);
+      if (result.success) {
+        set({ reconnectAttempts: 0 });
+        console.log('[RECONNECT] Successfully reconnected');
+      }
+      return result;
+    } catch (err) {
+      console.error('[RECONNECT] Failed:', err);
+      return { success: false, message: 'Reconnection failed' };
+    }
+  },
 
   // Check if the current user's plan allows the requested action
   checkPlanLimit: (action: string): { allowed: boolean; reason?: string } => {
@@ -299,13 +332,17 @@ export const useAppStore = create<AppState>((set, get) => ({
       });
       const data = await res.json();
       if (res.ok) {
-        set({ liveStatus: 'LIVE' });
+        set({ liveStatus: 'LIVE', lastConnectedSSID: ssid, reconnectAttempts: 0 });
+        // Save SSID for auto-reconnect
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('a2sniper_last_ssid', ssid);
+        }
         await get().fetchMarketStatus();
         return { success: true, message: data.message };
       }
       return { success: false, message: data.detail || 'Erreur de connexion' };
     } catch (err) {
-      return { success: false, message: 'Erreur réseau' };
+      return { success: false, message: 'Erreur réseau — vérifiez que le serveur backend est démarré sur le port 8000.' };
     }
   },
 
@@ -369,16 +406,31 @@ export const useAppStore = create<AppState>((set, get) => ({
       const headers = get().getAuthHeaders();
       if (!headers['Authorization']) return;
 
-      const res = await fetch(`${url}/api/market/status`, { headers });
+      const res = await fetch(`${url}/api/market/status`, headers ? { headers } : undefined);
       if (res.ok) {
         const data = await res.json();
+        const wasLive = get().liveStatus === 'LIVE';
+        const isNowLive = data.is_connected;
+
         set({ 
-          liveStatus: data.is_connected ? 'LIVE' : 'DISCONNECTED',
+          liveStatus: isNowLive ? 'LIVE' : 'DISCONNECTED',
           marketInfo: {
-            isConnected: data.is_connected,
+            isConnected: isNowLive,
             payouts: data.payouts
           }
         });
+
+        // Auto-reconnect: if we were LIVE but now disconnected, try to reconnect
+        if (wasLive && !isNowLive && get().lastConnectedSSID) {
+          console.log('[SESSION] Connection lost — attempting auto-reconnect...');
+          // Delay the reconnect attempt to avoid rapid retry loops
+          setTimeout(async () => {
+            const state = get();
+            if (state.liveStatus === 'DISCONNECTED' && state.lastConnectedSSID && state.reconnectAttempts < state.maxReconnectAttempts) {
+              await state.attemptReconnect();
+            }
+          }, 3000);
+        }
       }
     } catch (err) {
       console.error('Failed to fetch market status', err);

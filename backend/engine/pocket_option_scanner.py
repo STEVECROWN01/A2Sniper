@@ -38,12 +38,50 @@ class PocketOptionScanner:
         return self.client.is_connected if self.client else False
 
     @staticmethod
+    def _deep_clean_ssid(raw: str) -> str:
+        """
+        Nettoyage robuste du SSID — supprime TOUS les caractères invisibles
+        et corrections de format courants lors du copier-coller depuis DevTools.
+        """
+        import re as _re
+        cleaned = raw
+
+        # Remove BOM
+        cleaned = cleaned.replace('\ufeff', '')
+        # Remove zero-width and invisible Unicode characters
+        cleaned = _re.sub(r'[\u200b\u200c\u200d\u2060\ufeff\u200e\u200f\u202a-\u202e\u00ad]', '', cleaned)
+        # Replace smart/curly quotes with straight quotes
+        cleaned = cleaned.replace('\u201c', '"').replace('\u201d', '"')
+        cleaned = cleaned.replace('\u2018', "'").replace('\u2019', "'")
+        # Replace non-breaking spaces
+        cleaned = cleaned.replace('\u00a0', ' ')
+        # Remove newlines/tabs inside the frame
+        cleaned = _re.sub(r'[\r\n\t]+', '', cleaned)
+        cleaned = cleaned.strip()
+        # Fix doubled prefix
+        if '42["auth",42["auth",' in cleaned:
+            cleaned = cleaned.replace('42["auth",42["auth",', '42["auth",')
+        if '42["auth", 42["auth",' in cleaned:
+            cleaned = cleaned.replace('42["auth", 42["auth",', '42["auth",')
+        # Handle DevTools frame number prefix
+        m = _re.match(r'^\d+:(42\["auth")', cleaned)
+        if m:
+            cleaned = _re.sub(r'^\d+:', '', cleaned)
+        # Find the actual start if there's extra text before
+        auth_idx = cleaned.find('42["auth"')
+        if auth_idx > 0:
+            cleaned = cleaned[auth_idx:]
+
+        return cleaned
+
+    @staticmethod
     def _prepare_ssid(ssid: str) -> tuple[str, bool]:
         """
-        Pré-traite le SSID pour extraire isDemo.
-        Retourne le SSID brut non modifié pour préserver l'authenticité de la trame.
+        Pré-traite le SSID : nettoie les caractères invisibles et extrait isDemo.
+        Retourne le SSID nettoyé et le flag is_demo.
         """
-        ssid = ssid.strip()
+        # Apply deep cleaning first
+        ssid = PocketOptionScanner._deep_clean_ssid(ssid)
         is_demo = True
 
         if ssid.startswith('42["auth",'):
