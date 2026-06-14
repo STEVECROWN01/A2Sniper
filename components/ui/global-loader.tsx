@@ -42,14 +42,30 @@ export function GlobalLoader() {
             transition={{ duration: 0.8, ease: "easeOut" }}
             className="relative"
           >
-            {/* Glow effect behind the logo */}
-            <div className="absolute inset-0 bg-[#D4AF37] blur-[80px] opacity-40 animate-pulse rounded-full" />
+            {/* Animated rotating ring around the logo */}
+            <motion.div
+              animate={{ rotate: 360 }}
+              transition={{ repeat: Infinity, duration: 3, ease: "linear" }}
+              className="absolute inset-[-6px] rounded-3xl border-2 border-transparent z-20"
+              style={{
+                borderTopColor: '#D4AF37',
+                borderRightColor: 'rgba(212,175,55,0.4)',
+                borderBottomColor: 'rgba(212,175,55,0.1)',
+                borderLeftColor: 'rgba(212,175,55,0.6)',
+              }}
+            />
             
-            <motion.img 
+            {/* Pulsing glow effect behind the logo */}
+            <motion.div 
+              animate={{ opacity: [0.2, 0.5, 0.2], scale: [0.9, 1.1, 0.9] }}
+              transition={{ repeat: Infinity, duration: 2.5, ease: "easeInOut" }}
+              className="absolute inset-[-20px] bg-[#D4AF37] blur-[60px] rounded-full" 
+            />
+            
+            {/* Static A2Sniper Logo — fixed, no rotation */}
+            <img 
               src="/A2Sniper-logo.jpeg" 
               alt="A2Sniper Logo" 
-              animate={{ rotate: 360 }}
-              transition={{ repeat: Infinity, duration: 6, ease: "linear" }}
               className="w-32 h-32 md:w-48 md:h-48 object-cover rounded-3xl shadow-[0_0_50px_rgba(212,175,55,0.5)] border-2 border-[#D4AF37]/40 relative z-10"
             />
           </motion.div>

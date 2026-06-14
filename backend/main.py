@@ -1247,6 +1247,92 @@ async def get_me(credentials: HTTPAuthorizationCredentials = Security(security))
         }
 
 
+@app.delete("/api/auth/delete-account")
+async def delete_account(credentials: HTTPAuthorizationCredentials = Security(security)):
+    """Permanently delete the authenticated user's account and all associated data."""
+    token = credentials.credentials
+    payload = decode_token(token)
+    user_id = payload.get("sub")
+
+    try:
+        async with AsyncSessionLocal() as session:
+            # Check user exists
+            result = await session.execute(select(User).where(User.id == user_id))
+            user = result.scalar_one_or_none()
+            if not user:
+                raise HTTPException(status_code=404, detail="User not found")
+
+            # Delete the user (cascade will handle subscription deletion)
+            await session.delete(user)
+            await session.commit()
+
+            logger.info(f"[Auth] Account deleted for user: {user.email} ({user_id})")
+            return {"detail": "Account permanently deleted"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[Auth] Error deleting account for user {user_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to delete account. Please contact support.")
+
+
+@app.get("/api/auth/export-data")
+async def export_user_data(credentials: HTTPAuthorizationCredentials = Security(security)):
+    """Export all data associated with the authenticated user."""
+    token = credentials.credentials
+    payload = decode_token(token)
+    user_id = payload.get("sub")
+
+    try:
+        async with AsyncSessionLocal() as session:
+            # Get user data
+            result = await session.execute(select(User).where(User.id == user_id))
+            user = result.scalar_one_or_none()
+            if not user:
+                raise HTTPException(status_code=404, detail="User not found")
+
+            # Get subscription data
+            sub_result = await session.execute(select(UserSubscription).where(UserSubscription.user_id == user_id))
+            subscription = sub_result.scalar_one_or_none()
+
+            # Get user's signal history
+            signal_result = await session.execute(
+                select(SignalRecord).order_by(SignalRecord.timestamp.desc()).limit(100)
+            )
+            signals = signal_result.scalars().all()
+
+            export_data = {
+                "exportDate": datetime.now(timezone.utc).isoformat(),
+                "user": {
+                    "id": user.id,
+                    "email": user.email,
+                    "name": user.full_name,
+                    "created_at": user.created_at.isoformat() if user.created_at else None,
+                },
+                "subscription": {
+                    "plan": subscription.plan_name if subscription else "Free",
+                    "active_until": subscription.active_until.isoformat() if subscription and subscription.active_until else None,
+                } if subscription else None,
+                "recent_signals": [
+                    {
+                        "id": s.id,
+                        "pair": s.pair,
+                        "direction": s.direction,
+                        "score": s.score,
+                        "timestamp": s.timestamp.isoformat() if s.timestamp else None,
+                    }
+                    for s in signals[:20]
+                ]
+            }
+
+            return export_data
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[Auth] Error exporting data for user {user_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to export data. Please try again later.")
+
 
 @app.get("/api/performance")
 async def get_performance():

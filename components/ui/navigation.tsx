@@ -36,6 +36,7 @@ const navigationItems = [
   { name: 'Trading Journal', href: '/trading-journal', icon: BookOpen },
   { name: 'Performance', href: '/performance', icon: Activity },
   { name: 'Analyses', href: '/analytics', icon: Brain },
+  { name: 'Courtiers', href: '/brokers', icon: BarChart3 },
   { name: 'Paramètres', href: '/settings', icon: Settings },
   { name: 'Tarifs', href: '/pricing', icon: DollarSign }
 ];

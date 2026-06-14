@@ -10,7 +10,7 @@ import { toast } from 'sonner';
 
 export default function SettingsPage() {
   useAuth();
-  const { user } = useAppStore();
+  const { user, logout } = useAppStore();
   const [activeTab, setActiveTab] = useState('profile');
   const [notifications, setNotifications] = useState(() => {
     if (typeof window !== 'undefined') {
@@ -229,13 +229,29 @@ export default function SettingsPage() {
       });
 
       if (res.ok) {
-        toast.success('Compte supprimé. Redirection...');
+        toast.success('Compte supprimé avec succès. Redirection vers l\'accueil...');
+        // Clear all local storage and state
         if (typeof window !== 'undefined') {
           localStorage.removeItem('a2sniper_token');
+          localStorage.removeItem('a2sniper_user');
+          localStorage.removeItem('a2sniper_notifications');
+          localStorage.removeItem('a2sniper_theme');
+          localStorage.removeItem('a2sniper_language');
+          localStorage.removeItem('a2sniper_timezone');
         }
-        setTimeout(() => window.location.href = '/', 2000);
+        // Use Zustand logout to clear store state
+        logout();
+        // Redirect immediately to home page
+        setShowDeleteDialog(false);
+        setDeleteConfirmText('');
+        setIsDeletingAccount(false);
+        setTimeout(() => {
+          window.location.href = '/';
+        }, 1500);
+        return; // Exit early so finally block doesn't interfere
       } else {
-        toast.error('Erreur lors de la suppression du compte. Contactez le support.');
+        const errorData = await res.json().catch(() => ({}));
+        toast.error(errorData.detail || 'Erreur lors de la suppression du compte. Contactez le support.');
       }
     } catch {
       toast.error('Erreur réseau. Veuillez réessayer.');
