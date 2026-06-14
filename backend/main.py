@@ -1592,6 +1592,8 @@ async def get_market_status():
     return {
         "is_connected": po_scanner.is_connected,
         "ssid_preview": po_scanner.ssid[:5] + "..." if po_scanner.ssid else None,
+        "is_demo": po_scanner.is_demo,
+        "uid": po_scanner._uid,
         "payouts": {pair: po_scanner.get_payout(pair) for pair in OTC_PAIRS}
     }
 
