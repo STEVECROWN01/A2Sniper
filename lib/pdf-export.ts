@@ -73,45 +73,6 @@ export async function fetchAvatarBase64(url: string): Promise<string | null> {
   }
 }
 
-/**
- * Draw the A2Sniper logo in the header band.
- * The logo is placed on the right side of the header, inside a gold-bordered circle.
- */
-function drawHeaderLogo(doc: jsPDF): void {
-  try {
-    const logoSize = 14; // mm
-    const logoX = PAGE.width - PAGE.marginR - logoSize - 2;
-    const logoY = 5;
-    const cx = logoX + logoSize / 2;
-    const cy = logoY + logoSize / 2;
-    const radius = logoSize / 2;
-
-    // Save graphics state
-    doc.saveGraphicsState();
-
-    // Clip to circle
-    doc.circle(cx, cy, radius);
-    doc.clip();
-
-    // White circle background behind logo (for contrast on dark header)
-    doc.setFillColor(255, 255, 255);
-    doc.circle(cx, cy, radius, 'F');
-
-    // Add logo image filling the full circle area
-    doc.addImage(A2SNIPER_LOGO_BASE64, 'JPEG', logoX, logoY, logoSize, logoSize);
-
-    // Restore graphics state (removes clipping)
-    doc.restoreGraphicsState();
-
-    // Gold border around circle (drawn after restoring, so it's not clipped)
-    doc.setDrawColor(212, 175, 55);
-    doc.setLineWidth(0.5);
-    doc.circle(cx, cy, radius + 0.3, 'S');
-  } catch {
-    // If logo fails, just skip it - text branding is still there
-  }
-}
-
 
 
 /**
@@ -169,9 +130,8 @@ function drawUserAvatarFallback(doc: jsPDF, x: number, y: number, size: number, 
 
 /**
  * Create a new jsPDF instance with A2Sniper branding ready.
- * Draws header band with logo + footer on every page.
+ * Draws header band with branding + footer on every page.
  * Includes user personalization if user info is provided.
- * Draws watermark (filigrane) on each page.
  */
 export function createBrandedPDF(title: string, subtitle?: string, user?: PDFUserInfo): jsPDF {
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
@@ -189,9 +149,6 @@ export function createBrandedPDF(title: string, subtitle?: string, user?: PDFUse
   // Gold left accent stripe
   doc.setFillColor(212, 175, 55);
   doc.rect(0, 0, 3, PAGE.headerH, 'F');
-
-  // A2Sniper Logo in header (right side, before user info)
-  drawHeaderLogo(doc);
 
   // "A2Sniper" branding text
   doc.setFont('helvetica', 'bold');
@@ -282,17 +239,12 @@ export function createBrandedPDF(title: string, subtitle?: string, user?: PDFUse
     doc.setLineWidth(0.3);
     doc.line(PAGE.marginL, pageH - PAGE.footerH, PAGE.width - PAGE.marginR, pageH - PAGE.footerH);
 
-    // Small logo in footer
-    try {
-      doc.addImage(A2SNIPER_LOGO_BASE64, 'JPEG', PAGE.marginL, pageH - 15, 5, 5);
-    } catch {}
-
     doc.setFontSize(6.5);
     doc.setTextColor(156, 163, 175);
     const footerText = user?.name
       ? `A2Sniper 3.0 — Rapport confidentiel pour ${user.name}`
       : 'A2Sniper 3.0 — Rapport confidentiel';
-    doc.text(footerText, PAGE.marginL + 7, pageH - 10);
+    doc.text(footerText, PAGE.marginL, pageH - 10);
     doc.text(`Page ${doc.getCurrentPageInfo().pageNumber}`, PAGE.width - PAGE.marginR, pageH - 10, { align: 'right' });
   };
 
@@ -320,9 +272,6 @@ export function addBrandedPage(doc: jsPDF, title?: string): void {
 
   doc.setFillColor(212, 175, 55);
   doc.rect(0, 0, 3, PAGE.headerH, 'F');
-
-  // Logo in continued page header
-  drawHeaderLogo(doc);
 
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(14);
