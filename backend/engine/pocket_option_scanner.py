@@ -30,16 +30,12 @@ from datetime import datetime, timezone
 try:
     import websockets
     _WS_AVAILABLE = True
-    # websockets v16+ uses ClientConnection without .closed attribute
-    # We need to check .state instead
-    try:
-        from websockets.protocol import State as _WSState
-        _WS_OPEN = _WSState.OPEN
-    except ImportError:
-        _WS_OPEN = 1
 except ImportError:
     _WS_AVAILABLE = False
-    _WS_OPEN = 1
+
+# websockets v16+ uses ClientConnection with .state attribute (no .closed)
+# We detect the open state value at runtime after first connection
+_WS_OPEN_STATE = None  # Will be set after first successful connect
 
 logger = logging.getLogger(__name__)
 
@@ -155,10 +151,21 @@ class PocketOptionScanner:
             return False
         # websockets v16+ uses .state attribute
         if hasattr(self._ws, 'state'):
-            return self._ws.state == _WS_OPEN
+            global _WS_OPEN_STATE
+            if _WS_OPEN_STATE is None:
+                # Auto-detect the OPEN state value from the enum
+                try:
+                    from websockets.protocol import State
+                    _WS_OPEN_STATE = State.OPEN
+                except (ImportError, AttributeError):
+                    _WS_OPEN_STATE = 1  # Fallback
+            return self._ws.state == _WS_OPEN_STATE
         # websockets < v14 uses .closed attribute
         if hasattr(self._ws, 'closed'):
             return not self._ws.closed
+        # Fallback: check if close_code is None (means still open)
+        if hasattr(self._ws, 'close_code'):
+            return self._ws.close_code is None
         return False
 
     @property
