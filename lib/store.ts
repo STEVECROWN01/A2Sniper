@@ -226,6 +226,12 @@ export const useAppStore = create<AppState>((set, get) => ({
   // Check if the current user's plan allows the requested action
   checkPlanLimit: (action: string): { allowed: boolean; reason?: string } => {
     const user = get().user;
+
+    // Admin bypass: admins can do everything, no limits
+    if (user?.is_admin) {
+      return { allowed: true };
+    }
+
     const planName = user?.plan || 'Free';
     const plan = PLAN_LIMITS[planName] || DEFAULT_PLAN;
 

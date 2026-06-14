@@ -79,7 +79,21 @@ export default function LoginPage() {
 
       if (res.ok) {
         localStorage.setItem('a2sniper_token', data.token);
-        setUser(data.user);
+        const userData = data.user || {};
+        // Fetch full profile from /api/auth/me to get is_admin and plan
+        try {
+          const meRes = await fetch(`${apiUrl}/api/auth/me`, {
+            headers: { 'Authorization': `Bearer ${data.token}` }
+          });
+          if (meRes.ok) {
+            const fullUser = await meRes.json();
+            setUser(fullUser);
+          } else {
+            setUser(userData);
+          }
+        } catch {
+          setUser(userData);
+        }
         setAuthenticated(true);
         router.push('/dashboard');
       } else {

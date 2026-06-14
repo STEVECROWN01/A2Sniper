@@ -64,7 +64,22 @@ export function useGoogleAuth() {
 
         if (res.ok) {
           localStorage.setItem('a2sniper_token', data.token);
-          setUser(data.user);
+          // Use user data from response (now includes is_admin and plan)
+          const userData = data.user || {};
+          // Also fetch full profile from /api/auth/me as verification
+          try {
+            const meRes = await fetch(`${baseUrl}/api/auth/me`, {
+              headers: { 'Authorization': `Bearer ${data.token}` }
+            });
+            if (meRes.ok) {
+              const fullUser = await meRes.json();
+              setUser(fullUser);
+            } else {
+              setUser(userData);
+            }
+          } catch {
+            setUser(userData);
+          }
           setAuthenticated(true);
           router.push('/dashboard');
           return true;
@@ -84,7 +99,21 @@ export function useGoogleAuth() {
 
       if (res.ok) {
         localStorage.setItem('a2sniper_token', data.token);
-        setUser(data.user);
+        const userData = data.user || {};
+        // Also fetch full profile from /api/auth/me as verification
+        try {
+          const meRes = await fetch(`${baseUrl}/api/auth/me`, {
+            headers: { 'Authorization': `Bearer ${data.token}` }
+          });
+          if (meRes.ok) {
+            const fullUser = await meRes.json();
+            setUser(fullUser);
+          } else {
+            setUser(userData);
+          }
+        } catch {
+          setUser(userData);
+        }
         setAuthenticated(true);
         router.push('/dashboard');
         return true;

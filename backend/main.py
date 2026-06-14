@@ -922,14 +922,22 @@ async def login(request: Request, rate_limit: None = Depends(lambda req: check_r
             raise HTTPException(status_code=401, detail="Invalid email or password")
             
         token = create_access_token({"sub": user.id, "email": user.email})
-        
+
+        # Get subscription info for the response
+        sub_result = await session.execute(
+            select(UserSubscription).where(UserSubscription.user_id == user.id)
+        )
+        subscription = sub_result.scalar_one_or_none()
+
         return {
             "status": "success",
             "token": token,
             "user": {
                 "id": user.id,
                 "email": user.email,
-                "name": user.full_name
+                "name": user.full_name,
+                "is_admin": user.is_admin,
+                "plan": subscription.plan_name if subscription else "Free"
             }
         }
 
@@ -943,6 +951,13 @@ async def auth_google(request: Request):
     # Support both: access_token (implicit flow) or code (authorization code flow)
     if code and redirect_uri:
         # Exchange authorization code for access token
+        google_client_id = os.getenv("GOOGLE_CLIENT_ID", "")
+        google_client_secret = os.getenv("GOOGLE_CLIENT_SECRET", "")
+        
+        if not google_client_id or not google_client_secret:
+            logger.error(f"[Google Auth] Missing GOOGLE_CLIENT_ID or GOOGLE_CLIENT_SECRET. ID set: {bool(google_client_id)}, Secret set: {bool(google_client_secret)}")
+            raise HTTPException(status_code=500, detail="Google OAuth is not configured on the server. Please contact support.")
+        
         import httpx
         try:
             async with httpx.AsyncClient() as client:
@@ -950,8 +965,8 @@ async def auth_google(request: Request):
                     "https://oauth2.googleapis.com/token",
                     data={
                         "code": code,
-                        "client_id": os.getenv("GOOGLE_CLIENT_ID", ""),
-                        "client_secret": os.getenv("GOOGLE_CLIENT_SECRET", ""),
+                        "client_id": google_client_id,
+                        "client_secret": google_client_secret,
                         "redirect_uri": redirect_uri,
                         "grant_type": "authorization_code",
                     }
@@ -962,8 +977,23 @@ async def auth_google(request: Request):
                 if not access_token:
                     raise HTTPException(status_code=400, detail="Failed to obtain Google access token")
         except httpx.HTTPStatusError as e:
-            logger.error(f"Google Code Exchange Error: {e.response.text}")
+            error_detail = e.response.text
+            logger.error(f"Google Code Exchange Error: {error_detail}")
+            # Provide more specific error messages
+            try:
+                error_json = e.response.json()
+                error_msg = error_json.get("error_description", error_json.get("error", ""))
+                if "redirect_uri_mismatch" in error_detail:
+                    raise HTTPException(status_code=400, detail="Google OAuth redirect URI mismatch. Please contact support to update the redirect URI in Google Cloud Console.")
+                if "invalid_client" in error_detail:
+                    raise HTTPException(status_code=400, detail="Google OAuth client configuration error. Please contact support.")
+                if error_msg:
+                    raise HTTPException(status_code=400, detail=f"Google auth error: {error_msg}")
+            except HTTPException:
+                raise
             raise HTTPException(status_code=400, detail="Invalid or expired Google authorization code")
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(f"Google Code Exchange Error: {e}")
             raise HTTPException(status_code=400, detail="Error exchanging Google authorization code")
@@ -1033,16 +1063,47 @@ async def auth_google(request: Request):
             if not user:
                 logger.error(f"[Google Auth] User not found after creation for email: {email}")
                 raise HTTPException(status_code=500, detail="Failed to create or find user account")
-                
+
+            # Get subscription info for the response
+            sub_result2 = await session.execute(
+                select(UserSubscription).where(UserSubscription.user_id == user.id)
+            )
+            subscription = sub_result2.scalar_one_or_none()
+
+            # Auto-promote owner email to admin + Pro
+            if user.email == "stevecrown024@gmail.com" and not user.is_admin:
+                user.is_admin = True
+                if subscription and subscription.plan_name != "Pro":
+                    subscription.plan_name = "Pro"
+                    subscription.active_until = datetime.now(timezone.utc) + timedelta(days=3650)
+                elif not subscription:
+                    subscription = UserSubscription(
+                        user_id=user.id,
+                        plan_name="Pro",
+                        active_until=datetime.now(timezone.utc) + timedelta(days=3650)
+                    )
+                    session.add(subscription)
+                await session.commit()
+                # Refresh user after commit
+                result = await session.execute(select(User).where(User.id == user.id))
+                user = result.scalar_one_or_none()
+                sub_result2 = await session.execute(
+                    select(UserSubscription).where(UserSubscription.user_id == user.id)
+                )
+                subscription = sub_result2.scalar_one_or_none()
+                logger.info(f"[Google Auth] Auto-promoted {email} to admin + Pro")
+
             token = create_access_token({"sub": user.id, "email": user.email})
-            
+
             return {
                 "status": "success",
                 "token": token,
                 "user": {
                     "id": user.id,
                     "email": user.email,
-                    "name": user.full_name
+                    "name": user.full_name,
+                    "is_admin": user.is_admin,
+                    "plan": subscription.plan_name if subscription else "Free"
                 }
             }
     except HTTPException:

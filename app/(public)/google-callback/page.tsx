@@ -28,8 +28,15 @@ export default function GoogleCallbackPage() {
         const ok = await handleGoogleCallback();
         clearTimeout(timeout);
         if (!ok) {
-          setError('Google sign-in failed. Please try again.');
-          setTimeout(() => router.replace('/login'), 2000);
+          // Check if there's a more specific error from the URL params
+          const params = new URLSearchParams(window.location.search);
+          const errorCode = params.get('error');
+          if (errorCode) {
+            setError(`Google sign-in failed: ${errorCode}. Please try again.`);
+          } else {
+            setError('Google sign-in failed. Please try again or use email/password login.');
+          }
+          setTimeout(() => router.replace('/login'), 3000);
         }
       } catch (err) {
         clearTimeout(timeout);
