@@ -73,7 +73,44 @@ export async function fetchAvatarBase64(url: string): Promise<string | null> {
   }
 }
 
+/**
+ * Draw the A2Sniper logo in the header band.
+ * The logo is placed on the right side of the header, inside a gold-bordered circle.
+ */
+function drawHeaderLogo(doc: jsPDF): void {
+  try {
+    const logoSize = 14; // mm
+    const logoX = PAGE.width - PAGE.marginR - logoSize - 2;
+    const logoY = 5;
+    const cx = logoX + logoSize / 2;
+    const cy = logoY + logoSize / 2;
+    const radius = logoSize / 2;
 
+    // Save graphics state
+    doc.saveGraphicsState();
+
+    // Clip to circle
+    doc.circle(cx, cy, radius);
+    doc.clip();
+
+    // White circle background behind logo (for contrast on dark header)
+    doc.setFillColor(255, 255, 255);
+    doc.circle(cx, cy, radius, 'F');
+
+    // Add logo image filling the full circle area
+    doc.addImage(A2SNIPER_LOGO_BASE64, 'JPEG', logoX, logoY, logoSize, logoSize);
+
+    // Restore graphics state (removes clipping)
+    doc.restoreGraphicsState();
+
+    // Gold border around circle (drawn after restoring, so it's not clipped)
+    doc.setDrawColor(212, 175, 55);
+    doc.setLineWidth(0.5);
+    doc.circle(cx, cy, radius + 0.3, 'S');
+  } catch {
+    // If logo fails, just skip it - text branding is still there
+  }
+}
 
 /**
  * Draw user avatar image in the header (next to user info) or in the user info card.
@@ -149,6 +186,9 @@ export function createBrandedPDF(title: string, subtitle?: string, user?: PDFUse
   // Gold left accent stripe
   doc.setFillColor(212, 175, 55);
   doc.rect(0, 0, 3, PAGE.headerH, 'F');
+
+  // A2Sniper Logo in header (right side)
+  drawHeaderLogo(doc);
 
   // "A2Sniper" branding text
   doc.setFont('helvetica', 'bold');
@@ -272,6 +312,9 @@ export function addBrandedPage(doc: jsPDF, title?: string): void {
 
   doc.setFillColor(212, 175, 55);
   doc.rect(0, 0, 3, PAGE.headerH, 'F');
+
+  // Logo in continued page header
+  drawHeaderLogo(doc);
 
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(14);
