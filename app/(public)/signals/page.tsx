@@ -7,8 +7,9 @@ import { SignalCard } from '@/components/ui/signal-card';
 import { useAppStore } from '@/lib/store';
 import { useAuth } from '@/hooks/use-auth';
 import { tradingPairs } from '@/lib/mock-data';
-
 import { validateSSID } from '@/lib/validate-ssid';
+import { createBrandedPDF, drawSectionTitle, drawStatCard, drawTable, drawInfoRow, savePDF, PAGE } from '@/lib/pdf-export';
+import { toast } from 'sonner';
 
 export default function SignalsPage() {
   useAuth();
@@ -122,21 +123,56 @@ export default function SignalsPage() {
   };
 
   const handleExportSignals = () => {
-    const data = {
-      signals: filteredSignals,
-      filters: { selectedPayout, selectedPair, selectedStatus, selectedDirection },
-      exportDate: new Date().toISOString(),
-      stats
-    };
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `a2sniper-signals-${new Date().toISOString().split('T')[0]}.json`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    const doc = createBrandedPDF('Rapport Signaux', 'Signaux de trading filtrés et statistiques');
+    let y = 55;
+
+    // Filter info
+    y = drawSectionTitle(doc, 'Filtres appliques', y);
+    y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Paire', selectedPair === 'ALL' ? 'Toutes' : selectedPair);
+    y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Direction', selectedDirection === 'ALL' ? 'Toutes' : selectedDirection);
+    y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Statut', selectedStatus === 'ALL' ? 'Tous' : selectedStatus);
+    y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Payout', selectedPayout === 'ALL' ? 'Tous' : `>${selectedPayout}%`);
+    y += 2;
+
+    // Stats
+    y = drawSectionTitle(doc, 'Statistiques', y);
+    const cardW = 42;
+    const gap = 3;
+    y = drawStatCard(doc, PAGE.marginL, y, cardW, 'Total', String(stats.total));
+    y = drawStatCard(doc, PAGE.marginL + cardW + gap, y - 21, cardW, 'Actifs', String(stats.active), { valueColor: '#3B82F6' });
+    y = drawStatCard(doc, PAGE.marginL + (cardW + gap) * 2, y - 21, cardW, 'Gagnes', String(stats.won), { valueColor: '#22C55E' });
+    y = drawStatCard(doc, PAGE.marginL + (cardW + gap) * 3, y - 21, cardW, 'Perdus', String(stats.lost), { valueColor: '#EF4444' });
+    y += 6;
+
+    // Signals table
+    y = drawSectionTitle(doc, 'Liste des signaux', y);
+    if (filteredSignals.length > 0) {
+      const headers = [
+        { label: 'Paire', width: 28 },
+        { label: 'Direction', width: 22, align: 'center' as const },
+        { label: 'Winrate', width: 20, align: 'center' as const },
+        { label: 'Statut', width: 20, align: 'center' as const },
+        { label: 'Payout', width: 18, align: 'right' as const },
+        { label: 'Expiration', width: 35, align: 'right' as const },
+      ];
+      const rows = filteredSignals.slice(0, 50).map(s => [
+        s.pair || '-',
+        s.direction || '-',
+        s.winrate ? `${s.winrate}%` : '-',
+        s.status || '-',
+        s.payout ? `${s.payout}%` : '-',
+        s.timestamp ? new Date(s.timestamp).toLocaleString('fr-FR', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-',
+      ]);
+      y = drawTable(doc, PAGE.marginL, y, headers, rows);
+    } else {
+      doc.setFontSize(8);
+      doc.setTextColor(107, 114, 128);
+      doc.text('Aucun signal trouve avec ces filtres.', PAGE.marginL + 4, y + 4);
+    }
+
+    const dateStr = new Date().toISOString().split('T')[0];
+    savePDF(doc, `a2sniper-signaux-${dateStr}.pdf`);
+    toast.success('Rapport PDF exporte avec succes !');
   };
 
   return (

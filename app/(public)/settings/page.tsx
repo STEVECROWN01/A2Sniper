@@ -7,6 +7,7 @@ import { User, Bell, Shield, Palette, Save, Check, Camera, Key, Globe, Clock, Tr
 import { useAppStore } from '@/lib/store';
 import { useAuth } from '@/hooks/use-auth';
 import { toast } from 'sonner';
+import { createBrandedPDF, drawSectionTitle, drawInfoRow, savePDF, PAGE } from '@/lib/pdf-export';
 
 export default function SettingsPage() {
   useAuth();
@@ -265,41 +266,50 @@ export default function SettingsPage() {
   const handleExportData = async () => {
     setIsExporting(true);
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-      const token = typeof window !== 'undefined' ? localStorage.getItem('a2sniper_token') : null;
-      const res = await fetch(`${apiUrl}/api/auth/export-data`, {
-        headers: {
-          ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
-        },
-      });
+      // Try to fetch server-side data, but always generate PDF
+      let serverData: any = null;
+      try {
+        const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+        const token = typeof window !== 'undefined' ? localStorage.getItem('a2sniper_token') : null;
+        const res = await fetch(`${apiUrl}/api/auth/export-data`, {
+          headers: { ...(token ? { 'Authorization': `Bearer ${token}` } : {}) },
+        });
+        if (res.ok) serverData = await res.json();
+      } catch {}
 
-      if (res.ok) {
-        const data = await res.json();
-        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `a2sniper-data-export-${new Date().toISOString().split('T')[0]}.json`;
-        a.click();
-        URL.revokeObjectURL(url);
-        toast.success('Données exportées avec succès !');
+      const doc = createBrandedPDF('Export de donnees', 'Donnees du compte et parametres');
+      let y = 55;
+
+      // User info
+      y = drawSectionTitle(doc, 'Informations du compte', y);
+      y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Nom', user?.name || user?.email?.split('@')[0] || '-');
+      y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Email', user?.email || '-');
+      y = drawInfoRow(doc, PAGE.marginL + 2, y, 'ID', user?.id || '-');
+      y += 2;
+
+      // Settings
+      y = drawSectionTitle(doc, 'Parametres', y);
+      y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Langue', selectedLanguage);
+      y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Fuseau Horaire', selectedTimezone);
+      y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Theme', selectedTheme);
+      y += 2;
+
+      // Notifications
+      y = drawSectionTitle(doc, 'Notifications', y);
+      if (notifications) {
+        Object.entries(notifications).forEach(([key, val]) => {
+          y = drawInfoRow(doc, PAGE.marginL + 2, y, key, val ? 'Activee' : 'Desactivee', { valueColor: val ? '#22C55E' : '#EF4444' });
+        });
       } else {
-        // Fallback: export locally stored data
-        const localData = {
-          exportDate: new Date().toISOString(),
-          user: user,
-          settings: { language: selectedLanguage, timezone: selectedTimezone, theme: selectedTheme },
-          notifications,
-        };
-        const blob = new Blob([JSON.stringify(localData, null, 2)], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `a2sniper-data-export-${new Date().toISOString().split('T')[0]}.json`;
-        a.click();
-        URL.revokeObjectURL(url);
-        toast.success('Données locales exportées (serveur indisponible).');
+        doc.setFontSize(8);
+        doc.setTextColor(107, 114, 128);
+        doc.text('Aucune notification configuree.', PAGE.marginL + 4, y + 4);
+        y += 8;
       }
+
+      const dateStr = new Date().toISOString().split('T')[0];
+      savePDF(doc, `a2sniper-donnees-${dateStr}.pdf`);
+      toast.success('Rapport PDF exporte avec succes !');
     } catch {
       toast.error('Erreur lors de l\'export. Veuillez réessayer.');
     } finally {

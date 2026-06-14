@@ -6,6 +6,7 @@ import { Bot, Zap, TrendingUp, TrendingDown, ChevronRight, ChevronLeft, ShieldAl
 import { useAppStore } from '@/lib/store';
 import { toast } from 'sonner';
 import { tradingPairs, Signal, UserStats } from '@/lib/mock-data';
+import { createBrandedPDF, drawSectionTitle, drawStatCard, drawTable, drawInfoRow, drawRiskBadge, savePDF, PAGE } from '@/lib/pdf-export';
 
 interface SignalPairData {
   direction?: string;
@@ -798,6 +799,56 @@ function RiskManagerPanel({ onClose }: { onClose: () => void }) {
     toast.success("Session sauvegardée avec succès !", { duration: 3000 });
   };
 
+  const handleExportPDF = () => {
+    const doc = createBrandedPDF('Risk Manager - Bot Telegram', 'Session de trading A2Sniper');
+    let y = 55;
+
+    // Configuration
+    y = drawSectionTitle(doc, 'Configuration', y);
+    y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Capital Initial', `$${initialCapital.toFixed(2)}`);
+    y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Payout', `${payout}%`, { valueColor: '#D4AF37' });
+    y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Session', `#${sessionCounter}`);
+    y += 2;
+
+    // Stats
+    y = drawSectionTitle(doc, 'Resultats', y);
+    const cardW = 42;
+    const gap = 3;
+    y = drawStatCard(doc, PAGE.marginL, y, cardW, 'Balance', `$${results.currentBalance.toFixed(2)}`);
+    y = drawStatCard(doc, PAGE.marginL + cardW + gap, y - 21, cardW, 'Profit Net', `${results.totalProfit >= 0 ? '+' : ''}$${results.totalProfit.toFixed(2)}`, { valueColor: results.totalProfit >= 0 ? '#22C55E' : '#EF4444' });
+    y = drawStatCard(doc, PAGE.marginL + (cardW + gap) * 2, y - 21, cardW, 'Wins', String(results.wins), { valueColor: '#22C55E' });
+    y = drawStatCard(doc, PAGE.marginL + (cardW + gap) * 3, y - 21, cardW, 'Losses', String(results.losses), { valueColor: '#EF4444' });
+    y += 6;
+
+    // Trades table
+    const validTrades = results.computedTrades.filter((t: any) => t.result);
+    if (validTrades.length > 0) {
+      y = drawSectionTitle(doc, 'Journal de trading', y);
+      const headers = [
+        { label: '#', width: 12 },
+        { label: 'Resultat', width: 22, align: 'center' as const },
+        { label: 'Mise ($)', width: 28, align: 'right' as const },
+        { label: 'Retour ($)', width: 28, align: 'right' as const },
+        { label: 'Balance ($)', width: 30, align: 'right' as const },
+      ];
+      const rows = validTrades.map((t: any, i: number) => {
+        const origIdx = results.computedTrades.indexOf(t);
+        return [
+          `#${origIdx + 1}`,
+          t.result || '-',
+          t.amount ? t.amount.toFixed(2) : '-',
+          t.result === 'WIN' ? `+${t.return?.toFixed(2) || '0.00'}` : t.result === 'LOSS' ? `-${t.amount?.toFixed(2) || '0.00'}` : '-',
+          t.balance === '-' ? '-' : `$${t.balance}`,
+        ];
+      });
+      y = drawTable(doc, PAGE.marginL, y, headers, rows);
+    }
+
+    const dateStr = new Date().toISOString().split('T')[0];
+    savePDF(doc, `a2sniper-risk-telegram-${dateStr}.pdf`);
+    toast.success('Rapport PDF exporte avec succes !');
+  };
+
   const handleReset = () => {
     setTrades(Array(10).fill({ result: '', amount: 0, return: 0 }));
     setSessionCounter(0);
@@ -939,7 +990,7 @@ function RiskManagerPanel({ onClose }: { onClose: () => void }) {
         <button onClick={handleSave} className="py-3 bg-[#1a1a1e] border border-gray-800 rounded-2xl text-[10px] font-black text-white flex items-center justify-center gap-2 hover:bg-[#25252b] transition-all">
           <Save className={`w-4 h-4 ${isDirty ? 'text-yellow-500 animate-pulse' : 'text-[#D4AF37]'}`} /> SAUVEGARDER
         </button>
-        <button className="py-2 bg-[#D4AF37] hover:bg-[#c5a059] rounded-2xl text-[10px] font-black text-black flex items-center justify-center gap-2 transition-all shadow-lg shadow-[#D4AF37]/20">
+        <button onClick={handleExportPDF} className="py-2 bg-[#D4AF37] hover:bg-[#c5a059] rounded-2xl text-[10px] font-black text-black flex items-center justify-center gap-2 transition-all shadow-lg shadow-[#D4AF37]/20">
           <Download className="w-4 h-4 text-black" /> EXPORTER EN PDF
         </button>
       </div>

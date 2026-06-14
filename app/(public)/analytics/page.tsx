@@ -6,6 +6,8 @@ import { RefreshCw, Download } from 'lucide-react';
 import { AdvancedAnalytics } from '@/components/ui/advanced-analytics';
 import { useAppStore } from '@/lib/store';
 import { useAuth } from '@/hooks/use-auth';
+import { createBrandedPDF, drawSectionTitle, drawStatCard, drawTable, drawInfoRow, savePDF, PAGE } from '@/lib/pdf-export';
+import { toast } from 'sonner';
 
 export default function AnalyticsPage() {
   useAuth();
@@ -30,27 +32,43 @@ export default function AnalyticsPage() {
   };
 
   const handleExport = () => {
-    const data = {
-      timeframe: selectedTimeframe,
-      exportDate: new Date().toISOString(),
-      totalSignals: signals.length,
-      signals: signals.slice(0, 50).map(s => ({
-        pair: s.pair,
-        direction: s.direction,
-        winrate: s.winrate,
-        status: s.status,
-        timestamp: s.timestamp
-      }))
-    };
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `a2sniper-analytics-${new Date().toISOString().split('T')[0]}.json`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    const doc = createBrandedPDF('Analyses Avancees', `Periode: ${selectedTimeframe}`);
+    let y = 55;
+
+    // Overview stats
+    y = drawSectionTitle(doc, 'Resume de la periode', y);
+    const cardW = 42;
+    const gap = 3;
+    y = drawStatCard(doc, PAGE.marginL, y, cardW, 'Total Signaux', String(signals.length));
+    y = drawStatCard(doc, PAGE.marginL + cardW + gap, y - 21, cardW, 'Timeframe', selectedTimeframe, { valueColor: '#D4AF37' });
+
+    y += 6;
+    y = drawSectionTitle(doc, 'Signaux', y);
+    if (signals.length > 0) {
+      const headers = [
+        { label: 'Paire', width: 30 },
+        { label: 'Direction', width: 25, align: 'center' as const },
+        { label: 'Winrate', width: 25, align: 'center' as const },
+        { label: 'Statut', width: 25, align: 'center' as const },
+        { label: 'Date', width: 40, align: 'right' as const },
+      ];
+      const rows = signals.slice(0, 50).map(s => [
+        s.pair || '-',
+        s.direction || '-',
+        s.winrate ? `${s.winrate}%` : '-',
+        s.status || '-',
+        s.timestamp ? new Date(s.timestamp).toLocaleDateString('fr-FR') : '-',
+      ]);
+      y = drawTable(doc, PAGE.marginL, y, headers, rows);
+    } else {
+      doc.setFontSize(8);
+      doc.setTextColor(107, 114, 128);
+      doc.text('Aucun signal pour cette periode.', PAGE.marginL + 4, y + 4);
+    }
+
+    const dateStr = new Date().toISOString().split('T')[0];
+    savePDF(doc, `a2sniper-analytics-${dateStr}.pdf`);
+    toast.success('Rapport PDF exporte avec succes !');
   };
 
   return (

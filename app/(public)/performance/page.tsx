@@ -9,6 +9,8 @@ import { PerformanceChart } from '@/components/ui/performance-chart';
 import { useAppStore } from '@/lib/store';
 import { useAuth } from '@/hooks/use-auth';
 import { tradingPairs } from '@/lib/mock-data';
+import { createBrandedPDF, drawSectionTitle, drawStatCard, drawTable, drawInfoRow, savePDF, PAGE, addBrandedPage, checkPageBreak } from '@/lib/pdf-export';
+import { toast } from 'sonner';
 
 export default function PerformancePage() {
   useAuth();
@@ -187,25 +189,79 @@ export default function PerformancePage() {
   };
 
   const handleExportPerformance = () => {
-    const data = {
-      totalProfit: metrics.totalProfit,
-      totalTrades: metrics.totalTrades,
-      avgWinRate: metrics.avgWinRate,
-      pairStats,
-      timeframe: selectedTimeframe,
-      monthlyPerformance,
-      riskMetrics,
-      exportDate: new Date().toISOString()
-    };
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `a2sniper-performance-${new Date().toISOString().split('T')[0]}.json`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    const doc = createBrandedPDF('Analyse de Performance', `Periode: ${selectedTimeframe}`);
+    let y = 55;
+
+    // Key Metrics
+    y = drawSectionTitle(doc, 'Metriques cles', y);
+    const cardW = 42;
+    const gap = 3;
+    y = drawStatCard(doc, PAGE.marginL, y, cardW, 'Profit Total', `$${metrics.totalProfit.toFixed(2)}`, { valueColor: metrics.totalProfit >= 0 ? '#22C55E' : '#EF4444' });
+    y = drawStatCard(doc, PAGE.marginL + cardW + gap, y - 21, cardW, 'Total Trades', String(metrics.totalTrades));
+    y = drawStatCard(doc, PAGE.marginL + (cardW + gap) * 2, y - 21, cardW, 'Win Rate', `${metrics.avgWinRate.toFixed(1)}%`, { valueColor: '#D4AF37' });
+    y = drawStatCard(doc, PAGE.marginL + (cardW + gap) * 3, y - 21, cardW, 'Trades Gagnes', String(metrics.wonTrades), { valueColor: '#22C55E' });
+    y += 6;
+
+    // Risk Metrics
+    if (riskMetrics) {
+      y = drawSectionTitle(doc, 'Metriques de risque', y);
+      y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Facteur de Profit', String(riskMetrics.profitFactor));
+      y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Ratio Gain/Perte', String(riskMetrics.avgProfitLossRatio));
+      y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Drawdown Max', `${riskMetrics.maxDrawdown}%`, { valueColor: '#EF4444' });
+      y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Win Rate', `${riskMetrics.winRate}%`, { valueColor: '#D4AF37' });
+      y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Pertes Consecutives Max', String(riskMetrics.maxConsecutiveLosses));
+      y += 2;
+    }
+
+    // Pair Stats Table
+    if (pairStats.length > 0) {
+      y = checkPageBreak(doc, y, 30);
+      y = drawSectionTitle(doc, 'Performance par paire', y);
+      const headers = [
+        { label: 'Paire', width: 30 },
+        { label: 'Trades', width: 20, align: 'center' as const },
+        { label: 'Win Rate', width: 25, align: 'center' as const },
+        { label: 'Gagnes', width: 20, align: 'center' as const },
+        { label: 'Perdus', width: 20, align: 'center' as const },
+        { label: 'Profit', width: 30, align: 'right' as const },
+      ];
+      const rows = pairStats.map(p => [
+        p.pair,
+        String(p.totalTrades),
+        `${p.winRate.toFixed(1)}%`,
+        String(p.won),
+        String(p.lost),
+        `${p.profit >= 0 ? '+' : ''}$${p.profit.toFixed(2)}`,
+      ]);
+      y = drawTable(doc, PAGE.marginL, y, headers, rows);
+    }
+
+    // Monthly Performance
+    if (monthlyPerformance.length > 0) {
+      y = checkPageBreak(doc, y, 30);
+      y = drawSectionTitle(doc, 'Performance mensuelle', y);
+      const headers = [
+        { label: 'Mois', width: 35 },
+        { label: 'Trades', width: 25, align: 'center' as const },
+        { label: 'Gagnes', width: 25, align: 'center' as const },
+        { label: 'Perdus', width: 25, align: 'center' as const },
+        { label: 'Win Rate', width: 25, align: 'center' as const },
+        { label: 'Profit', width: 30, align: 'right' as const },
+      ];
+      const rows = monthlyPerformance.map(m => [
+        m.month,
+        String(m.trades),
+        String(m.wins),
+        String(m.losses),
+        `${m.winRate.toFixed(1)}%`,
+        `${m.profit >= 0 ? '+' : ''}$${m.profit.toFixed(2)}`,
+      ]);
+      y = drawTable(doc, PAGE.marginL, y, headers, rows);
+    }
+
+    const dateStr = new Date().toISOString().split('T')[0];
+    savePDF(doc, `a2sniper-performance-${dateStr}.pdf`);
+    toast.success('Rapport PDF exporte avec succes !');
   };
 
   if (isLoading) {

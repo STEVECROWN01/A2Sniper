@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { X, Download, TrendingUp, TrendingDown, DollarSign, Target, Calendar, BarChart3 } from 'lucide-react';
 import { BacktestResult } from '@/lib/backtesting';
+import { createBrandedPDF, drawSectionTitle, drawStatCard, drawTable, drawInfoRow, savePDF, PAGE, checkPageBreak } from '@/lib/pdf-export';
 
 interface BacktestResultsProps {
   result: BacktestResult;
@@ -14,6 +15,64 @@ export function BacktestResults({ result, onClose }: BacktestResultsProps) {
   const [activeTab, setActiveTab] = useState('overview');
 
   const handleDownload = (format: 'pdf' | 'csv' | 'json') => {
+    if (format === 'pdf') {
+      // Professional branded PDF export
+      const doc = createBrandedPDF('Resultats du Backtest', 'Analyse detaillee des performances historiques');
+      let y = 55;
+
+      // Key Metrics
+      y = drawSectionTitle(doc, 'Metriques cles', y);
+      const cardW = 42;
+      const gap = 3;
+      y = drawStatCard(doc, PAGE.marginL, y, cardW, 'Profit Net', `$${result.netProfit.toFixed(2)}`, { valueColor: result.netProfit >= 0 ? '#22C55E' : '#EF4444' });
+      y = drawStatCard(doc, PAGE.marginL + cardW + gap, y - 21, cardW, 'Win Rate', `${result.winRate.toFixed(1)}%`, { valueColor: '#D4AF37' });
+      y = drawStatCard(doc, PAGE.marginL + (cardW + gap) * 2, y - 21, cardW, 'Total Trades', String(result.totalTrades));
+      y = drawStatCard(doc, PAGE.marginL + (cardW + gap) * 3, y - 21, cardW, 'Sharpe Ratio', result.sharpeRatio.toFixed(2), { valueColor: '#D4AF37' });
+      y += 3;
+      y = drawStatCard(doc, PAGE.marginL, y, cardW, 'Drawdown Max', `${result.maxDrawdown.toFixed(1)}%`, { valueColor: '#EF4444' });
+      y = drawStatCard(doc, PAGE.marginL + cardW + gap, y - 21, cardW, 'Facteur Profit', result.profitFactor.toFixed(2), { valueColor: '#D4AF37' });
+      y = drawStatCard(doc, PAGE.marginL + (cardW + gap) * 2, y - 21, cardW, 'Gain Moyen', `$${result.avgWin.toFixed(2)}`, { valueColor: '#22C55E' });
+      y = drawStatCard(doc, PAGE.marginL + (cardW + gap) * 3, y - 21, cardW, 'Perte Moyenne', `$${result.avgLoss.toFixed(2)}`, { valueColor: '#EF4444' });
+      y += 6;
+
+      // Detailed metrics
+      y = drawSectionTitle(doc, 'Metriques detaillees', y);
+      y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Trades Gagnants', String(result.winningTrades), { valueColor: '#22C55E' });
+      y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Trades Perdants', String(result.losingTrades), { valueColor: '#EF4444' });
+      y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Plus Gros Gain', `$${result.largestWin.toFixed(2)}`, { valueColor: '#22C55E' });
+      y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Plus Grosse Perte', `$${result.largestLoss.toFixed(2)}`, { valueColor: '#EF4444' });
+      y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Serie Gagnante Max', String(result.consecutiveWins));
+      y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Serie Perdante Max', String(result.consecutiveLosses));
+      y += 2;
+
+      // Trades table
+      if (result.trades.length > 0) {
+        y = checkPageBreak(doc, y, 30);
+        y = drawSectionTitle(doc, 'Historique des trades', y);
+        const headers = [
+          { label: '#', width: 12 },
+          { label: 'Paire', width: 28 },
+          { label: 'Direction', width: 22, align: 'center' as const },
+          { label: 'Resultat', width: 22, align: 'center' as const },
+          { label: 'Entree', width: 28, align: 'right' as const },
+          { label: 'Profit', width: 28, align: 'right' as const },
+        ];
+        const rows = result.trades.slice(0, 50).map((trade, i) => [
+          `#${i + 1}`,
+          trade.signal.pair,
+          trade.direction,
+          trade.result,
+          trade.entryPrice.toFixed(4),
+          `${trade.netProfit > 0 ? '+' : ''}$${trade.netProfit.toFixed(2)}`,
+        ]);
+        y = drawTable(doc, PAGE.marginL, y, headers, rows);
+      }
+
+      const dateStr = new Date().toISOString().split('T')[0];
+      savePDF(doc, `a2sniper-backtest-${dateStr}.pdf`);
+      return;
+    }
+
     let data: string;
     let mimeType: string;
     let fileExt: string;
@@ -22,19 +81,13 @@ export function BacktestResults({ result, onClose }: BacktestResultsProps) {
       data = JSON.stringify(result, null, 2);
       mimeType = 'application/json';
       fileExt = 'json';
-    } else if (format === 'csv') {
-      data = convertToCSV(result);
-      mimeType = 'text/csv';
-      fileExt = 'csv';
     } else {
-      // PDF export: generate CSV as fallback since proper PDF generation requires a library
       data = convertToCSV(result);
       mimeType = 'text/csv';
       fileExt = 'csv';
     }
     
     const blob = new Blob([data], { type: mimeType });
-    
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;

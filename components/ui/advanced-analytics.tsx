@@ -7,6 +7,7 @@ import { TrendingUp, Zap, Clock, Target, RefreshCw, Download, Loader2, AlertCirc
 import { toast } from 'sonner';
 import { useAppStore } from '@/lib/store';
 import { Signal } from '@/lib/mock-data';
+import { createBrandedPDF, drawSectionTitle, drawStatCard, drawTable, drawInfoRow, savePDF, PAGE, checkPageBreak } from '@/lib/pdf-export';
 
 const darkTooltipStyle = {
   backgroundColor: '#0a0a0c',
@@ -172,25 +173,61 @@ export function AdvancedAnalytics({ timeframe = '24H' }: AdvancedAnalyticsProps)
 
   const handleExport = () => {
     if (!data) return;
-    const exportData = {
-      timeframe,
-      timestamp: new Date().toISOString(),
-      liveData: data.liveData,
-      performanceByHour: data.performanceByHour,
-      timeframeDistribution: data.timeframeDistribution,
-      pairPerformance: data.pairPerformance,
-    };
+    const doc = createBrandedPDF('Analyses Avancees', `Timeframe: ${timeframe}`);
+    let y = 55;
 
-    const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `analytics-export-${new Date().toISOString().split('T')[0]}.json`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    toast.success('Analytics exportées !');
+    // Live metrics
+    y = drawSectionTitle(doc, 'Donnees en direct', y);
+    if (data.liveData) {
+      const cardW = 42;
+      const gap = 3;
+      y = drawStatCard(doc, PAGE.marginL, y, cardW, 'Signaux Generes', String(data.liveData.signalsGenerated || 0));
+      y = drawStatCard(doc, PAGE.marginL + cardW + gap, y - 21, cardW, 'Precision IA', data.liveData.aiAccuracy > 0 ? `${data.liveData.aiAccuracy.toFixed(1)}%` : 'N/A', { valueColor: '#D4AF37' });
+      y = drawStatCard(doc, PAGE.marginL + (cardW + gap) * 2, y - 21, cardW, 'Profit Moyen', data.liveData.avgProfit !== 0 ? `$${data.liveData.avgProfit.toFixed(2)}` : 'N/A', { valueColor: data.liveData.avgProfit >= 0 ? '#22C55E' : '#EF4444' });
+      y += 6;
+    }
+
+    // Performance by Hour
+    if (data.performanceByHour && data.performanceByHour.length > 0) {
+      y = checkPageBreak(doc, y, 30);
+      y = drawSectionTitle(doc, 'Performance par heure', y);
+      const headers = [
+        { label: 'Heure', width: 30, align: 'center' as const },
+        { label: 'Signaux', width: 30, align: 'center' as const },
+        { label: 'Win Rate', width: 30, align: 'center' as const },
+        { label: 'Profit', width: 30, align: 'right' as const },
+      ];
+      const rows = data.performanceByHour.map((h: any) => [
+        `${h.hour}:00`,
+        String(h.signals || h.count || 0),
+        `${(h.accuracy || h.winRate || 0).toFixed(1)}%`,
+        h.profit !== undefined ? `$${h.profit.toFixed(2)}` : '-',
+      ]);
+      y = drawTable(doc, PAGE.marginL, y, headers, rows);
+    }
+
+    // Pair Performance
+    if (data.pairPerformance && data.pairPerformance.length > 0) {
+      y = checkPageBreak(doc, y, 30);
+      y = drawSectionTitle(doc, 'Performance par paire', y);
+      const headers = [
+        { label: 'Paire', width: 30 },
+        { label: 'Trades', width: 25, align: 'center' as const },
+        { label: 'Win Rate', width: 30, align: 'center' as const },
+        { label: 'Profit', width: 30, align: 'right' as const },
+      ];
+      const rows = data.pairPerformance.map((p: any) => [
+        p.pair || '-',
+        String(p.trades || p.totalTrades || 0),
+        `${(p.winRate || 0).toFixed(1)}%`,
+        `$${(p.profit || 0).toFixed(2)}`,
+      ]);
+      y = drawTable(doc, PAGE.marginL, y, headers, rows);
+    }
+
+    const dateStr = new Date().toISOString().split('T')[0];
+    savePDF(doc, `a2sniper-advanced-analytics-${dateStr}.pdf`);
+    toast.success('Rapport PDF exporte avec succes !');
   };
 
   if (isLoading) {

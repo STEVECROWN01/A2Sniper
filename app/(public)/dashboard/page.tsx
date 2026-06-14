@@ -5,6 +5,8 @@ import { motion } from 'framer-motion';
 import { Bell, TrendingUp, TrendingDown, RefreshCw, Download, BarChart3, Target, DollarSign, Zap, AlertCircle, Loader2 } from 'lucide-react';
 import { useAppStore } from '@/lib/store';
 import { useAuth } from '@/hooks/use-auth';
+import { createBrandedPDF, drawSectionTitle, drawStatCard, drawTable, savePDF, PAGE } from '@/lib/pdf-export';
+import { toast } from 'sonner';
 
 export default function DashboardPage() {
   useAuth();
@@ -118,22 +120,51 @@ export default function DashboardPage() {
   };
 
   const handleExport = () => {
-    const liveMetrics = {
-      totalTrades,
-      wonTrades,
-      winRate,
-      activeSignals,
-      todayProfit,
-      avgWinrate
-    };
-    const data = { timestamp: new Date().toISOString(), metrics: liveMetrics, signals: signals.slice(0, 10) };
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `a2sniper-export-${new Date().toISOString().split('T')[0]}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
+    const doc = createBrandedPDF('Rapport Dashboard', 'Vue d\'ensemble des performances et signaux');
+    let y = 55;
+
+    // Metrics Section
+    y = drawSectionTitle(doc, 'Metriques en direct', y);
+    const cardW = 42;
+    const cardGap = 3;
+    const startX = PAGE.marginL;
+    y = drawStatCard(doc, startX, y, cardW, 'Total Trades', String(totalTrades));
+    y = drawStatCard(doc, startX + cardW + cardGap, y - 21, cardW, 'Trades Gagnes', String(wonTrades), { valueColor: '#22C55E' });
+    y = drawStatCard(doc, startX + (cardW + cardGap) * 2, y - 21, cardW, 'Win Rate', `${winRate.toFixed(1)}%`, { valueColor: '#D4AF37' });
+    y = drawStatCard(doc, startX + (cardW + cardGap) * 3, y - 21, cardW, 'Signaux Actifs', String(activeSignals), { valueColor: '#3B82F6' });
+    y += 3;
+    y = drawStatCard(doc, startX, y, cardW, 'Profit Aujourd\'hui', `$${todayProfit.toFixed(2)}`, { valueColor: todayProfit >= 0 ? '#22C55E' : '#EF4444' });
+    y = drawStatCard(doc, startX + cardW + cardGap, y - 21, cardW, 'Winrate Moyen', `${(avgWinrate || 0).toFixed(1)}%`, { valueColor: '#D4AF37' });
+
+    // Signals Table
+    y += 6;
+    y = drawSectionTitle(doc, 'Derniers Signaux', y);
+    if (signals.length > 0) {
+      const headers = [
+        { label: 'Paire', width: 30 },
+        { label: 'Direction', width: 22, align: 'center' as const },
+        { label: 'Winrate', width: 22, align: 'center' as const },
+        { label: 'Statut', width: 22, align: 'center' as const },
+        { label: 'Payout', width: 20, align: 'right' as const },
+      ];
+      const rows = signals.slice(0, 20).map(s => [
+        s.pair || '-',
+        s.direction || '-',
+        s.winrate ? `${s.winrate}%` : '-',
+        s.status || '-',
+        s.payout ? `${s.payout}%` : '-',
+      ]);
+      y = drawTable(doc, PAGE.marginL, y, headers, rows);
+    } else {
+      doc.setFontSize(8);
+      doc.setTextColor(107, 114, 128);
+      doc.text('Aucun signal disponible.', PAGE.marginL + 4, y + 4);
+      y += 10;
+    }
+
+    const dateStr = new Date().toISOString().split('T')[0];
+    savePDF(doc, `a2sniper-dashboard-${dateStr}.pdf`);
+    toast.success('Rapport PDF exporte avec succes !');
   };
 
   const TechnicalGauge = ({ value }: { value: number }) => {
@@ -259,7 +290,7 @@ export default function DashboardPage() {
             <button
               onClick={handleExport}
               className="p-3 bg-[#0a0a0c] border border-white/5 rounded-xl hover:bg-white/[0.03] text-gray-400 hover:text-white transition-all"
-              title="Exporter les données"
+              title="Exporter en PDF"
             >
               <Download className="w-5 h-5" />
             </button>

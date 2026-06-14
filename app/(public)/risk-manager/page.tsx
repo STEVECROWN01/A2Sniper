@@ -26,6 +26,7 @@ import {
 import { toast } from 'sonner';
 import { useAppStore } from '@/lib/store';
 import { useAuth } from '@/hooks/use-auth';
+import { createBrandedPDF, drawSectionTitle, drawStatCard, drawTable, drawInfoRow, drawRiskBadge, savePDF, PAGE, checkPageBreak } from '@/lib/pdf-export';
 
 type RiskLevel = 'Low' | 'Medium' | 'High' | 'Critical';
 
@@ -218,28 +219,60 @@ export default function RiskManagerPage() {
     }
   };
 
-  const handleExportJSON = () => {
-    const exportData = {
-      exportDate: new Date().toISOString(),
-      settings: { initialCapital, payout, sessionCounter },
-      riskAnalysis: {
-        winRate: displayWinRate,
-        riskLevel,
-        totalProfit: results.totalProfit,
-        accountGain: results.accountGain,
-        wins: results.wins,
-        losses: results.losses,
-      },
-      trades: results.computedTrades.filter(t => t.result),
-    };
-    const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `a2sniper-risk-export-${new Date().toISOString().split('T')[0]}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-    toast.success('Données exportées en JSON.');
+  const handleExportPDF = () => {
+    const doc = createBrandedPDF('Risk Manager', 'Gestionnaire de capital professionnel A2Sniper 3.0');
+    let y = 55;
+
+    // Configuration
+    y = drawSectionTitle(doc, 'Configuration', y);
+    y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Capital Initial', `$${initialCapital.toFixed(2)}`);
+    y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Payout Marche', `${payout}%`, { valueColor: '#D4AF37' });
+    y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Session', `#${sessionCounter}`);
+    y += 2;
+
+    // Risk Stats
+    y = drawSectionTitle(doc, 'Analyse de risque', y);
+    const cardW = 42;
+    const gap = 3;
+    y = drawStatCard(doc, PAGE.marginL, y, cardW, 'Balance', `$${results.currentBalance.toFixed(2)}`);
+    y = drawStatCard(doc, PAGE.marginL + cardW + gap, y - 21, cardW, 'Profit Net', `${results.totalProfit >= 0 ? '+' : ''}$${results.totalProfit.toFixed(2)}`, { valueColor: results.totalProfit >= 0 ? '#22C55E' : '#EF4444' });
+    y = drawStatCard(doc, PAGE.marginL + (cardW + gap) * 2, y - 21, cardW, 'Win Rate', displayWinRate > 0 ? `${displayWinRate.toFixed(1)}%` : 'N/A', { valueColor: '#D4AF37' });
+    y = drawStatCard(doc, PAGE.marginL + (cardW + gap) * 3, y - 21, cardW, 'Gain', `${results.accountGain >= 0 ? '+' : ''}${results.accountGain.toFixed(2)}%`, { valueColor: results.accountGain >= 0 ? '#22C55E' : '#EF4444' });
+    y += 3;
+
+    // Risk Level Badge
+    y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Niveau de Risque', '');
+    drawRiskBadge(doc, PAGE.marginL + 50, y - 1, riskLevel);
+    y += 6;
+
+    // Trades Table
+    const validTrades = results.computedTrades.filter(t => t.result);
+    if (validTrades.length > 0) {
+      y = checkPageBreak(doc, y, 30);
+      y = drawSectionTitle(doc, 'Journal de trading', y);
+      const headers = [
+        { label: '#', width: 12 },
+        { label: 'Resultat', width: 22, align: 'center' as const },
+        { label: 'Mise ($)', width: 28, align: 'right' as const },
+        { label: 'Retour ($)', width: 28, align: 'right' as const },
+        { label: 'Balance ($)', width: 30, align: 'right' as const },
+      ];
+      const rows = validTrades.map((t, i) => {
+        const origIdx = results.computedTrades.indexOf(t);
+        return [
+          `#${origIdx + 1}`,
+          t.result || '-',
+          t.amount ? t.amount.toFixed(2) : '-',
+          t.result === 'WIN' ? `+${t.return?.toFixed(2) || '0.00'}` : t.result === 'LOSS' ? `-${t.amount?.toFixed(2) || '0.00'}` : '-',
+          t.balance === '-' ? '-' : `$${t.balance}`,
+        ];
+      });
+      y = drawTable(doc, PAGE.marginL, y, headers, rows);
+    }
+
+    const dateStr = new Date().toISOString().split('T')[0];
+    savePDF(doc, `a2sniper-risk-${dateStr}.pdf`);
+    toast.success('Rapport PDF exporte avec succes !');
   };
 
   return (
@@ -276,10 +309,10 @@ export default function RiskManagerPage() {
                 {isSaving ? 'Sauvegarde...' : justSaved ? 'Sauvegardé !' : 'SAUVEGARDER'}
               </button>
               <button
-                onClick={handleExportJSON}
+                onClick={handleExportPDF}
                 className="px-6 py-2 bg-[#D4AF37] hover:bg-[#c5a059] rounded-xl text-xs font-black text-black flex items-center gap-2 transition-all shadow-lg shadow-[#D4AF37]/20"
               >
-                <Download className="w-4 h-4 text-black" /> EXPORTER JSON
+                <Download className="w-4 h-4 text-black" /> EXPORTER PDF
               </button>
             </div>
           </div>
