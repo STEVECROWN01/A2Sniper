@@ -6,7 +6,7 @@ import { Bot, Zap, TrendingUp, TrendingDown, ChevronRight, ChevronLeft, ShieldAl
 import { useAppStore } from '@/lib/store';
 import { toast } from 'sonner';
 import { tradingPairs, Signal, UserStats } from '@/lib/mock-data';
-import { createBrandedPDF, drawSectionTitle, drawStatCard, drawTable, drawInfoRow, drawRiskBadge, savePDF, PAGE } from '@/lib/pdf-export';
+import { createBrandedPDF, drawSectionTitle, drawStatCard, drawTable, drawInfoRow, drawRiskBadge, drawUserInfoCard, savePDF, PAGE, PDFUserInfo } from '@/lib/pdf-export';
 
 interface SignalPairData {
   direction?: string;
@@ -800,8 +800,19 @@ function RiskManagerPanel({ onClose }: { onClose: () => void }) {
   };
 
   const handleExportPDF = () => {
-    const doc = createBrandedPDF('Risk Manager - Bot Telegram', 'Session de trading A2Sniper');
-    let y = 55;
+    // Get user info from Zustand store for personalization
+    const storeUser = useAppStore.getState().user;
+    const pdfUser: PDFUserInfo = {
+      name: storeUser?.name,
+      email: storeUser?.email,
+      plan: storeUser?.plan,
+      userId: storeUser?.id,
+    };
+    const doc = createBrandedPDF('Risk Manager - Bot Telegram', 'Session de trading A2Sniper', pdfUser);
+    let y = 58;
+
+    // User info card
+    y = drawUserInfoCard(doc, y, pdfUser);
 
     // Configuration
     y = drawSectionTitle(doc, 'Configuration', y);
@@ -845,7 +856,7 @@ function RiskManagerPanel({ onClose }: { onClose: () => void }) {
     }
 
     const dateStr = new Date().toISOString().split('T')[0];
-    savePDF(doc, `a2sniper-risk-telegram-${dateStr}.pdf`);
+    savePDF(doc, `a2sniper-risk-telegram-${dateStr}.pdf`, pdfUser);
     toast.success('Rapport PDF exporte avec succes !');
   };
 

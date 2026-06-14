@@ -7,7 +7,7 @@ import { User, Bell, Shield, Palette, Save, Check, Camera, Key, Globe, Clock, Tr
 import { useAppStore } from '@/lib/store';
 import { useAuth } from '@/hooks/use-auth';
 import { toast } from 'sonner';
-import { createBrandedPDF, drawSectionTitle, drawInfoRow, savePDF, PAGE } from '@/lib/pdf-export';
+import { createBrandedPDF, drawSectionTitle, drawInfoRow, drawUserInfoCard, savePDF, PAGE, PDFUserInfo } from '@/lib/pdf-export';
 
 export default function SettingsPage() {
   useAuth();
@@ -277,8 +277,17 @@ export default function SettingsPage() {
         if (res.ok) serverData = await res.json();
       } catch {}
 
-      const doc = createBrandedPDF('Export de donnees', 'Donnees du compte et parametres');
-      let y = 55;
+      const pdfUser: PDFUserInfo = {
+        name: user?.name,
+        email: user?.email,
+        plan: user?.plan,
+        userId: user?.id,
+      };
+      const doc = createBrandedPDF('Export de donnees', 'Donnees du compte et parametres', pdfUser);
+      let y = 58;
+
+      // User info card
+      y = drawUserInfoCard(doc, y, pdfUser);
 
       // User info
       y = drawSectionTitle(doc, 'Informations du compte', y);
@@ -308,7 +317,7 @@ export default function SettingsPage() {
       }
 
       const dateStr = new Date().toISOString().split('T')[0];
-      savePDF(doc, `a2sniper-donnees-${dateStr}.pdf`);
+      savePDF(doc, `a2sniper-donnees-${dateStr}.pdf`, pdfUser);
       toast.success('Rapport PDF exporte avec succes !');
     } catch {
       toast.error('Erreur lors de l\'export. Veuillez réessayer.');

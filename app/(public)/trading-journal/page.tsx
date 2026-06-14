@@ -2,9 +2,11 @@
 
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Calendar, BarChart3, Target, DollarSign, Info, Trash2, ArrowUpRight, ArrowDownRight, AlertTriangle, Loader2 } from 'lucide-react';
+import { Calendar, BarChart3, Target, DollarSign, Info, Trash2, ArrowUpRight, ArrowDownRight, AlertTriangle, Loader2, Download } from 'lucide-react';
 import { useAuth } from '@/hooks/use-auth';
+import { useAppStore } from '@/lib/store';
 import { toast } from 'sonner';
+import { createBrandedPDF, drawSectionTitle, drawStatCard, drawTable, drawInfoRow, drawUserInfoCard, drawRiskBadge, savePDF, PAGE, checkPageBreak, PDFUserInfo } from '@/lib/pdf-export';
 
 interface TradeEntry {
   result: string;
@@ -31,6 +33,7 @@ interface Stats {
 
 export default function TradingJournalPage() {
   useAuth();
+  const { user } = useAppStore();
   const [sessionData, setSessionData] = useState<SessionData | null>(null);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
@@ -117,6 +120,86 @@ export default function TradingJournalPage() {
     }, 800);
   };
 
+  // ── Export PDF ──
+  const handleExportPDF = () => {
+    if (!sessionData) return;
+
+    const pdfUser: PDFUserInfo = {
+      name: user?.name,
+      email: user?.email,
+      plan: user?.plan,
+      userId: user?.id,
+    };
+
+    const doc = createBrandedPDF('Trading Journal', 'Journal de trading et performances', pdfUser);
+    let y = 58;
+
+    // User info card
+    y = drawUserInfoCard(doc, y, pdfUser);
+
+    // Session Info Section
+    y = drawSectionTitle(doc, 'Informations Session', y);
+    y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Session', `#${sessionData.sessionCounter}`);
+    y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Capital Initial', `$${sessionData.initialCapital.toFixed(2)}`);
+    y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Payout', `${sessionData.payout}%`, { valueColor: '#D4AF37' });
+    y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Total Trades', `${stats.totalTrades}`);
+    y += 2;
+
+    // Performance Stats
+    y = drawSectionTitle(doc, 'Performances', y);
+    const cardW = 42;
+    const gap = 3;
+    y = drawStatCard(doc, PAGE.marginL, y, cardW, 'Capital Initial', `$${stats.capital.toFixed(2)}`);
+    y = drawStatCard(doc, PAGE.marginL + cardW + gap, y - 21, cardW, 'Balance Actuelle', `$${stats.balance.toFixed(2)}`, { valueColor: '#D4AF37' });
+    y = drawStatCard(doc, PAGE.marginL + (cardW + gap) * 2, y - 21, cardW, 'Net Profit / Loss', `${stats.profit >= 0 ? '+' : ''}$${stats.profit.toFixed(2)}`, { valueColor: stats.profit >= 0 ? '#22C55E' : '#EF4444' });
+    y = drawStatCard(doc, PAGE.marginL + (cardW + gap) * 3, y - 21, cardW, 'Win Rate', `${stats.winRate.toFixed(1)}%`, { valueColor: '#D4AF37' });
+    y += 3;
+
+    // Win/Loss Breakdown
+    y = drawSectionTitle(doc, 'Répartition des Trades', y);
+    y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Trades Réussis (WIN)', `${stats.wins}`, { valueColor: '#22C55E' });
+    y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Trades Perdus (LOSS)', `${stats.losses}`, { valueColor: '#EF4444' });
+    y += 2;
+
+    // Risk Level
+    const riskLevel = stats.totalTrades < 5 ? 'Medium' : stats.profit < -sessionData.initialCapital * 0.2 ? 'Critical' : stats.profit < -sessionData.initialCapital * 0.1 || stats.winRate < 45 ? 'High' : stats.profit < 0 || stats.winRate < 55 ? 'Medium' : 'Low';
+    y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Niveau de Risque', '');
+    drawRiskBadge(doc, PAGE.marginL + 50, y - 1, riskLevel);
+    y += 6;
+
+    // Trades Table
+    if (validTrades.length > 0) {
+      y = checkPageBreak(doc, y, 30);
+      y = drawSectionTitle(doc, 'Historique Détaillé des Trades', y);
+
+      const headers = [
+        { label: '#', width: 12 },
+        { label: 'Résultat', width: 22, align: 'center' as const },
+        { label: 'Mise ($)', width: 28, align: 'right' as const },
+        { label: 'Profit / Perte ($)', width: 35, align: 'right' as const },
+        { label: 'Cumul ($)', width: 28, align: 'right' as const },
+      ];
+
+      let runningProfit = 0;
+      const rows = validTrades.map((t: TradeEntry, i: number) => {
+        const profitLoss = t.result === 'WIN' ? t.amount * (sessionData.payout / 100) : -t.amount;
+        runningProfit += profitLoss;
+        return [
+          `#${i + 1}`,
+          t.result,
+          t.amount.toFixed(2),
+          profitLoss >= 0 ? `+${profitLoss.toFixed(2)}` : `${profitLoss.toFixed(2)}`,
+          runningProfit >= 0 ? `+${runningProfit.toFixed(2)}` : `${runningProfit.toFixed(2)}`,
+        ];
+      });
+      y = drawTable(doc, PAGE.marginL, y, headers, rows);
+    }
+
+    const dateStr = new Date().toISOString().split('T')[0];
+    savePDF(doc, `a2sniper-journal-${dateStr}.pdf`, pdfUser);
+    toast.success('Rapport PDF du journal exporté avec succès !');
+  };
+
   return (
     <div className="space-y-8">
       {/* Header */}
@@ -130,13 +213,21 @@ export default function TradingJournalPage() {
           </p>
         </div>
         {sessionData && (
-          <button
-            onClick={handleResetJournal}
-            className="flex items-center gap-2 px-4 py-2.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 hover:text-red-300 rounded-xl text-xs font-black uppercase tracking-wider transition-all border border-red-500/20 active:scale-95"
-          >
-            <Trash2 className="w-4 h-4" />
-            Réinitialiser le Journal
-          </button>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={handleExportPDF}
+              className="px-6 py-2.5 bg-[#D4AF37] hover:bg-[#c5a059] rounded-xl text-xs font-black text-black flex items-center gap-2 transition-all shadow-lg shadow-[#D4AF37]/20"
+            >
+              <Download className="w-4 h-4 text-black" /> EXPORTER PDF
+            </button>
+            <button
+              onClick={handleResetJournal}
+              className="flex items-center gap-2 px-4 py-2.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 hover:text-red-300 rounded-xl text-xs font-black uppercase tracking-wider transition-all border border-red-500/20 active:scale-95"
+            >
+              <Trash2 className="w-4 h-4" />
+              Réinitialiser
+            </button>
+          </div>
         )}
       </div>
 

@@ -9,12 +9,12 @@ import { PerformanceChart } from '@/components/ui/performance-chart';
 import { useAppStore } from '@/lib/store';
 import { useAuth } from '@/hooks/use-auth';
 import { tradingPairs } from '@/lib/mock-data';
-import { createBrandedPDF, drawSectionTitle, drawStatCard, drawTable, drawInfoRow, savePDF, PAGE, addBrandedPage, checkPageBreak } from '@/lib/pdf-export';
+import { createBrandedPDF, drawSectionTitle, drawStatCard, drawTable, drawInfoRow, drawUserInfoCard, savePDF, PAGE, addBrandedPage, checkPageBreak, PDFUserInfo } from '@/lib/pdf-export';
 import { toast } from 'sonner';
 
 export default function PerformancePage() {
   useAuth();
-  const { signals, userStats, fetchPerformance, fetchSignals } = useAppStore();
+  const { signals, userStats, fetchPerformance, fetchSignals, user } = useAppStore();
   const [selectedTimeframe, setSelectedTimeframe] = useState('1M');
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
@@ -189,8 +189,17 @@ export default function PerformancePage() {
   };
 
   const handleExportPerformance = () => {
-    const doc = createBrandedPDF('Analyse de Performance', `Periode: ${selectedTimeframe}`);
-    let y = 55;
+    const pdfUser: PDFUserInfo = {
+      name: user?.name,
+      email: user?.email,
+      plan: user?.plan,
+      userId: user?.id,
+    };
+    const doc = createBrandedPDF('Analyse de Performance', `Periode: ${selectedTimeframe}`, pdfUser);
+    let y = 58;
+
+    // User info card
+    y = drawUserInfoCard(doc, y, pdfUser);
 
     // Key Metrics
     y = drawSectionTitle(doc, 'Metriques cles', y);
@@ -260,7 +269,7 @@ export default function PerformancePage() {
     }
 
     const dateStr = new Date().toISOString().split('T')[0];
-    savePDF(doc, `a2sniper-performance-${dateStr}.pdf`);
+    savePDF(doc, `a2sniper-performance-${dateStr}.pdf`, pdfUser);
     toast.success('Rapport PDF exporte avec succes !');
   };
 

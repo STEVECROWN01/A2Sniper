@@ -5,7 +5,7 @@ import { motion } from 'framer-motion';
 import { Bell, TrendingUp, TrendingDown, RefreshCw, Download, BarChart3, Target, DollarSign, Zap, AlertCircle, Loader2 } from 'lucide-react';
 import { useAppStore } from '@/lib/store';
 import { useAuth } from '@/hooks/use-auth';
-import { createBrandedPDF, drawSectionTitle, drawStatCard, drawTable, savePDF, PAGE } from '@/lib/pdf-export';
+import { createBrandedPDF, drawSectionTitle, drawStatCard, drawTable, drawUserInfoCard, savePDF, PAGE, PDFUserInfo } from '@/lib/pdf-export';
 import { toast } from 'sonner';
 
 export default function DashboardPage() {
@@ -120,8 +120,17 @@ export default function DashboardPage() {
   };
 
   const handleExport = () => {
-    const doc = createBrandedPDF('Rapport Dashboard', 'Vue d\'ensemble des performances et signaux');
-    let y = 55;
+    const pdfUser: PDFUserInfo = {
+      name: user?.name,
+      email: user?.email,
+      plan: user?.plan,
+      userId: user?.id,
+    };
+    const doc = createBrandedPDF('Rapport Dashboard', 'Vue d\'ensemble des performances et signaux', pdfUser);
+    let y = 58;
+
+    // User info card
+    y = drawUserInfoCard(doc, y, pdfUser);
 
     // Metrics Section
     y = drawSectionTitle(doc, 'Metriques en direct', y);
@@ -163,7 +172,7 @@ export default function DashboardPage() {
     }
 
     const dateStr = new Date().toISOString().split('T')[0];
-    savePDF(doc, `a2sniper-dashboard-${dateStr}.pdf`);
+    savePDF(doc, `a2sniper-dashboard-${dateStr}.pdf`, pdfUser);
     toast.success('Rapport PDF exporte avec succes !');
   };
 

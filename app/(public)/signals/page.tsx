@@ -8,12 +8,12 @@ import { useAppStore } from '@/lib/store';
 import { useAuth } from '@/hooks/use-auth';
 import { tradingPairs } from '@/lib/mock-data';
 import { validateSSID } from '@/lib/validate-ssid';
-import { createBrandedPDF, drawSectionTitle, drawStatCard, drawTable, drawInfoRow, savePDF, PAGE } from '@/lib/pdf-export';
+import { createBrandedPDF, drawSectionTitle, drawStatCard, drawTable, drawInfoRow, drawUserInfoCard, savePDF, PAGE, PDFUserInfo } from '@/lib/pdf-export';
 import { toast } from 'sonner';
 
 export default function SignalsPage() {
   useAuth();
-  const { signals, liveStatus, connectMarket, disconnectMarket, fetchMarketStatus, marketInfo } = useAppStore();
+  const { signals, liveStatus, connectMarket, disconnectMarket, fetchMarketStatus, marketInfo, user } = useAppStore();
   // Persist SSID in localStorage so it survives page refreshes
   const [ssid, setSsidState] = useState('');
   const [isConnecting, setIsConnecting] = useState(false);
@@ -123,8 +123,17 @@ export default function SignalsPage() {
   };
 
   const handleExportSignals = () => {
-    const doc = createBrandedPDF('Rapport Signaux', 'Signaux de trading filtrés et statistiques');
-    let y = 55;
+    const pdfUser: PDFUserInfo = {
+      name: user?.name,
+      email: user?.email,
+      plan: user?.plan,
+      userId: user?.id,
+    };
+    const doc = createBrandedPDF('Rapport Signaux', 'Signaux de trading filtrés et statistiques', pdfUser);
+    let y = 58;
+
+    // User info card
+    y = drawUserInfoCard(doc, y, pdfUser);
 
     // Filter info
     y = drawSectionTitle(doc, 'Filtres appliques', y);
@@ -171,7 +180,7 @@ export default function SignalsPage() {
     }
 
     const dateStr = new Date().toISOString().split('T')[0];
-    savePDF(doc, `a2sniper-signaux-${dateStr}.pdf`);
+    savePDF(doc, `a2sniper-signaux-${dateStr}.pdf`, pdfUser);
     toast.success('Rapport PDF exporte avec succes !');
   };
 

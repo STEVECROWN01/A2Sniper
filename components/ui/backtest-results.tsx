@@ -4,7 +4,8 @@ import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { X, Download, TrendingUp, TrendingDown, DollarSign, Target, Calendar, BarChart3 } from 'lucide-react';
 import { BacktestResult } from '@/lib/backtesting';
-import { createBrandedPDF, drawSectionTitle, drawStatCard, drawTable, drawInfoRow, savePDF, PAGE, checkPageBreak } from '@/lib/pdf-export';
+import { useAppStore } from '@/lib/store';
+import { createBrandedPDF, drawSectionTitle, drawStatCard, drawTable, drawInfoRow, drawUserInfoCard, savePDF, PAGE, checkPageBreak, PDFUserInfo } from '@/lib/pdf-export';
 
 interface BacktestResultsProps {
   result: BacktestResult;
@@ -15,10 +16,22 @@ export function BacktestResults({ result, onClose }: BacktestResultsProps) {
   const [activeTab, setActiveTab] = useState('overview');
 
   const handleDownload = (format: 'pdf' | 'csv' | 'json') => {
+    // Get user info for personalization from Zustand store
+    const storeUser = useAppStore.getState().user;
+    const pdfUser: PDFUserInfo = {
+      name: storeUser?.name,
+      email: storeUser?.email,
+      plan: storeUser?.plan,
+      userId: storeUser?.id,
+    };
+
     if (format === 'pdf') {
       // Professional branded PDF export
-      const doc = createBrandedPDF('Resultats du Backtest', 'Analyse detaillee des performances historiques');
-      let y = 55;
+      const doc = createBrandedPDF('Resultats du Backtest', 'Analyse detaillee des performances historiques', pdfUser);
+      let y = 58;
+
+      // User info card
+      y = drawUserInfoCard(doc, y, pdfUser);
 
       // Key Metrics
       y = drawSectionTitle(doc, 'Metriques cles', y);
@@ -69,7 +82,7 @@ export function BacktestResults({ result, onClose }: BacktestResultsProps) {
       }
 
       const dateStr = new Date().toISOString().split('T')[0];
-      savePDF(doc, `a2sniper-backtest-${dateStr}.pdf`);
+      savePDF(doc, `a2sniper-backtest-${dateStr}.pdf`, pdfUser);
       return;
     }
 

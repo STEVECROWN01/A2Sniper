@@ -29,15 +29,24 @@ export const PAGE = {
   marginR: 15,
   marginT: 12,
   contentW: 180, // 210 - 15 - 15
-  headerH: 42,
+  headerH: 50,
   footerH: 18,
 };
+
+// ── User info interface ──
+export interface PDFUserInfo {
+  name?: string;
+  email?: string;
+  plan?: string;
+  userId?: string;
+}
 
 /**
  * Create a new jsPDF instance with A2Sniper branding ready.
  * Draws header band + footer on every page.
+ * Includes user personalization if user info is provided.
  */
-export function createBrandedPDF(title: string, subtitle?: string): jsPDF {
+export function createBrandedPDF(title: string, subtitle?: string, user?: PDFUserInfo): jsPDF {
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
 
   // ── Header band ──
@@ -58,30 +67,74 @@ export function createBrandedPDF(title: string, subtitle?: string): jsPDF {
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(18);
   doc.setTextColor(212, 175, 55);
-  doc.text('A2SNIPER', PAGE.marginL + 2, 17);
+  doc.text('A2SNIPER', PAGE.marginL + 2, 14);
 
   // "3.0" version tag
   doc.setFontSize(9);
   doc.setTextColor(156, 163, 175);
-  doc.text('v3.0', PAGE.marginL + 50, 17);
+  doc.text('v3.0', PAGE.marginL + 50, 14);
 
   // Title
   doc.setFontSize(11);
   doc.setTextColor(255, 255, 255);
-  doc.text(title.toUpperCase(), PAGE.marginL + 2, 30);
+  doc.text(title.toUpperCase(), PAGE.marginL + 2, 24);
 
   // Subtitle
   if (subtitle) {
     doc.setFontSize(7.5);
     doc.setTextColor(156, 163, 175);
-    doc.text(subtitle, PAGE.marginL + 2, 37);
+    doc.text(subtitle, PAGE.marginL + 2, 30);
   }
 
   // Export date on right
   doc.setFontSize(7);
   doc.setTextColor(156, 163, 175);
   const dateStr = new Date().toLocaleDateString('fr-FR', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-  doc.text(`Export: ${dateStr}`, PAGE.width - PAGE.marginR, 17, { align: 'right' });
+  doc.text(`Export: ${dateStr}`, PAGE.width - PAGE.marginR, 14, { align: 'right' });
+
+  // ── User info section in header ──
+  if (user && (user.name || user.email)) {
+    // User avatar circle (gold border)
+    const avatarX = PAGE.width - PAGE.marginR - 40;
+    const avatarY = 22;
+
+    // User name
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8);
+    doc.setTextColor(212, 175, 55);
+    const displayName = user.name || user.email?.split('@')[0] || 'Utilisateur';
+    doc.text(displayName, PAGE.width - PAGE.marginR, avatarY, { align: 'right' });
+
+    // User email
+    if (user.email) {
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(6.5);
+      doc.setTextColor(156, 163, 175);
+      doc.text(user.email, PAGE.width - PAGE.marginR, avatarY + 4.5, { align: 'right' });
+    }
+
+    // User plan badge
+    if (user.plan) {
+      const planLabel = user.plan.charAt(0).toUpperCase() + user.plan.slice(1).toLowerCase();
+      const planWidth = doc.getTextWidth(planLabel) + 6;
+
+      // Badge background
+      const planRgb = hexToRgb(BRAND.gold);
+      doc.setFillColor(planRgb.r, planRgb.g, planRgb.b);
+      doc.roundedRect(PAGE.width - PAGE.marginR - planWidth, avatarY + 7, planWidth, 5, 1, 1, 'F');
+
+      // Badge text
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(6);
+      doc.setTextColor(10, 11, 14);
+      doc.text(planLabel, PAGE.width - PAGE.marginR - planWidth / 2, avatarY + 10.5, { align: 'center' });
+    }
+
+    // Gold separator line between main header and user info
+    doc.setDrawColor(212, 175, 55);
+    doc.setLineWidth(0.15);
+    doc.line(PAGE.marginL, 34, PAGE.width - PAGE.marginR, 34);
+  }
 
   // ── Footer function (called per page) ──
   const drawFooter = () => {
@@ -93,7 +146,10 @@ export function createBrandedPDF(title: string, subtitle?: string): jsPDF {
 
     doc.setFontSize(6.5);
     doc.setTextColor(156, 163, 175);
-    doc.text('A2Sniper 3.0 — Rapport confidentiel', PAGE.marginL, pageH - 8);
+    const footerText = user?.name
+      ? `A2Sniper 3.0 — Rapport confidentiel pour ${user.name}`
+      : 'A2Sniper 3.0 — Rapport confidentiel';
+    doc.text(footerText, PAGE.marginL, pageH - 8);
     doc.text(`Page ${doc.getCurrentPageInfo().pageNumber}`, PAGE.width - PAGE.marginR, pageH - 8, { align: 'right' });
   };
 
@@ -136,6 +192,88 @@ export function addBrandedPage(doc: jsPDF, title?: string): void {
   // Draw footer
   const drawFooter = (doc as any)._drawFooter;
   if (drawFooter) drawFooter();
+}
+
+/**
+ * Draw a user info card at the top of the document.
+ * Shows user name, email, plan, and user ID.
+ */
+export function drawUserInfoCard(
+  doc: jsPDF,
+  y: number,
+  user: PDFUserInfo
+): number {
+  if (!user.name && !user.email) return y;
+
+  // Card background
+  doc.setFillColor(249, 250, 251); // gray-50
+  doc.roundedRect(PAGE.marginL, y, PAGE.contentW, 22, 2, 2, 'F');
+
+  // Gold left accent bar
+  doc.setFillColor(212, 175, 55);
+  doc.rect(PAGE.marginL, y, 2, 22, 'F');
+
+  // User icon area
+  const iconX = PAGE.marginL + 6;
+  const iconY = y + 5;
+
+  // Circle placeholder for avatar
+  doc.setDrawColor(212, 175, 55);
+  doc.setLineWidth(0.5);
+  doc.circle(iconX + 5, iconY + 6, 5, 'S');
+
+  // User initial in circle
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8);
+  doc.setTextColor(212, 175, 55);
+  const initial = (user.name || user.email || 'U').charAt(0).toUpperCase();
+  doc.text(initial, iconX + 5, iconY + 7.5, { align: 'center' });
+
+  // Name
+  const textX = iconX + 14;
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(10);
+  doc.setTextColor(31, 41, 55);
+  doc.text(user.name || user.email?.split('@')[0] || 'Utilisateur', textX, y + 8);
+
+  // Email
+  if (user.email) {
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7);
+    doc.setTextColor(107, 114, 128);
+    doc.text(user.email, textX, y + 13);
+  }
+
+  // Plan badge on the right
+  if (user.plan) {
+    const planLabel = user.plan.charAt(0).toUpperCase() + user.plan.slice(1).toLowerCase();
+    const planWidth = doc.getTextWidth(planLabel) + 8;
+
+    const planRgb = hexToRgb(BRAND.gold);
+    doc.setFillColor(planRgb.r, planRgb.g, planRgb.b);
+    doc.roundedRect(PAGE.width - PAGE.marginR - planWidth - 4, y + 3, planWidth, 6, 1, 1, 'F');
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(7);
+    doc.setTextColor(10, 11, 14);
+    doc.text(planLabel, PAGE.width - PAGE.marginR - planWidth / 2 - 4, y + 7, { align: 'center' });
+  }
+
+  // User ID on the right
+  if (user.userId) {
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(5.5);
+    doc.setTextColor(156, 163, 175);
+    const shortId = user.userId.length > 12 ? user.userId.substring(0, 12) + '...' : user.userId;
+    doc.text(`ID: ${shortId}`, PAGE.width - PAGE.marginR - 4, y + 16, { align: 'right' });
+  }
+
+  // Divider line
+  doc.setDrawColor(212, 175, 55);
+  doc.setLineWidth(0.15);
+  doc.line(PAGE.marginL, y + 22, PAGE.marginL + PAGE.contentW, y + 22);
+
+  return y + 26;
 }
 
 /**
@@ -347,10 +485,17 @@ export function checkPageBreak(doc: jsPDF, y: number, neededSpace: number = 20):
 }
 
 /**
- * Save the PDF with a branded filename.
+ * Save the PDF with a branded filename that includes the user name.
  */
-export function savePDF(doc: jsPDF, filename: string): void {
-  doc.save(filename);
+export function savePDF(doc: jsPDF, filename: string, user?: PDFUserInfo): void {
+  if (user?.name) {
+    // Insert user name into filename for personalization
+    const sanitized = user.name.toLowerCase().replace(/[^a-z0-9]/g, '-');
+    const parts = filename.replace('.pdf', '');
+    doc.save(`${parts}-${sanitized}.pdf`);
+  } else {
+    doc.save(filename);
+  }
 }
 
 // ── Helper ──

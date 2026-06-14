@@ -7,7 +7,7 @@ import { TrendingUp, Zap, Clock, Target, RefreshCw, Download, Loader2, AlertCirc
 import { toast } from 'sonner';
 import { useAppStore } from '@/lib/store';
 import { Signal } from '@/lib/mock-data';
-import { createBrandedPDF, drawSectionTitle, drawStatCard, drawTable, drawInfoRow, savePDF, PAGE, checkPageBreak } from '@/lib/pdf-export';
+import { createBrandedPDF, drawSectionTitle, drawStatCard, drawTable, drawInfoRow, drawUserInfoCard, savePDF, PAGE, checkPageBreak, PDFUserInfo } from '@/lib/pdf-export';
 
 const darkTooltipStyle = {
   backgroundColor: '#0a0a0c',
@@ -35,7 +35,7 @@ interface AdvancedAnalyticsProps {
 }
 
 export function AdvancedAnalytics({ timeframe = '24H' }: AdvancedAnalyticsProps) {
-  const { signals, fetchSignals, fetchPerformance, userStats } = useAppStore();
+  const { signals, fetchSignals, fetchPerformance, userStats, user } = useAppStore();
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<AnalyticsData | null>(null);
@@ -173,8 +173,17 @@ export function AdvancedAnalytics({ timeframe = '24H' }: AdvancedAnalyticsProps)
 
   const handleExport = () => {
     if (!data) return;
-    const doc = createBrandedPDF('Analyses Avancees', `Timeframe: ${timeframe}`);
-    let y = 55;
+    const pdfUser: PDFUserInfo = {
+      name: user?.name,
+      email: user?.email,
+      plan: user?.plan,
+      userId: user?.id,
+    };
+    const doc = createBrandedPDF('Analyses Avancees', `Timeframe: ${timeframe}`, pdfUser);
+    let y = 58;
+
+    // User info card
+    y = drawUserInfoCard(doc, y, pdfUser);
 
     // Live metrics
     y = drawSectionTitle(doc, 'Donnees en direct', y);
@@ -226,7 +235,7 @@ export function AdvancedAnalytics({ timeframe = '24H' }: AdvancedAnalyticsProps)
     }
 
     const dateStr = new Date().toISOString().split('T')[0];
-    savePDF(doc, `a2sniper-advanced-analytics-${dateStr}.pdf`);
+    savePDF(doc, `a2sniper-advanced-analytics-${dateStr}.pdf`, pdfUser);
     toast.success('Rapport PDF exporte avec succes !');
   };
 

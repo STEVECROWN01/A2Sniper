@@ -26,7 +26,7 @@ import {
 import { toast } from 'sonner';
 import { useAppStore } from '@/lib/store';
 import { useAuth } from '@/hooks/use-auth';
-import { createBrandedPDF, drawSectionTitle, drawStatCard, drawTable, drawInfoRow, drawRiskBadge, savePDF, PAGE, checkPageBreak } from '@/lib/pdf-export';
+import { createBrandedPDF, drawSectionTitle, drawStatCard, drawTable, drawInfoRow, drawRiskBadge, drawUserInfoCard, savePDF, PAGE, checkPageBreak, PDFUserInfo } from '@/lib/pdf-export';
 
 type RiskLevel = 'Low' | 'Medium' | 'High' | 'Critical';
 
@@ -49,7 +49,7 @@ function getRiskLevelStyle(level: RiskLevel) {
 
 export default function RiskManagerPage() {
   useAuth();
-  const { userStats, fetchPerformance } = useAppStore();
+  const { userStats, fetchPerformance, user } = useAppStore();
   const [initialCapital, setInitialCapital] = useState(() => {
     if (typeof window !== 'undefined') {
       const saved = localStorage.getItem('a2sniper_risk_capital');
@@ -220,8 +220,17 @@ export default function RiskManagerPage() {
   };
 
   const handleExportPDF = () => {
-    const doc = createBrandedPDF('Risk Manager', 'Gestionnaire de capital professionnel A2Sniper 3.0');
-    let y = 55;
+    const pdfUser: PDFUserInfo = {
+      name: user?.name,
+      email: user?.email,
+      plan: user?.plan,
+      userId: user?.id,
+    };
+    const doc = createBrandedPDF('Risk Manager', 'Gestionnaire de capital professionnel A2Sniper 3.0', pdfUser);
+    let y = 58;
+
+    // User info card
+    y = drawUserInfoCard(doc, y, pdfUser);
 
     // Configuration
     y = drawSectionTitle(doc, 'Configuration', y);
@@ -271,7 +280,7 @@ export default function RiskManagerPage() {
     }
 
     const dateStr = new Date().toISOString().split('T')[0];
-    savePDF(doc, `a2sniper-risk-${dateStr}.pdf`);
+    savePDF(doc, `a2sniper-risk-${dateStr}.pdf`, pdfUser);
     toast.success('Rapport PDF exporte avec succes !');
   };
 
