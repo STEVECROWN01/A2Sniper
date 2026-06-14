@@ -1597,13 +1597,24 @@ async def disconnect_market():
 
 @app.get("/api/market/status")
 async def get_market_status():
-    return {
-        "is_connected": po_scanner.is_connected,
-        "ssid_preview": po_scanner.ssid[:5] + "..." if po_scanner.ssid else None,
-        "is_demo": po_scanner.is_demo,
-        "uid": po_scanner._uid,
-        "payouts": {pair: po_scanner.get_payout(pair) for pair in OTC_PAIRS}
-    }
+    try:
+        return {
+            "is_connected": po_scanner.is_connected,
+            "ssid_preview": po_scanner.ssid[:5] + "..." if po_scanner.ssid else None,
+            "is_demo": po_scanner.is_demo,
+            "uid": po_scanner._uid,
+            "payouts": {pair: po_scanner.get_payout(pair) for pair in OTC_PAIRS}
+        }
+    except Exception as e:
+        logger.error(f"[MARKET STATUS] Error: {e}")
+        return {
+            "is_connected": False,
+            "ssid_preview": None,
+            "is_demo": True,
+            "uid": None,
+            "payouts": {pair: None for pair in OTC_PAIRS},
+            "error": str(e)[:200]
+        }
 
 
 @app.middleware("http")
