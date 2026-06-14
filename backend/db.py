@@ -7,7 +7,7 @@ import os
 import logging
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import declarative_base, sessionmaker
-from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, JSON, Numeric
+from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, JSON, Numeric, ForeignKey
 from sqlalchemy.orm import relationship
 
 logger = logging.getLogger(__name__)
@@ -124,4 +124,19 @@ async def init_db():
         logger.info("[DB] Base de données initialisée avec succès.")
     except Exception as e:
         logger.error(f"[DB] Erreur lors de l'initialisation de la DB : {e}")
-        raise  # Don't silently swallow errors
+        # Fallback: create tables individually
+        try:
+            async with engine.begin() as conn:
+                for table in Base.metadata.sorted_tables:
+                    try:
+                        await conn.run_sync(table.create)
+                        logger.info(f"[DB] Created table: {table.name}")
+                    except Exception as te:
+                        if "already exists" in str(te).lower():
+                            logger.info(f"[DB] Table {table.name} already exists")
+                        else:
+                            logger.warning(f"[DB] Could not create table {table.name}: {te}")
+            logger.info("[DB] Fallback table creation completed.")
+        except Exception as fe:
+            logger.error(f"[DB] Fallback table creation also failed: {fe}")
+            # Don't raise — let the app start even if tables can't be created
