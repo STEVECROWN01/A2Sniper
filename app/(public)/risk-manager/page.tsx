@@ -280,38 +280,38 @@ export default function RiskManagerPage() {
             <div className="xl:col-span-8 space-y-6">
 
               {/* Stats Bar */}
-              <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-                <div className="bg-[#0a0a0c] p-6 rounded-3xl border border-gray-800/50">
-                  <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-2">Balance Actuelle</p>
-                  <p className="text-2xl font-black text-white tracking-tight">${results.currentBalance.toFixed(2)}</p>
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 sm:gap-4">
+                <div className="bg-[#0a0a0c] p-4 sm:p-6 rounded-2xl border border-gray-800/50 min-w-0">
+                  <p className="text-[9px] sm:text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1 sm:mb-2">Balance Actuelle</p>
+                  <p className="text-lg sm:text-2xl font-black text-white tracking-tight truncate">${results.currentBalance.toFixed(2)}</p>
                 </div>
-                <div className="bg-[#0a0a0c] p-6 rounded-3xl border border-gray-800/50">
-                  <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-2">Profit Net</p>
-                  <p className={`text-2xl font-black tracking-tight ${results.totalProfit >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                <div className="bg-[#0a0a0c] p-4 sm:p-6 rounded-2xl border border-gray-800/50 min-w-0">
+                  <p className="text-[9px] sm:text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1 sm:mb-2">Profit Net</p>
+                  <p className={`text-lg sm:text-2xl font-black tracking-tight truncate ${results.totalProfit >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                     {results.totalProfit >= 0 ? '+' : ''}${results.totalProfit.toFixed(2)}
                   </p>
                 </div>
-                <div className="bg-[#0a0a0c] p-6 rounded-3xl border border-gray-800/50">
-                  <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-2">Win Rate</p>
-                  <p className="text-2xl font-black text-[#D4AF37] tracking-tight">
+                <div className="bg-[#0a0a0c] p-4 sm:p-6 rounded-2xl border border-gray-800/50 min-w-0">
+                  <p className="text-[9px] sm:text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1 sm:mb-2">Win Rate</p>
+                  <p className="text-lg sm:text-2xl font-black text-[#D4AF37] tracking-tight">
                     {displayWinRate > 0 ? `${displayWinRate.toFixed(1)}%` : 'N/A'}
                   </p>
                 </div>
-                <div className="bg-[#0a0a0c] p-6 rounded-3xl border border-gray-800/50">
-                  <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-2">Gain Compte</p>
-                  <p className={`text-2xl font-black tracking-tight ${results.accountGain >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                <div className="bg-[#0a0a0c] p-4 sm:p-6 rounded-2xl border border-gray-800/50 min-w-0">
+                  <p className="text-[9px] sm:text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1 sm:mb-2">Gain Compte</p>
+                  <p className={`text-lg sm:text-2xl font-black tracking-tight truncate ${results.accountGain >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                     {results.accountGain >= 0 ? '+' : ''}{results.accountGain.toFixed(2)}%
                   </p>
                 </div>
-                <div className={`bg-[#0a0a0c] p-6 rounded-3xl border border-gray-800/50`}>
-                  <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-2">Niveau de Risque</p>
-                  <div className={`inline-flex items-center gap-2 px-3 py-1 rounded-lg ${riskStyle.bg} ${riskStyle.border} border`}>
+                <div className={`bg-[#0a0a0c] p-4 sm:p-6 rounded-2xl border border-gray-800/50 min-w-0 col-span-2 sm:col-span-1`}>
+                  <p className="text-[9px] sm:text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1 sm:mb-2">Niveau de Risque</p>
+                  <div className={`inline-flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-1 rounded-lg ${riskStyle.bg} ${riskStyle.border} border`}>
                     {riskLevel === 'High' || riskLevel === 'Critical' ? (
-                      <AlertTriangle className={`w-4 h-4 ${riskStyle.text}`} />
+                      <AlertTriangle className={`w-3.5 h-3.5 sm:w-4 sm:h-4 ${riskStyle.text}`} />
                     ) : (
-                      <ShieldAlert className={`w-4 h-4 ${riskStyle.text}`} />
+                      <ShieldAlert className={`w-3.5 h-3.5 sm:w-4 sm:h-4 ${riskStyle.text}`} />
                     )}
-                    <span className={`text-lg font-black ${riskStyle.text}`}>
+                    <span className={`text-sm sm:text-lg font-black ${riskStyle.text}`}>
                       {riskLevel === 'Low' ? 'Faible' : riskLevel === 'Medium' ? 'Moyen' : riskLevel === 'High' ? 'Élevé' : 'Critique'}
                     </span>
                   </div>
