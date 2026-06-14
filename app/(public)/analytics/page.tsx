@@ -6,7 +6,7 @@ import { RefreshCw, Download } from 'lucide-react';
 import { AdvancedAnalytics } from '@/components/ui/advanced-analytics';
 import { useAppStore } from '@/lib/store';
 import { useAuth } from '@/hooks/use-auth';
-import { createBrandedPDF, drawSectionTitle, drawStatCard, drawTable, drawInfoRow, drawUserInfoCard, savePDF, PAGE, PDFUserInfo } from '@/lib/pdf-export';
+import { createBrandedPDF, drawSectionTitle, drawStatCard, drawTable, drawInfoRow, drawUserInfoCard, savePDF, PAGE, PDFUserInfo, fetchAvatarBase64 } from '@/lib/pdf-export';
 import { toast } from 'sonner';
 
 export default function AnalyticsPage() {
@@ -31,12 +31,14 @@ export default function AnalyticsPage() {
     }, 800);
   };
 
-  const handleExport = () => {
+  const handleExport = async () => {
+    if (user?.avatar) await fetchAvatarBase64(user.avatar);
     const pdfUser: PDFUserInfo = {
       name: user?.name,
       email: user?.email,
       plan: user?.plan,
       userId: user?.id,
+      avatarUrl: user?.avatar,
     };
     const doc = createBrandedPDF('Analyses Avancees', `Periode: ${selectedTimeframe}`, pdfUser);
     let y = 58;

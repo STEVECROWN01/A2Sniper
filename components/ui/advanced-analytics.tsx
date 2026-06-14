@@ -7,7 +7,7 @@ import { TrendingUp, Zap, Clock, Target, RefreshCw, Download, Loader2, AlertCirc
 import { toast } from 'sonner';
 import { useAppStore } from '@/lib/store';
 import { Signal } from '@/lib/mock-data';
-import { createBrandedPDF, drawSectionTitle, drawStatCard, drawTable, drawInfoRow, drawUserInfoCard, savePDF, PAGE, checkPageBreak, PDFUserInfo } from '@/lib/pdf-export';
+import { createBrandedPDF, drawSectionTitle, drawStatCard, drawTable, drawInfoRow, drawUserInfoCard, savePDF, PAGE, checkPageBreak, PDFUserInfo, fetchAvatarBase64 } from '@/lib/pdf-export';
 
 const darkTooltipStyle = {
   backgroundColor: '#0a0a0c',
@@ -171,13 +171,15 @@ export function AdvancedAnalytics({ timeframe = '24H' }: AdvancedAnalyticsProps)
     toast.success('Analytics rafraîchis !');
   };
 
-  const handleExport = () => {
+  const handleExport = async () => {
     if (!data) return;
+    if (user?.avatar) await fetchAvatarBase64(user.avatar);
     const pdfUser: PDFUserInfo = {
       name: user?.name,
       email: user?.email,
       plan: user?.plan,
       userId: user?.id,
+      avatarUrl: user?.avatar,
     };
     const doc = createBrandedPDF('Analyses Avancees', `Timeframe: ${timeframe}`, pdfUser);
     let y = 58;

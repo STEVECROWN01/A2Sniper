@@ -6,7 +6,7 @@ import { Bot, Zap, TrendingUp, TrendingDown, ChevronRight, ChevronLeft, ShieldAl
 import { useAppStore } from '@/lib/store';
 import { toast } from 'sonner';
 import { tradingPairs, Signal, UserStats } from '@/lib/mock-data';
-import { createBrandedPDF, drawSectionTitle, drawStatCard, drawTable, drawInfoRow, drawRiskBadge, drawUserInfoCard, savePDF, PAGE, PDFUserInfo } from '@/lib/pdf-export';
+import { createBrandedPDF, drawSectionTitle, drawStatCard, drawTable, drawInfoRow, drawRiskBadge, drawUserInfoCard, savePDF, PAGE, PDFUserInfo, fetchAvatarBase64 } from '@/lib/pdf-export';
 
 interface SignalPairData {
   direction?: string;
@@ -799,14 +799,16 @@ function RiskManagerPanel({ onClose }: { onClose: () => void }) {
     toast.success("Session sauvegardée avec succès !", { duration: 3000 });
   };
 
-  const handleExportPDF = () => {
+  const handleExportPDF = async () => {
     // Get user info from Zustand store for personalization
     const storeUser = useAppStore.getState().user;
+    if (storeUser?.avatar) await fetchAvatarBase64(storeUser.avatar);
     const pdfUser: PDFUserInfo = {
       name: storeUser?.name,
       email: storeUser?.email,
       plan: storeUser?.plan,
       userId: storeUser?.id,
+      avatarUrl: storeUser?.avatar,
     };
     const doc = createBrandedPDF('Risk Manager - Bot Telegram', 'Session de trading A2Sniper', pdfUser);
     let y = 58;

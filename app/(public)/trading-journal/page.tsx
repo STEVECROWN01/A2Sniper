@@ -6,7 +6,7 @@ import { Calendar, BarChart3, Target, DollarSign, Info, Trash2, ArrowUpRight, Ar
 import { useAuth } from '@/hooks/use-auth';
 import { useAppStore } from '@/lib/store';
 import { toast } from 'sonner';
-import { createBrandedPDF, drawSectionTitle, drawStatCard, drawTable, drawInfoRow, drawUserInfoCard, drawRiskBadge, savePDF, PAGE, checkPageBreak, PDFUserInfo } from '@/lib/pdf-export';
+import { createBrandedPDF, drawSectionTitle, drawStatCard, drawTable, drawInfoRow, drawUserInfoCard, drawRiskBadge, savePDF, PAGE, checkPageBreak, PDFUserInfo, fetchAvatarBase64 } from '@/lib/pdf-export';
 
 interface TradeEntry {
   result: string;
@@ -121,14 +121,20 @@ export default function TradingJournalPage() {
   };
 
   // ── Export PDF ──
-  const handleExportPDF = () => {
+  const handleExportPDF = async () => {
     if (!sessionData) return;
+
+    // Pre-load user avatar if available
+    if (user?.avatar) {
+      await fetchAvatarBase64(user.avatar);
+    }
 
     const pdfUser: PDFUserInfo = {
       name: user?.name,
       email: user?.email,
       plan: user?.plan,
       userId: user?.id,
+      avatarUrl: user?.avatar,
     };
 
     const doc = createBrandedPDF('Trading Journal', 'Journal de trading et performances', pdfUser);

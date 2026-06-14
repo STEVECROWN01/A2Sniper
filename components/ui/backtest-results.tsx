@@ -5,7 +5,7 @@ import { motion } from 'framer-motion';
 import { X, Download, TrendingUp, TrendingDown, DollarSign, Target, Calendar, BarChart3 } from 'lucide-react';
 import { BacktestResult } from '@/lib/backtesting';
 import { useAppStore } from '@/lib/store';
-import { createBrandedPDF, drawSectionTitle, drawStatCard, drawTable, drawInfoRow, drawUserInfoCard, savePDF, PAGE, checkPageBreak, PDFUserInfo } from '@/lib/pdf-export';
+import { createBrandedPDF, drawSectionTitle, drawStatCard, drawTable, drawInfoRow, drawUserInfoCard, savePDF, PAGE, checkPageBreak, PDFUserInfo, fetchAvatarBase64 } from '@/lib/pdf-export';
 
 interface BacktestResultsProps {
   result: BacktestResult;
@@ -15,14 +15,16 @@ interface BacktestResultsProps {
 export function BacktestResults({ result, onClose }: BacktestResultsProps) {
   const [activeTab, setActiveTab] = useState('overview');
 
-  const handleDownload = (format: 'pdf' | 'csv' | 'json') => {
+  const handleDownload = async (format: 'pdf' | 'csv' | 'json') => {
     // Get user info for personalization from Zustand store
     const storeUser = useAppStore.getState().user;
+    if (storeUser?.avatar) await fetchAvatarBase64(storeUser.avatar);
     const pdfUser: PDFUserInfo = {
       name: storeUser?.name,
       email: storeUser?.email,
       plan: storeUser?.plan,
       userId: storeUser?.id,
+      avatarUrl: storeUser?.avatar,
     };
 
     if (format === 'pdf') {

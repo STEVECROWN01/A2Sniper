@@ -1,4 +1,5 @@
 import jsPDF from 'jspdf';
+import { A2SNIPER_LOGO_BASE64, A2SNIPER_WATERMARK_BASE64 } from './pdf-logo';
 
 // ── A2Sniper Brand Colors ──
 const BRAND = {
@@ -39,15 +40,134 @@ export interface PDFUserInfo {
   email?: string;
   plan?: string;
   userId?: string;
+  avatarUrl?: string;  // URL to user's profile picture
+}
+
+/**
+ * Cache for fetched avatar base64 data to avoid re-fetching.
+ */
+const avatarCache = new Map<string, string>();
+
+/**
+ * Fetch a user avatar URL and convert it to base64 for jsPDF embedding.
+ * Returns the base64 data URI or null if fetch fails.
+ */
+export async function fetchAvatarBase64(url: string): Promise<string | null> {
+  if (avatarCache.has(url)) return avatarCache.get(url)!;
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const blob = await res.blob();
+    return new Promise<string | null>((resolve) => {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const result = reader.result as string;
+        if (result) avatarCache.set(url, result);
+        resolve(result);
+      };
+      reader.onerror = () => resolve(null);
+      reader.readAsDataURL(blob);
+    });
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Draw the A2Sniper logo in the header band.
+ * The logo is placed on the right side of the header, inside a gold-bordered circle.
+ */
+function drawHeaderLogo(doc: jsPDF): void {
+  try {
+    const logoSize = 14; // mm
+    const logoX = PAGE.width - PAGE.marginR - logoSize - 2;
+    const logoY = 5;
+
+    // White circle background behind logo (for contrast on dark header)
+    doc.setFillColor(255, 255, 255);
+    doc.circle(logoX + logoSize / 2, logoY + logoSize / 2, logoSize / 2 + 0.5, 'F');
+
+    // Gold border around circle
+    doc.setDrawColor(212, 175, 55);
+    doc.setLineWidth(0.5);
+    doc.circle(logoX + logoSize / 2, logoY + logoSize / 2, logoSize / 2 + 0.5, 'S');
+
+    // Add logo image
+    doc.addImage(A2SNIPER_LOGO_BASE64, 'JPEG', logoX + 1, logoY + 1, logoSize - 2, logoSize - 2);
+  } catch {
+    // If logo fails, just skip it - text branding is still there
+  }
+}
+
+/**
+ * Draw the A2Sniper watermark (filigrane) in the center of the page.
+ * Very subtle, semi-transparent logo in the background.
+ */
+function drawWatermark(doc: jsPDF): void {
+  try {
+    const wmSize = 80; // mm
+    const wmX = (PAGE.width - wmSize) / 2;
+    const wmY = (PAGE.height - wmSize) / 2;
+
+    doc.addImage(A2SNIPER_WATERMARK_BASE64, 'PNG', wmX, wmY, wmSize, wmSize);
+  } catch {
+    // If watermark fails, just skip it
+  }
+}
+
+/**
+ * Draw user avatar image in the header (next to user info) or in the user info card.
+ */
+function drawUserAvatar(doc: jsPDF, x: number, y: number, size: number, avatarBase64: string): void {
+  try {
+    // White circle background
+    doc.setFillColor(255, 255, 255);
+    doc.circle(x + size / 2, y + size / 2, size / 2 + 0.3, 'F');
+
+    // Gold border
+    doc.setDrawColor(212, 175, 55);
+    doc.setLineWidth(0.4);
+    doc.circle(x + size / 2, y + size / 2, size / 2 + 0.3, 'S');
+
+    // Add avatar image
+    doc.addImage(avatarBase64, 'JPEG', x + 0.5, y + 0.5, size - 1, size - 1);
+  } catch {
+    // If avatar fails, fall back to initial letter
+    drawUserAvatarFallback(doc, x, y, size, 'U');
+  }
+}
+
+/**
+ * Fallback: draw user initial in a gold-bordered circle when avatar is unavailable.
+ */
+function drawUserAvatarFallback(doc: jsPDF, x: number, y: number, size: number, initial: string): void {
+  // Light gray circle
+  doc.setFillColor(243, 244, 246);
+  doc.circle(x + size / 2, y + size / 2, size / 2, 'F');
+
+  // Gold border
+  doc.setDrawColor(212, 175, 55);
+  doc.setLineWidth(0.4);
+  doc.circle(x + size / 2, y + size / 2, size / 2, 'S');
+
+  // Initial letter
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(size * 2.5);
+  doc.setTextColor(212, 175, 55);
+  doc.text(initial.toUpperCase(), x + size / 2, y + size / 2 + size * 0.35, { align: 'center' });
 }
 
 /**
  * Create a new jsPDF instance with A2Sniper branding ready.
- * Draws header band + footer on every page.
+ * Draws header band with logo + footer on every page.
  * Includes user personalization if user info is provided.
+ * Draws watermark (filigrane) on each page.
  */
 export function createBrandedPDF(title: string, subtitle?: string, user?: PDFUserInfo): jsPDF {
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+
+  // ── Watermark (draw first, behind everything else) ──
+  drawWatermark(doc);
 
   // ── Header band ──
   // Dark background band
@@ -62,6 +182,9 @@ export function createBrandedPDF(title: string, subtitle?: string, user?: PDFUse
   // Gold left accent stripe
   doc.setFillColor(212, 175, 55);
   doc.rect(0, 0, 3, PAGE.headerH, 'F');
+
+  // A2Sniper Logo in header (right side, before user info)
+  drawHeaderLogo(doc);
 
   // "A2Sniper" branding text
   doc.setFont('helvetica', 'bold');
@@ -90,27 +213,37 @@ export function createBrandedPDF(title: string, subtitle?: string, user?: PDFUse
   doc.setFontSize(7);
   doc.setTextColor(156, 163, 175);
   const dateStr = new Date().toLocaleDateString('fr-FR', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-  doc.text(`Export: ${dateStr}`, PAGE.width - PAGE.marginR, 14, { align: 'right' });
+  doc.text(`Export: ${dateStr}`, PAGE.width - PAGE.marginR - 18, 14, { align: 'right' });
 
   // ── User info section in header ──
   if (user && (user.name || user.email)) {
-    // User avatar circle (gold border)
-    const avatarX = PAGE.width - PAGE.marginR - 40;
-    const avatarY = 22;
+    const avatarY = 20;
 
-    // User name
+    // User avatar in header
+    if (user.avatarUrl) {
+      // We'll try to use the avatar - but since we can't do async in createBrandedPDF,
+      // we use a pre-loaded avatar from the cache if available
+      const cachedAvatar = avatarCache.get(user.avatarUrl);
+      if (cachedAvatar) {
+        drawUserAvatar(doc, PAGE.width - PAGE.marginR - 16, avatarY, 8, cachedAvatar);
+      } else {
+        drawUserAvatarFallback(doc, PAGE.width - PAGE.marginR - 16, avatarY, 8, (user.name || user.email || 'U').charAt(0));
+      }
+    }
+
+    // User name (right-aligned, below logo area)
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(8);
     doc.setTextColor(212, 175, 55);
     const displayName = user.name || user.email?.split('@')[0] || 'Utilisateur';
-    doc.text(displayName, PAGE.width - PAGE.marginR, avatarY, { align: 'right' });
+    doc.text(displayName, PAGE.width - PAGE.marginR - 18, avatarY + 1, { align: 'right' });
 
     // User email
     if (user.email) {
       doc.setFont('helvetica', 'normal');
       doc.setFontSize(6.5);
       doc.setTextColor(156, 163, 175);
-      doc.text(user.email, PAGE.width - PAGE.marginR, avatarY + 4.5, { align: 'right' });
+      doc.text(user.email, PAGE.width - PAGE.marginR - 18, avatarY + 5, { align: 'right' });
     }
 
     // User plan badge
@@ -118,16 +251,14 @@ export function createBrandedPDF(title: string, subtitle?: string, user?: PDFUse
       const planLabel = user.plan.charAt(0).toUpperCase() + user.plan.slice(1).toLowerCase();
       const planWidth = doc.getTextWidth(planLabel) + 6;
 
-      // Badge background
       const planRgb = hexToRgb(BRAND.gold);
       doc.setFillColor(planRgb.r, planRgb.g, planRgb.b);
-      doc.roundedRect(PAGE.width - PAGE.marginR - planWidth, avatarY + 7, planWidth, 5, 1, 1, 'F');
+      doc.roundedRect(PAGE.width - PAGE.marginR - 18 - planWidth, avatarY + 7, planWidth, 5, 1, 1, 'F');
 
-      // Badge text
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(6);
       doc.setTextColor(10, 11, 14);
-      doc.text(planLabel, PAGE.width - PAGE.marginR - planWidth / 2, avatarY + 10.5, { align: 'center' });
+      doc.text(planLabel, PAGE.width - PAGE.marginR - 18 - planWidth / 2, avatarY + 10.5, { align: 'center' });
     }
 
     // Gold separator line between main header and user info
@@ -144,13 +275,18 @@ export function createBrandedPDF(title: string, subtitle?: string, user?: PDFUse
     doc.setLineWidth(0.3);
     doc.line(PAGE.marginL, pageH - PAGE.footerH, PAGE.width - PAGE.marginR, pageH - PAGE.footerH);
 
+    // Small logo in footer
+    try {
+      doc.addImage(A2SNIPER_LOGO_BASE64, 'JPEG', PAGE.marginL, pageH - 15, 5, 5);
+    } catch {}
+
     doc.setFontSize(6.5);
     doc.setTextColor(156, 163, 175);
     const footerText = user?.name
       ? `A2Sniper 3.0 — Rapport confidentiel pour ${user.name}`
       : 'A2Sniper 3.0 — Rapport confidentiel';
-    doc.text(footerText, PAGE.marginL, pageH - 8);
-    doc.text(`Page ${doc.getCurrentPageInfo().pageNumber}`, PAGE.width - PAGE.marginR, pageH - 8, { align: 'right' });
+    doc.text(footerText, PAGE.marginL + 7, pageH - 10);
+    doc.text(`Page ${doc.getCurrentPageInfo().pageNumber}`, PAGE.width - PAGE.marginR, pageH - 10, { align: 'right' });
   };
 
   drawFooter();
@@ -162,10 +298,13 @@ export function createBrandedPDF(title: string, subtitle?: string, user?: PDFUse
 }
 
 /**
- * Add a new page with header + footer branding.
+ * Add a new page with header + footer branding + watermark.
  */
 export function addBrandedPage(doc: jsPDF, title?: string): void {
   doc.addPage();
+
+  // Watermark first (behind everything)
+  drawWatermark(doc);
 
   // Re-draw header
   doc.setFillColor(10, 11, 14);
@@ -177,6 +316,9 @@ export function addBrandedPage(doc: jsPDF, title?: string): void {
 
   doc.setFillColor(212, 175, 55);
   doc.rect(0, 0, 3, PAGE.headerH, 'F');
+
+  // Logo in continued page header
+  drawHeaderLogo(doc);
 
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(14);
@@ -196,7 +338,8 @@ export function addBrandedPage(doc: jsPDF, title?: string): void {
 
 /**
  * Draw a user info card at the top of the document.
- * Shows user name, email, plan, and user ID.
+ * Shows user avatar (if available), name, email, plan, and user ID.
+ * Falls back to initial letter if no avatar is loaded.
  */
 export function drawUserInfoCard(
   doc: jsPDF,
@@ -205,43 +348,46 @@ export function drawUserInfoCard(
 ): number {
   if (!user.name && !user.email) return y;
 
+  const cardH = 24;
+
   // Card background
   doc.setFillColor(249, 250, 251); // gray-50
-  doc.roundedRect(PAGE.marginL, y, PAGE.contentW, 22, 2, 2, 'F');
+  doc.roundedRect(PAGE.marginL, y, PAGE.contentW, cardH, 2, 2, 'F');
 
   // Gold left accent bar
   doc.setFillColor(212, 175, 55);
-  doc.rect(PAGE.marginL, y, 2, 22, 'F');
+  doc.rect(PAGE.marginL, y, 2, cardH, 'F');
 
-  // User icon area
-  const iconX = PAGE.marginL + 6;
-  const iconY = y + 5;
+  // Avatar area
+  const avatarSize = 14;
+  const avatarX = PAGE.marginL + 6;
+  const avatarY = y + (cardH - avatarSize) / 2;
 
-  // Circle placeholder for avatar
-  doc.setDrawColor(212, 175, 55);
-  doc.setLineWidth(0.5);
-  doc.circle(iconX + 5, iconY + 6, 5, 'S');
-
-  // User initial in circle
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(8);
-  doc.setTextColor(212, 175, 55);
-  const initial = (user.name || user.email || 'U').charAt(0).toUpperCase();
-  doc.text(initial, iconX + 5, iconY + 7.5, { align: 'center' });
+  // Check for cached avatar
+  if (user.avatarUrl) {
+    const cachedAvatar = avatarCache.get(user.avatarUrl);
+    if (cachedAvatar) {
+      drawUserAvatar(doc, avatarX, avatarY, avatarSize, cachedAvatar);
+    } else {
+      drawUserAvatarFallback(doc, avatarX, avatarY, avatarSize, (user.name || user.email || 'U').charAt(0));
+    }
+  } else {
+    drawUserAvatarFallback(doc, avatarX, avatarY, avatarSize, (user.name || user.email || 'U').charAt(0));
+  }
 
   // Name
-  const textX = iconX + 14;
+  const textX = avatarX + avatarSize + 4;
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(10);
+  doc.setFontSize(11);
   doc.setTextColor(31, 41, 55);
-  doc.text(user.name || user.email?.split('@')[0] || 'Utilisateur', textX, y + 8);
+  doc.text(user.name || user.email?.split('@')[0] || 'Utilisateur', textX, y + 9);
 
   // Email
   if (user.email) {
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(7);
     doc.setTextColor(107, 114, 128);
-    doc.text(user.email, textX, y + 13);
+    doc.text(user.email, textX, y + 14);
   }
 
   // Plan badge on the right
@@ -251,12 +397,12 @@ export function drawUserInfoCard(
 
     const planRgb = hexToRgb(BRAND.gold);
     doc.setFillColor(planRgb.r, planRgb.g, planRgb.b);
-    doc.roundedRect(PAGE.width - PAGE.marginR - planWidth - 4, y + 3, planWidth, 6, 1, 1, 'F');
+    doc.roundedRect(PAGE.width - PAGE.marginR - planWidth - 4, y + 4, planWidth, 6, 1, 1, 'F');
 
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(7);
     doc.setTextColor(10, 11, 14);
-    doc.text(planLabel, PAGE.width - PAGE.marginR - planWidth / 2 - 4, y + 7, { align: 'center' });
+    doc.text(planLabel, PAGE.width - PAGE.marginR - planWidth / 2 - 4, y + 8, { align: 'center' });
   }
 
   // User ID on the right
@@ -265,15 +411,20 @@ export function drawUserInfoCard(
     doc.setFontSize(5.5);
     doc.setTextColor(156, 163, 175);
     const shortId = user.userId.length > 12 ? user.userId.substring(0, 12) + '...' : user.userId;
-    doc.text(`ID: ${shortId}`, PAGE.width - PAGE.marginR - 4, y + 16, { align: 'right' });
+    doc.text(`ID: ${shortId}`, PAGE.width - PAGE.marginR - 4, y + 17, { align: 'right' });
   }
+
+  // A2Sniper logo small icon bottom-right of card
+  try {
+    doc.addImage(A2SNIPER_LOGO_BASE64, 'JPEG', PAGE.width - PAGE.marginR - 6, y + cardH - 7, 5, 5);
+  } catch {}
 
   // Divider line
   doc.setDrawColor(212, 175, 55);
   doc.setLineWidth(0.15);
-  doc.line(PAGE.marginL, y + 22, PAGE.marginL + PAGE.contentW, y + 22);
+  doc.line(PAGE.marginL, y + cardH, PAGE.marginL + PAGE.contentW, y + cardH);
 
-  return y + 26;
+  return y + cardH + 4;
 }
 
 /**

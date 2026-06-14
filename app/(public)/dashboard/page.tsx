@@ -5,7 +5,7 @@ import { motion } from 'framer-motion';
 import { Bell, TrendingUp, TrendingDown, RefreshCw, Download, BarChart3, Target, DollarSign, Zap, AlertCircle, Loader2 } from 'lucide-react';
 import { useAppStore } from '@/lib/store';
 import { useAuth } from '@/hooks/use-auth';
-import { createBrandedPDF, drawSectionTitle, drawStatCard, drawTable, drawUserInfoCard, savePDF, PAGE, PDFUserInfo } from '@/lib/pdf-export';
+import { createBrandedPDF, drawSectionTitle, drawStatCard, drawTable, drawUserInfoCard, savePDF, PAGE, PDFUserInfo, fetchAvatarBase64 } from '@/lib/pdf-export';
 import { toast } from 'sonner';
 
 export default function DashboardPage() {
@@ -119,12 +119,14 @@ export default function DashboardPage() {
     }, 800);
   };
 
-  const handleExport = () => {
+  const handleExport = async () => {
+    if (user?.avatar) await fetchAvatarBase64(user.avatar);
     const pdfUser: PDFUserInfo = {
       name: user?.name,
       email: user?.email,
       plan: user?.plan,
       userId: user?.id,
+      avatarUrl: user?.avatar,
     };
     const doc = createBrandedPDF('Rapport Dashboard', 'Vue d\'ensemble des performances et signaux', pdfUser);
     let y = 58;

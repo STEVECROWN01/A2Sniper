@@ -26,7 +26,7 @@ import {
 import { toast } from 'sonner';
 import { useAppStore } from '@/lib/store';
 import { useAuth } from '@/hooks/use-auth';
-import { createBrandedPDF, drawSectionTitle, drawStatCard, drawTable, drawInfoRow, drawRiskBadge, drawUserInfoCard, savePDF, PAGE, checkPageBreak, PDFUserInfo } from '@/lib/pdf-export';
+import { createBrandedPDF, drawSectionTitle, drawStatCard, drawTable, drawInfoRow, drawRiskBadge, drawUserInfoCard, savePDF, PAGE, checkPageBreak, PDFUserInfo, fetchAvatarBase64 } from '@/lib/pdf-export';
 
 type RiskLevel = 'Low' | 'Medium' | 'High' | 'Critical';
 
@@ -219,12 +219,17 @@ export default function RiskManagerPage() {
     }
   };
 
-  const handleExportPDF = () => {
+  const handleExportPDF = async () => {
+    // Pre-load user avatar if available
+    if (user?.avatar) {
+      await fetchAvatarBase64(user.avatar);
+    }
     const pdfUser: PDFUserInfo = {
       name: user?.name,
       email: user?.email,
       plan: user?.plan,
       userId: user?.id,
+      avatarUrl: user?.avatar,
     };
     const doc = createBrandedPDF('Risk Manager', 'Gestionnaire de capital professionnel A2Sniper 3.0', pdfUser);
     let y = 58;

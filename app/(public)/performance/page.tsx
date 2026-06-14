@@ -9,7 +9,7 @@ import { PerformanceChart } from '@/components/ui/performance-chart';
 import { useAppStore } from '@/lib/store';
 import { useAuth } from '@/hooks/use-auth';
 import { tradingPairs } from '@/lib/mock-data';
-import { createBrandedPDF, drawSectionTitle, drawStatCard, drawTable, drawInfoRow, drawUserInfoCard, savePDF, PAGE, addBrandedPage, checkPageBreak, PDFUserInfo } from '@/lib/pdf-export';
+import { createBrandedPDF, drawSectionTitle, drawStatCard, drawTable, drawInfoRow, drawUserInfoCard, savePDF, PAGE, addBrandedPage, checkPageBreak, PDFUserInfo, fetchAvatarBase64 } from '@/lib/pdf-export';
 import { toast } from 'sonner';
 
 export default function PerformancePage() {
@@ -188,12 +188,14 @@ export default function PerformancePage() {
     setIsRefreshing(false);
   };
 
-  const handleExportPerformance = () => {
+  const handleExportPerformance = async () => {
+    if (user?.avatar) await fetchAvatarBase64(user.avatar);
     const pdfUser: PDFUserInfo = {
       name: user?.name,
       email: user?.email,
       plan: user?.plan,
       userId: user?.id,
+      avatarUrl: user?.avatar,
     };
     const doc = createBrandedPDF('Analyse de Performance', `Periode: ${selectedTimeframe}`, pdfUser);
     let y = 58;

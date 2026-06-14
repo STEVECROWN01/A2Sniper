@@ -7,7 +7,7 @@ import { User, Bell, Shield, Palette, Save, Check, Camera, Key, Globe, Clock, Tr
 import { useAppStore } from '@/lib/store';
 import { useAuth } from '@/hooks/use-auth';
 import { toast } from 'sonner';
-import { createBrandedPDF, drawSectionTitle, drawInfoRow, drawUserInfoCard, savePDF, PAGE, PDFUserInfo } from '@/lib/pdf-export';
+import { createBrandedPDF, drawSectionTitle, drawInfoRow, drawUserInfoCard, savePDF, PAGE, PDFUserInfo, fetchAvatarBase64 } from '@/lib/pdf-export';
 
 export default function SettingsPage() {
   useAuth();
@@ -282,7 +282,10 @@ export default function SettingsPage() {
         email: user?.email,
         plan: user?.plan,
         userId: user?.id,
+        avatarUrl: user?.avatar,
       };
+      // Pre-load user avatar if available
+      if (user?.avatar) await fetchAvatarBase64(user.avatar);
       const doc = createBrandedPDF('Export de donnees', 'Donnees du compte et parametres', pdfUser);
       let y = 58;
 

@@ -8,7 +8,7 @@ import { useAppStore } from '@/lib/store';
 import { tradingPairs } from '@/lib/mock-data';
 import { toast } from 'sonner';
 import { validateSSID } from '@/lib/validate-ssid';
-import { createBrandedPDF, drawSectionTitle, drawStatCard, drawTable, drawInfoRow, drawUserInfoCard, savePDF, PAGE, PDFUserInfo } from '@/lib/pdf-export';
+import { createBrandedPDF, drawSectionTitle, drawStatCard, drawTable, drawInfoRow, drawUserInfoCard, savePDF, PAGE, PDFUserInfo, fetchAvatarBase64 } from '@/lib/pdf-export';
 import { useAuth } from '@/hooks/use-auth';
 
 export default function AdminSignalsPage() {
@@ -97,12 +97,14 @@ export default function AdminSignalsPage() {
     setIsRefreshing(false);
   };
 
-  const handleExportSignals = () => {
+  const handleExportSignals = async () => {
+    if (user?.avatar) await fetchAvatarBase64(user.avatar);
     const pdfUser: PDFUserInfo = {
       name: user?.name,
       email: user?.email,
       plan: user?.plan,
       userId: user?.id,
+      avatarUrl: user?.avatar,
     };
     const doc = createBrandedPDF('Admin - Signaux', 'Administration des signaux de trading', pdfUser);
     let y = 58;
