@@ -1564,7 +1564,14 @@ async def connect_market(request: Request):
 
     # Attempt connection
     logger.info(f"[MARKET] Tentative de connexion (SSID: {ssid_clean[:15]}...)")
-    success = await po_scanner.connect(ssid_clean)
+    try:
+        success = await po_scanner.connect(ssid_clean)
+    except Exception as e:
+        logger.error(f"[MARKET] Erreur interne de connexion: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Erreur interne de connexion au serveur Pocket Option. Réessayez dans quelques secondes. Détail: {str(e)[:200]}"
+        )
 
     if success:
         is_demo = po_scanner.is_demo

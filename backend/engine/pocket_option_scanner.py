@@ -30,8 +30,16 @@ from datetime import datetime, timezone
 try:
     import websockets
     _WS_AVAILABLE = True
+    # websockets v16+ uses ClientConnection without .closed attribute
+    # We need to check .state instead
+    try:
+        from websockets.protocol import State as _WSState
+        _WS_OPEN = _WSState.OPEN
+    except ImportError:
+        _WS_OPEN = 1
 except ImportError:
     _WS_AVAILABLE = False
+    _WS_OPEN = 1
 
 logger = logging.getLogger(__name__)
 
@@ -141,12 +149,24 @@ class PocketOptionScanner:
 
     # ═══════════ CONNECTION ═══════════
 
+    def _ws_is_open(self) -> bool:
+        """Check if WebSocket connection is open (compatible with websockets v16+)."""
+        if self._ws is None:
+            return False
+        # websockets v16+ uses .state attribute
+        if hasattr(self._ws, 'state'):
+            return self._ws.state == _WS_OPEN
+        # websockets < v14 uses .closed attribute
+        if hasattr(self._ws, 'closed'):
+            return not self._ws.closed
+        return False
+
     @property
     def is_connected(self) -> bool:
         """True only if WebSocket is open AND authenticated."""
         return (
             self._ws is not None
-            and not self._ws.closed
+            and self._ws_is_open()
             and self._is_authenticated
         )
 
@@ -289,7 +309,7 @@ class PocketOptionScanner:
         if self._ping_task and not self._ping_task.done():
             self._ping_task.cancel()
             self._ping_task = None
-        if self._ws and not self._ws.closed:
+        if self._ws and self._ws_is_open():
             try:
                 await self._ws.close()
             except Exception:
@@ -302,9 +322,31 @@ class PocketOptionScanner:
     async def _receive_loop(self):
         """Main loop for receiving WebSocket messages."""
         try:
-            async for message in self._ws:
+            while self._ws and self._ws_is_open():
+                try:
+                    message = await asyncio.wait_for(self._ws.recv(), timeout=60)
+                except asyncio.TimeoutError:
+                    # No message for 60s — check if still connected
+                    if self._ws and self._ws_is_open():
+                        continue
+                    break
+                
+                # Handle binary messages (Socket.IO binary attachments)
+                # After a "451-" text frame, binary data arrives as bytes
                 if isinstance(message, bytes):
-                    message = message.decode("utf-8")
+                    try:
+                        # Try to decode as UTF-8 (some binary frames are actually text)
+                        decoded = message.decode('utf-8')
+                        self._last_message_time = datetime.now(timezone.utc)
+                        try:
+                            await self._handle_message(decoded)
+                        except Exception as e:
+                            logger.error(f"[SCANNER] Error handling decoded binary: {e}")
+                    except UnicodeDecodeError:
+                        # True binary data — parse as assets/payouts
+                        self._last_message_time = datetime.now(timezone.utc)
+                        await self._handle_binary_data(message)
+                    continue
                 
                 self._last_message_time = datetime.now(timezone.utc)
                 
@@ -314,7 +356,9 @@ class PocketOptionScanner:
                     logger.error(f"[SCANNER] Error handling message: {e}")
                     
         except websockets.exceptions.ConnectionClosed as e:
-            logger.warning(f"[SCANNER] WebSocket closed: code={e.code}, reason={e.reason}")
+            code = getattr(e, 'code', 'unknown')
+            reason = getattr(e, 'reason', '')
+            logger.warning(f"[SCANNER] WebSocket closed: code={code}, reason={reason}")
             self._is_authenticated = False
         except asyncio.CancelledError:
             pass
@@ -338,6 +382,12 @@ class PocketOptionScanner:
         # Socket.IO CONNECT ack ("40{...}")
         if message.startswith("40"):
             logger.debug("[SCANNER] Socket.IO CONNECT ack")
+            return
+
+        # Socket.IO DISCONNECT ("41") — server is closing the connection
+        if message == "41" or message.startswith("41"):
+            logger.warning("[SCANNER] Socket.IO DISCONNECT received — server closed the connection")
+            self._is_authenticated = False
             return
 
         # Socket.IO EVENT ("42[...]") — main data channel
@@ -374,6 +424,39 @@ class PocketOptionScanner:
                 logger.warning(f"[SCANNER] Failed to parse ACK: {message[:100]}")
             return
 
+        # Socket.IO BINARY EVENT ("451-..." or "45<id>-..." )
+        # Pocket Option uses this format for auth response (updateAssets, etc.)
+        # Format: "451-[\"eventName\",{...}]" followed by binary payload
+        if message.startswith("45"):
+            try:
+                # Strip the "45<id>-" prefix to get the JSON event
+                dash_idx = message.index("-")
+                json_part = message[dash_idx + 1:]
+                # This may contain _placeholder references, but the event name is parseable
+                data = json.loads(json_part)
+                event_name = data[0] if isinstance(data, list) and data else ""
+                logger.debug(f"[SCANNER] Binary event: {event_name}")
+                
+                # updateAssets after auth = auth succeeded!
+                if event_name in ("updateAssets", "successauth"):
+                    if not self._is_authenticated:
+                        self._is_authenticated = True
+                        self._auth_event.set()
+                        logger.info(f"[SCANNER] ✅ Authentification réussie (via binary event: {event_name})")
+                    
+                    # Try to parse payout data from the next binary message
+                    # (will arrive as bytes in the next recv)
+                elif event_name == "NotAuthorized":
+                    self._is_authenticated = False
+                    self._auth_event.set()
+                    logger.error("[SCANNER] ❌ Authentification refusée (via binary event)")
+                else:
+                    event_data = data[1:] if len(data) > 1 else []
+                    await self._handle_event(event_name, event_data)
+            except (json.JSONDecodeError, ValueError, IndexError) as e:
+                logger.debug(f"[SCANNER] Failed to parse binary event: {message[:100]}")
+            return
+
         # Engine.IO open ("0{...}")
         if message.startswith("0"):
             logger.debug("[SCANNER] Engine.IO open message (unexpected during receive)")
@@ -381,6 +464,66 @@ class PocketOptionScanner:
 
         # Unknown
         logger.debug(f"[SCANNER] Unhandled message type: {message[:50]}")
+
+    async def _handle_binary_data(self, data: bytes):
+        """
+        Handle binary data from Socket.IO binary attachments.
+        Pocket Option sends asset/payout data as binary after a "451-["updateAssets",...]" frame.
+        The binary data is typically a msgpack or JSON-encoded array of asset info.
+        """
+        try:
+            # Try to decode as UTF-8 JSON first
+            text = data.decode('utf-8', errors='replace')
+            
+            # Pocket Option binary asset data format:
+            # Array of arrays: [id, symbol, name, type, ... , payout, ...]
+            parsed = json.loads(text)
+            if isinstance(parsed, list):
+                await self._parse_assets_list(parsed)
+            elif isinstance(parsed, dict):
+                await self._parse_assets_dict(parsed)
+                
+            logger.debug(f"[SCANNER] Binary data parsed: {len(text)} bytes")
+        except (json.JSONDecodeError, UnicodeDecodeError) as e:
+            logger.debug(f"[SCANNER] Binary data not JSON: {len(data)} bytes, error: {e}")
+        except Exception as e:
+            logger.debug(f"[SCANNER] Binary data parse error: {e}")
+
+    async def _parse_assets_list(self, assets: list):
+        """Parse assets from Pocket Option's list format."""
+        try:
+            for asset_info in assets:
+                if not isinstance(asset_info, list) or len(asset_info) < 6:
+                    continue
+                # Format: [id, symbol, name, type, ..., payout, ...]
+                # The payout is typically at index 5 or 6
+                symbol = asset_info[1] if len(asset_info) > 1 else None
+                if symbol:
+                    # Try to find payout value
+                    for i, val in enumerate(asset_info):
+                        if isinstance(val, (int, float)) and 50 <= val <= 100 and i >= 4:
+                            self._payouts[symbol] = float(val)
+                            break
+            if self._payouts:
+                logger.info(f"[SCANNER] Parsed {len(self._payouts)} asset payouts from binary data")
+        except Exception as e:
+            logger.debug(f"[SCANNER] Asset list parse error: {e}")
+
+    async def _parse_assets_dict(self, data: dict):
+        """Parse assets from Pocket Option's dict format."""
+        try:
+            assets = data.get("assets", data.get("data", []))
+            if isinstance(assets, list):
+                for asset in assets:
+                    if isinstance(asset, dict):
+                        symbol = asset.get("asset", asset.get("symbol", ""))
+                        payout = asset.get("payout", None)
+                        if symbol and payout is not None:
+                            self._payouts[symbol] = float(payout)
+            if self._payouts:
+                logger.info(f"[SCANNER] Parsed {len(self._payouts)} asset payouts from dict data")
+        except Exception as e:
+            logger.debug(f"[SCANNER] Asset dict parse error: {e}")
 
     async def _handle_event(self, event_name: str, event_data: list):
         """Handle Socket.IO named events."""
@@ -447,9 +590,9 @@ class PocketOptionScanner:
     async def _ping_loop(self):
         """Send periodic keep-alive messages."""
         try:
-            while self._ws and not self._ws.closed:
+            while self._ws and self._ws_is_open():
                 await asyncio.sleep(20)  # Every 20 seconds
-                if self._ws and not self._ws.closed and self._is_authenticated:
+                if self._ws and self._ws_is_open() and self._is_authenticated:
                     try:
                         await self._ws.send('42["ps"]')  # PO keep-alive
                         logger.debug("[SCANNER] Keep-alive sent")
@@ -467,7 +610,7 @@ class PocketOptionScanner:
                 await asyncio.sleep(30)
                 if not self._is_authenticated:
                     logger.warning("[SCANNER] Health check: not authenticated")
-                elif self._ws and self._ws.closed:
+                elif self._ws and not self._ws_is_open():
                     logger.warning("[SCANNER] Health check: WebSocket closed")
                     self._is_authenticated = False
                 else:
@@ -561,9 +704,30 @@ class PocketOptionScanner:
         """Récupère le payout actuel pour une paire."""
         if not self._is_authenticated:
             return None
-        asset = self.get_asset_symbol(pair)
-        payout = self._payouts.get(asset)
-        return payout
+        
+        # Try multiple symbol formats since PO uses different conventions
+        # e.g., "EUR/USD OTC" → "#EURUSD_otc", "EURUSD_otc", "EUR/USD OTC"
+        candidates = [
+            self.get_asset_symbol(pair),  # e.g., "EURUSD_otc"
+            f"#{self.get_asset_symbol(pair)}",  # e.g., "#EURUSD_otc"
+            pair,  # e.g., "EUR/USD OTC"
+            pair.replace('/', ''),  # e.g., "EURUSD OTC"
+            pair.replace(' ', ''),  # e.g., "EUR/USDOTC"
+            pair.replace('/', '').replace(' ', ''),  # e.g., "EURUSDOTC"
+        ]
+        
+        for candidate in candidates:
+            payout = self._payouts.get(candidate)
+            if payout is not None:
+                return payout
+        
+        # If still not found, try partial match
+        pair_base = pair.split(' ')[0].replace('/', '')  # e.g., "EURUSD"
+        for symbol, payout in self._payouts.items():
+            if pair_base in symbol:
+                return payout
+        
+        return None
 
     # ═══════════ DISCONNECT ═══════════
 
