@@ -12,7 +12,8 @@ import { NextRequest, NextResponse } from 'next/server';
 
 // The proxy needs the REAL backend URL (not the relative proxy URL).
 // On the server side (Vercel serverless function), we need the absolute URL.
-const BACKEND_URL = process.env.API_BACKEND_URL || 'http://localhost:8000';
+// Priority: API_BACKEND_URL > NEXT_PUBLIC_API_URL > localhost fallback
+const BACKEND_URL = process.env.API_BACKEND_URL || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
 export async function GET(
   request: NextRequest,

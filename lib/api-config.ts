@@ -11,14 +11,17 @@
  */
 
 export function getApiUrl(): string {
-  // Explicit override takes priority
-  if (process.env.NEXT_PUBLIC_API_URL) {
-    return process.env.NEXT_PUBLIC_API_URL;
-  }
-
-  // In browser: if not localhost, use same-domain proxy (empty string = relative)
+  // In browser on deployed domain: always use same-domain proxy (empty string = relative)
+  // The Next.js API proxy (app/api/[[...path]]/route.ts) forwards to the backend.
+  // This avoids CORS issues since browser ↔ Vercel is same-origin.
   if (typeof window !== 'undefined' && window.location.hostname !== 'localhost') {
     return '';
+  }
+
+  // Server-side (SSR / API routes): use NEXT_PUBLIC_API_URL to call backend directly
+  // (On Vercel, the API proxy needs the absolute backend URL)
+  if (process.env.NEXT_PUBLIC_API_URL) {
+    return process.env.NEXT_PUBLIC_API_URL;
   }
 
   // Local development fallback
