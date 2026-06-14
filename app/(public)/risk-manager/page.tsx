@@ -20,7 +20,8 @@ import {
   Zap,
   DollarSign,
   Loader2,
-  AlertTriangle
+  AlertTriangle,
+  Check
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAppStore } from '@/lib/store';
@@ -71,6 +72,7 @@ export default function RiskManagerPage() {
   });
   const [sessionCounter, setSessionCounter] = useState(0);
   const [isSaving, setIsSaving] = useState(false);
+  const [justSaved, setJustSaved] = useState(false);
   const [apiWinRate, setApiWinRate] = useState<number | null>(null);
 
   // Fetch performance data for real winrate
@@ -157,6 +159,11 @@ export default function RiskManagerPage() {
 
   const handleSave = async () => {
     setIsSaving(true);
+    // Always save locally first (immediate feedback)
+    localStorage.setItem('a2sniper_risk_capital', String(initialCapital));
+    localStorage.setItem('a2sniper_risk_payout', String(payout));
+    localStorage.setItem('a2sniper_risk_trades', JSON.stringify(trades));
+
     try {
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
       const token = typeof window !== 'undefined' ? localStorage.getItem('a2sniper_token') : null;
@@ -174,24 +181,16 @@ export default function RiskManagerPage() {
         }),
       });
       if (res.ok) {
-        // Also save locally as backup
-        localStorage.setItem('a2sniper_risk_capital', String(initialCapital));
-        localStorage.setItem('a2sniper_risk_payout', String(payout));
-        localStorage.setItem('a2sniper_risk_trades', JSON.stringify(trades));
         toast.success('Paramètres sauvegardés avec succès !');
       } else {
-        localStorage.setItem('a2sniper_risk_capital', String(initialCapital));
-        localStorage.setItem('a2sniper_risk_payout', String(payout));
-        localStorage.setItem('a2sniper_risk_trades', JSON.stringify(trades));
-        toast.success('Sauvegardé localement (serveur indisponible).');
+        toast.success('Sauvegardé localement.');
       }
     } catch {
-      localStorage.setItem('a2sniper_risk_capital', String(initialCapital));
-      localStorage.setItem('a2sniper_risk_payout', String(payout));
-      localStorage.setItem('a2sniper_risk_trades', JSON.stringify(trades));
-      toast.success('Sauvegardé localement (serveur indisponible).');
+      toast.success('Sauvegardé localement.');
     } finally {
       setIsSaving(false);
+      setJustSaved(true);
+      setTimeout(() => setJustSaved(false), 2000);
     }
   };
 
@@ -247,10 +246,10 @@ export default function RiskManagerPage() {
               <button
                 onClick={handleSave}
                 disabled={isSaving}
-                className="px-4 py-2 bg-[#121216] hover:bg-[#1a1a1f] border border-gray-800 rounded-xl text-xs font-black text-white flex items-center gap-2 transition-all disabled:opacity-50"
+                className={`px-4 py-2 border rounded-xl text-xs font-black flex items-center gap-2 transition-all disabled:opacity-50 ${justSaved ? 'bg-green-500/10 border-green-500/30 text-green-400' : 'bg-[#121216] hover:bg-[#1a1a1f] border-gray-800 text-white'}`}
               >
-                {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4 text-[#D4AF37]" />}
-                SAUVEGARDER
+                {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : justSaved ? <Check className="w-4 h-4" /> : <Save className="w-4 h-4 text-[#D4AF37]" />}
+                {isSaving ? 'Sauvegarde...' : justSaved ? 'Sauvegardé !' : 'SAUVEGARDER'}
               </button>
               <button
                 onClick={handleExportJSON}
