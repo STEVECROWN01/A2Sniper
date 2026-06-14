@@ -1,8 +1,8 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { motion } from 'framer-motion';
-import { Calendar, BarChart3, Target, DollarSign, Info, Trash2, ArrowUpRight, ArrowDownRight } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { Calendar, BarChart3, Target, DollarSign, Info, Trash2, ArrowUpRight, ArrowDownRight, AlertTriangle, Loader2 } from 'lucide-react';
 import { useAuth } from '@/hooks/use-auth';
 import { toast } from 'sonner';
 
@@ -32,6 +32,8 @@ interface Stats {
 export default function TradingJournalPage() {
   useAuth();
   const [sessionData, setSessionData] = useState<SessionData | null>(null);
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [isResetting, setIsResetting] = useState(false);
 
   const loadSession = () => {
     const saved = localStorage.getItem('a2sniper_risk_session');
@@ -100,9 +102,19 @@ export default function TradingJournalPage() {
   const validTrades = sessionData ? sessionData.trades.filter((t: TradeEntry) => t.result && t.amount > 0) : [];
 
   const handleResetJournal = () => {
-    localStorage.removeItem('a2sniper_risk_session');
-    setSessionData(null);
-    toast.success("Journal de trading réinitialisé avec succès.", { duration: 3000 });
+    setShowResetConfirm(true);
+  };
+
+  const confirmResetJournal = () => {
+    setIsResetting(true);
+    setTimeout(() => {
+      localStorage.removeItem('a2sniper_risk_session');
+      localStorage.removeItem('a2sniper_risk_trades');
+      setSessionData(null);
+      setIsResetting(false);
+      setShowResetConfirm(false);
+      toast.success("Journal de trading réinitialisé avec succès.", { duration: 3000 });
+    }, 800);
   };
 
   return (
@@ -120,7 +132,7 @@ export default function TradingJournalPage() {
         {sessionData && (
           <button
             onClick={handleResetJournal}
-            className="flex items-center gap-2 px-4 py-2.5 bg-red-500/10 hover:bg-red-500 text-red-500 hover:text-white rounded-xl text-xs font-black uppercase tracking-wider transition-all border border-red-500/20 active:scale-95"
+            className="flex items-center gap-2 px-4 py-2.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 hover:text-red-300 rounded-xl text-xs font-black uppercase tracking-wider transition-all border border-red-500/20 active:scale-95"
           >
             <Trash2 className="w-4 h-4" />
             Réinitialiser le Journal
@@ -259,6 +271,53 @@ export default function TradingJournalPage() {
           </div>
         </div>
       )}
+      {/* Reset Confirmation Dialog */}
+      <AnimatePresence>
+        {showResetConfirm && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+            onClick={() => !isResetting && setShowResetConfirm(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-[#0A0B0E] border border-red-500/30 rounded-2xl p-8 max-w-md w-full"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center gap-3 mb-4">
+                <AlertTriangle className="w-6 h-6 text-red-500" />
+                <h3 className="text-lg font-bold text-white">Réinitialiser le journal</h3>
+              </div>
+              <p className="text-sm text-gray-400 mb-6 leading-relaxed">
+                Voulez-vous vraiment réinitialiser le journal de trading ? Toutes les données de session et l&apos;historique des trades seront définitivement effacés.
+              </p>
+              <div className="flex gap-3">
+                <button
+                  onClick={confirmResetJournal}
+                  disabled={isResetting}
+                  className="flex-1 bg-red-600 hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-4 py-2.5 rounded-lg font-bold transition-colors flex items-center justify-center gap-2"
+                >
+                  {isResetting ? <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Réinitialisation...
+                  </> : 'Confirmer'}
+                </button>
+                <button
+                  onClick={() => setShowResetConfirm(false)}
+                  disabled={isResetting}
+                  className="flex-1 bg-gray-800 hover:bg-gray-700 disabled:opacity-50 text-gray-300 px-4 py-2.5 rounded-lg font-bold transition-colors"
+                >
+                  Annuler
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
