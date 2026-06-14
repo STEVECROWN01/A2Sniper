@@ -150,12 +150,34 @@ export default function RiskManagerPage() {
   };
 
   const confirmClearSession = () => {
-    setTrades(Array(10).fill({ result: '', amount: 0, return: 0 }));
+    const emptyTrades = Array(10).fill({ result: '', amount: 0, return: 0 });
+    setTrades(emptyTrades);
     setSessionCounter(0);
     localStorage.removeItem('a2sniper_risk_trades');
+    localStorage.removeItem('a2sniper_risk_session');
     setShowResetConfirm(false);
     toast.success("Session réinitialisée");
   };
+
+  // Sync session data to localStorage so Trading Journal can read it
+  const syncSessionToJournal = () => {
+    const sessionData = {
+      trades,
+      payout,
+      initialCapital,
+      sessionCounter,
+    };
+    localStorage.setItem('a2sniper_risk_session', JSON.stringify(sessionData));
+    // Also dispatch a storage event so other tabs/components pick it up
+    window.dispatchEvent(new StorageEvent('storage', { key: 'a2sniper_risk_session' }));
+  };
+
+  // Auto-sync whenever trades, capital, payout, or sessionCounter change
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      syncSessionToJournal();
+    }
+  }, [trades, initialCapital, payout, sessionCounter]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSave = async () => {
     setIsSaving(true);
@@ -163,6 +185,8 @@ export default function RiskManagerPage() {
     localStorage.setItem('a2sniper_risk_capital', String(initialCapital));
     localStorage.setItem('a2sniper_risk_payout', String(payout));
     localStorage.setItem('a2sniper_risk_trades', JSON.stringify(trades));
+    // Sync session for Trading Journal
+    syncSessionToJournal();
 
     try {
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';

@@ -48,9 +48,22 @@ export default function TradingJournalPage() {
 
   useEffect(() => {
     loadSession();
-    // Listen to changes in localStorage so it updates live if modified in simulator or page
+    // Listen to cross-tab localStorage changes
     window.addEventListener('storage', loadSession);
-    return () => window.removeEventListener('storage', loadSession);
+    // Also listen for same-tab custom dispatches from Risk Manager
+    const handleCustomStorage = (e: StorageEvent) => {
+      if (e.key === 'a2sniper_risk_session') {
+        loadSession();
+      }
+    };
+    window.addEventListener('storage', handleCustomStorage);
+    // Poll every 2s as a fallback for same-tab updates
+    const interval = setInterval(loadSession, 2000);
+    return () => {
+      window.removeEventListener('storage', loadSession);
+      window.removeEventListener('storage', handleCustomStorage);
+      clearInterval(interval);
+    };
   }, []);
 
   const getStats = (): Stats => {
