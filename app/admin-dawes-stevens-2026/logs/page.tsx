@@ -1,5 +1,7 @@
 'use client';
 
+import { getApiUrl } from '@/lib/api-config';
+
 import { useState, useEffect, useRef } from 'react';
 import { Terminal, RefreshCw, Download, Search, AlertTriangle, CheckCircle, Info } from 'lucide-react';
 import { toast } from 'sonner';
@@ -20,7 +22,7 @@ export default function AdminLogsPage() {
 
   const fetchLogs = async () => {
     try {
-      const url = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+      const url = getApiUrl();
       const token = typeof window !== 'undefined' ? localStorage.getItem('a2sniper_token') : null;
       const res = await fetch(`${url}/api/admin/logs?limit=100`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},

@@ -1,5 +1,7 @@
 'use client';
 
+import { getApiUrl } from '@/lib/api-config';
+
 import { useEffect, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
@@ -60,7 +62,7 @@ export default function AdminLayout({
     
     const fetchAdminInfo = async () => {
       try {
-        const url = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+        const url = getApiUrl();
         const token = typeof window !== 'undefined' ? localStorage.getItem('a2sniper_token') : null;
         const headers: Record<string, string> = {};
         if (token) headers['Authorization'] = `Bearer ${token}`;

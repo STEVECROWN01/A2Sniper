@@ -1,5 +1,7 @@
 'use client';
 
+import { getApiUrl } from '@/lib/api-config';
+
 import { useState, useMemo, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { Search, Filter, TrendingUp, Clock, Target, RefreshCw, Download, Settings, Link2, Trash2, Check } from 'lucide-react';
@@ -186,7 +188,7 @@ export default function AdminSignalsPage() {
 
   const confirmDelete = async (id: string) => {
     try {
-      const url = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+      const url = getApiUrl();
       const token = typeof window !== 'undefined' ? localStorage.getItem('a2sniper_token') : null;
       const res = await fetch(`${url}/api/admin/signals/${id}`, {
         method: 'DELETE',

@@ -19,6 +19,7 @@ from sqlalchemy import select
 from dotenv import load_dotenv
 
 load_dotenv(os.path.join(os.path.dirname(__file__), '../.env.local'))
+load_dotenv(os.path.join(os.path.dirname(__file__), '.env.local'), override=True)
 
 from engine.smc import SMCEngine
 from engine.indicators import TechnicalIndicators, DivergenceDetector

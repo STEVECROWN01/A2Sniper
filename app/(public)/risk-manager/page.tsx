@@ -1,5 +1,6 @@
 'use client';
 
+import { getApiUrl } from '@/lib/api-config';
 import { useState, useMemo, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -191,7 +192,7 @@ export default function RiskManagerPage() {
     syncSessionToJournal();
 
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+      const apiUrl = getApiUrl();
       const token = typeof window !== 'undefined' ? localStorage.getItem('a2sniper_token') : null;
       const res = await fetch(`${apiUrl}/api/risk/settings`, {
         method: 'POST',

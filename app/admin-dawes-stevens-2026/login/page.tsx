@@ -1,5 +1,7 @@
 'use client';
 
+import { getApiUrl } from '@/lib/api-config';
+
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -25,7 +27,7 @@ export default function AdminLoginPage() {
 
     setIsVerifying(true);
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+      const apiUrl = getApiUrl();
       const res = await fetch(`${apiUrl}/api/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -66,7 +68,7 @@ export default function AdminLoginPage() {
 
     setIsVerifying(true);
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+      const apiUrl = getApiUrl();
       const res = await fetch(`${apiUrl}/api/auth/verify-otp`, {
         method: 'POST',
         headers: {

@@ -39,8 +39,8 @@ engine = create_async_engine(
     echo=False,
     connect_args=connect_args,
     pool_pre_ping=True if _is_pg else False,
-    pool_size=5 if _is_pg else None,
-    max_overflow=10 if _is_pg else None,
+    pool_size=5 if _is_pg else 5,
+    max_overflow=10 if _is_pg else 0,
 )
 AsyncSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 Base = declarative_base()

@@ -1,5 +1,6 @@
 'use client';
 
+import { getApiUrl } from '@/lib/api-config';
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { Bell, TrendingUp, TrendingDown, RefreshCw, Download, BarChart3, Target, DollarSign, Zap, AlertCircle, Loader2, Check } from 'lucide-react';
@@ -77,7 +78,7 @@ export default function DashboardPage() {
   useEffect(() => {
     const checkStatus = async () => {
       try {
-        const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+        const apiUrl = getApiUrl();
         const res = await fetch(`${apiUrl}/api/status`, {
           headers: {
             ...(typeof window !== 'undefined' && localStorage.getItem('a2sniper_token')

@@ -1,5 +1,7 @@
 'use client';
 
+import { getApiUrl } from '@/lib/api-config';
+
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { Settings, Shield, Power, Bell, Globe, Lock, Cpu, Save } from 'lucide-react';
@@ -20,7 +22,7 @@ export default function AdminSettingsPage() {
 
   const fetchStatus = async () => {
     try {
-      const url = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+      const url = getApiUrl();
       const token = typeof window !== 'undefined' ? localStorage.getItem('a2sniper_token') : null;
       const res = await fetch(`${url}/api/status`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
@@ -41,7 +43,7 @@ export default function AdminSettingsPage() {
   const handleCircuitBreaker = async () => {
     const nextState = !isSuspended;
     try {
-      const url = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+      const url = getApiUrl();
       const token = typeof window !== 'undefined' ? localStorage.getItem('a2sniper_token') : null;
       const res = await fetch(`${url}/api/admin/circuit-breaker`, {
         method: 'POST',
@@ -59,7 +61,7 @@ export default function AdminSettingsPage() {
 
   const saveConfig = async () => {
     try {
-      const url = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+      const url = getApiUrl();
       const token = typeof window !== 'undefined' ? localStorage.getItem('a2sniper_token') : null;
       const res = await fetch(`${url}/api/admin/config`, {
         method: 'POST',

@@ -1,5 +1,6 @@
 'use client';
 
+import { getApiUrl } from '@/lib/api-config';
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useEffect } from 'react';
@@ -35,7 +36,7 @@ export default function LoginPage() {
   const [error, setError] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
 
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const apiUrl = getApiUrl();
 
   useEffect(() => {
     if (isInitialized && isAuthenticated) {

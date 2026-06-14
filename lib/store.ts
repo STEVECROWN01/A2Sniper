@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { Signal, mockSignals, mockUserStats, UserStats } from './mock-data';
+import { getApiUrl } from './api-config';
 
 // ============================================================================
 // SECURITY WARNING: Auth token is stored in localStorage
@@ -185,8 +186,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     return headers;
   },
 
-  // Helper to get API base URL
-  getApiUrl: () => process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000',
+  // Helper to get API base URL (uses shared config)
+  getApiUrl: () => getApiUrl(),
 
   // Auto-reconnect using the last known SSID
   // Pocket Option SSIDs do NOT expire as long as the user doesn't

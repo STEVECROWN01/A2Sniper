@@ -1,5 +1,6 @@
 'use client';
 
+import { getApiUrl } from '@/lib/api-config';
 import { useCallback } from 'react';
 import { useAppStore } from '@/lib/store';
 import { useRouter } from 'next/navigation';
@@ -48,7 +49,7 @@ export function useGoogleAuth() {
     }
 
     try {
-      const baseUrl = process.env.NEXT_PUBLIC_API_URL?.replace(/\/+$/, '') || 'http://localhost:8000';
+      const baseUrl = getApiUrl().replace(/\/+$/, '');
 
       // If we have an authorization code, exchange it via backend
       if (code && !accessToken) {

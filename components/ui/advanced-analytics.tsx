@@ -1,5 +1,7 @@
 'use client';
 
+import { getApiUrl } from '@/lib/api-config';
+
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { motion } from 'framer-motion';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line } from 'recharts';
@@ -53,7 +55,7 @@ export function AdvancedAnalytics({ timeframe = '24H' }: AdvancedAnalyticsProps)
         prevTimeframeRef.current = timeframe;
       }
 
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+      const apiUrl = getApiUrl();
       const token = typeof window !== 'undefined' ? localStorage.getItem('a2sniper_token') : null;
 
       // Fetch performance data from API

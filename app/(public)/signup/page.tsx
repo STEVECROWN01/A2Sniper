@@ -1,5 +1,7 @@
 'use client';
 
+import { getApiUrl } from '@/lib/api-config';
+
 import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { useEffect } from 'react';
@@ -59,7 +61,7 @@ export default function SignupPage() {
     }
 
     try {
-      const baseUrl = process.env.NEXT_PUBLIC_API_URL?.replace(/\/+$/, '') || 'http://localhost:8000';
+      const baseUrl = getApiUrl().replace(/\/+$/, '');
       const res = await fetch(`${baseUrl}/api/auth/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

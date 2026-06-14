@@ -1,5 +1,7 @@
 'use client';
 
+import { getApiUrl } from '@/lib/api-config';
+
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { Users, UserCheck, Shield, Award, Crown, RefreshCw } from 'lucide-react';
@@ -19,7 +21,7 @@ export default function AdminUsersPage() {
   const fetchUsers = async () => {
     setIsLoading(true);
     try {
-      const url = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+      const url = getApiUrl();
       const token = typeof window !== 'undefined' ? localStorage.getItem('a2sniper_token') : null;
       const res = await fetch(`${url}/api/admin/users`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
@@ -41,7 +43,7 @@ export default function AdminUsersPage() {
 
   const updatePlan = async (userId: string, newPlan: string) => {
     try {
-      const url = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+      const url = getApiUrl();
       const token = typeof window !== 'undefined' ? localStorage.getItem('a2sniper_token') : null;
       const res = await fetch(`${url}/api/admin/users/${userId}/plan`, {
         method: 'POST',

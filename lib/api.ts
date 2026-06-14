@@ -10,7 +10,9 @@
  *   const result = await api.post('/api/signals/request', { pair: 'EUR/USD OTC' });
  */
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+import { getApiUrl } from './api-config';
+
+const API_BASE_URL = getApiUrl();
 
 class ApiClient {
   private baseUrl: string;

@@ -1,5 +1,7 @@
 'use client';
 
+import { getApiUrl } from '@/lib/api-config';
+
 import { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { User, Bell, Shield, Palette, Save, Check, Camera, Key, Globe, Clock, Trash2, Download, AlertTriangle, Loader2 } from 'lucide-react';
@@ -96,7 +98,7 @@ export default function SettingsPage() {
 
     setIsUploadingPhoto(true);
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+      const apiUrl = getApiUrl();
       const token = typeof window !== 'undefined' ? localStorage.getItem('a2sniper_token') : null;
 
       const formData = new FormData();
@@ -146,7 +148,7 @@ export default function SettingsPage() {
 
     setIsChangingPassword(true);
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+      const apiUrl = getApiUrl();
       const token = typeof window !== 'undefined' ? localStorage.getItem('a2sniper_token') : null;
       const res = await fetch(`${apiUrl}/api/auth/reset-password`, {
         method: 'POST',
@@ -220,7 +222,7 @@ export default function SettingsPage() {
 
     setIsDeletingAccount(true);
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+      const apiUrl = getApiUrl();
       const token = typeof window !== 'undefined' ? localStorage.getItem('a2sniper_token') : null;
       const res = await fetch(`${apiUrl}/api/auth/delete-account`, {
         method: 'DELETE',
@@ -270,7 +272,7 @@ export default function SettingsPage() {
       // Try to fetch server-side data, but always generate PDF
       let serverData: any = null;
       try {
-        const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+        const apiUrl = getApiUrl();
         const token = typeof window !== 'undefined' ? localStorage.getItem('a2sniper_token') : null;
         const res = await fetch(`${apiUrl}/api/auth/export-data`, {
           headers: { ...(token ? { 'Authorization': `Bearer ${token}` } : {}) },
