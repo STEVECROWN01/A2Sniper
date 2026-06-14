@@ -655,6 +655,39 @@ async def lifespan(app):
 
     logger.info("Waiting for real market connection to start analysis.")
 
+    # Auto-promote first user (stevecrown024@gmail.com) to admin + Pro plan
+    try:
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                select(User).where(User.email == "stevecrown024@gmail.com")
+            )
+            owner = result.scalar_one_or_none()
+            if owner:
+                if not owner.is_admin:
+                    owner.is_admin = True
+                    logger.info("[STARTUP] Promoted stevecrown024@gmail.com to admin")
+                # Ensure Pro subscription
+                sub_result = await session.execute(
+                    select(UserSubscription).where(UserSubscription.user_id == owner.id)
+                )
+                sub = sub_result.scalar_one_or_none()
+                if sub:
+                    if sub.plan_name != "Pro":
+                        sub.plan_name = "Pro"
+                        sub.active_until = datetime.now(timezone.utc) + timedelta(days=3650)  # 10 years
+                        logger.info("[STARTUP] Upgraded stevecrown024@gmail.com to Pro plan (10 years)")
+                else:
+                    new_sub = UserSubscription(
+                        user_id=owner.id,
+                        plan_name="Pro",
+                        active_until=datetime.now(timezone.utc) + timedelta(days=3650)
+                    )
+                    session.add(new_sub)
+                    logger.info("[STARTUP] Created Pro subscription for stevecrown024@gmail.com")
+                await session.commit()
+    except Exception as e:
+        logger.warning(f"[STARTUP] Could not auto-promote owner: {e}")
+
     try:
         asyncio.create_task(trading_loop())
         asyncio.create_task(resolution_loop())
@@ -1235,16 +1268,25 @@ async def get_me(credentials: HTTPAuthorizationCredentials = Security(security))
     user_id = payload.get("sub")
     
     async with AsyncSessionLocal() as session:
-        result = await session.execute(select(User).where(User.id == user_id))
+        result = await session.execute(
+            select(User).where(User.id == user_id)
+        )
         user = result.scalar_one_or_none()
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
+        
+        # Eagerly load subscription to avoid lazy-load issues
+        sub_result = await session.execute(
+            select(UserSubscription).where(UserSubscription.user_id == user_id)
+        )
+        subscription = sub_result.scalar_one_or_none()
             
         return {
             "id": user.id,
             "email": user.email,
             "name": user.full_name,
-            "is_admin": user.is_admin
+            "is_admin": user.is_admin,
+            "plan": subscription.plan_name if subscription else "Free"
         }
 
 
