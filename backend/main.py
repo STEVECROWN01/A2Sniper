@@ -898,37 +898,44 @@ async def register(request: Request):
             result = await session.execute(select(User).where(User.email == email))
             existing_user = result.scalar_one_or_none()
             if existing_user:
-                # Check if this is a zombie/inactive account that should be cleaned up
+                # Check if this is a zombie/inactive/Google-only account that should be cleaned up
                 # Allow re-registration if:
                 # 1. Account was deactivated (is_active=False)
-                # 2. Account was Google-only (no real password)
-                # 3. Account has no active subscription
+                # 2. Account was Google OAuth (auth_provider='google') — user is now providing a real password
+                # 3. Account has the old-style Google placeholder password
+                # 4. Account has no subscription (likely abandoned)
                 sub_result2 = await session.execute(
                     select(UserSubscription).where(UserSubscription.user_id == existing_user.id)
                 )
                 existing_sub = sub_result2.scalar_one_or_none()
 
+                auth_provider = getattr(existing_user, 'auth_provider', None) or ''
                 should_cleanup = (
                     not existing_user.is_active
+                    or auth_provider == 'google'
                     or existing_user.hashed_password.startswith('google_oauth_no_password_')
                     or existing_sub is None
                 )
 
                 if should_cleanup:
-                    # Clean up the old record completely
+                    # Clean up the old record completely using raw SQL for reliability
                     if existing_sub:
-                        await session.delete(existing_sub)
+                        await session.execute(
+                            __import__('sqlalchemy').text("DELETE FROM subscriptions WHERE user_id = :uid"),
+                            {"uid": existing_user.id}
+                        )
                     # Delete OTPs
-                    otp_result = await session.execute(
-                        select(PasswordResetOTP).where(PasswordResetOTP.email == email)
+                    await session.execute(
+                        __import__('sqlalchemy').text("DELETE FROM password_reset_otps WHERE email = :email"),
+                        {"email": email}
                     )
-                    old_otps = otp_result.scalars().all()
-                    for otp in old_otps:
-                        await session.delete(otp)
                     # Delete the user
-                    await session.delete(existing_user)
+                    await session.execute(
+                        __import__('sqlalchemy').text("DELETE FROM users WHERE id = :uid"),
+                        {"uid": existing_user.id}
+                    )
                     await session.flush()  # Apply deletions before inserting new user
-                    logger.info(f"[Register] Cleaned up old account for: {email}")
+                    logger.info(f"[Register] Cleaned up old account for: {email} (auth_provider={auth_provider}, is_active={existing_user.is_active})")
                 else:
                     raise HTTPException(status_code=400, detail="Email already in use")
                 
@@ -991,7 +998,8 @@ async def login(request: Request):
                 "email": user.email,
                 "name": user.full_name,
                 "is_admin": user.is_admin,
-                "plan": subscription.plan_name if subscription else "Free"
+                "plan": subscription.plan_name if subscription else "Free",
+                "auth_provider": getattr(user, 'auth_provider', 'email') or 'email'
             }
         }
 
@@ -1099,7 +1107,8 @@ async def auth_google(request: Request):
                     email=email,
                     hashed_password=hashed,
                     full_name=full_name,
-                    created_at=now_utc
+                    created_at=now_utc,
+                    auth_provider="google"
                 )
                 session.add(user)
                 
@@ -1162,7 +1171,8 @@ async def auth_google(request: Request):
                     "email": user.email,
                     "name": user.full_name,
                     "is_admin": user.is_admin,
-                    "plan": subscription.plan_name if subscription else "Free"
+                    "plan": subscription.plan_name if subscription else "Free",
+                    "auth_provider": getattr(user, 'auth_provider', 'google') or 'google'
                 }
             }
     except HTTPException:
@@ -1408,7 +1418,8 @@ async def get_me(credentials: HTTPAuthorizationCredentials = Security(security))
             "email": user.email,
             "name": user.full_name,
             "is_admin": user.is_admin,
-            "plan": subscription.plan_name if subscription else "Free"
+            "plan": subscription.plan_name if subscription else "Free",
+            "auth_provider": getattr(user, 'auth_provider', 'email') or 'email'
         }
 
 
@@ -1429,30 +1440,59 @@ async def delete_account(credentials: HTTPAuthorizationCredentials = Security(se
 
             user_email = user.email
 
-            # 1. Delete subscription explicitly (don't rely on cascade)
-            sub_result = await session.execute(
-                select(UserSubscription).where(UserSubscription.user_id == user_id)
+            # Use raw SQL DELETE for maximum reliability (ORM session.delete can be fragile with async)
+            from sqlalchemy import text as sql_text
+
+            # 1. Delete subscription
+            sub_del = await session.execute(
+                sql_text("DELETE FROM subscriptions WHERE user_id = :uid"),
+                {"uid": user_id}
             )
-            subscription = sub_result.scalar_one_or_none()
-            if subscription:
-                await session.delete(subscription)
-                logger.info(f"[Auth] Deleted subscription for user: {user_email}")
+            logger.info(f"[Auth] Deleted {sub_del.rowcount} subscription(s) for user: {user_email}")
 
             # 2. Delete any password reset OTPs for this email
-            otp_result = await session.execute(
-                select(PasswordResetOTP).where(PasswordResetOTP.email == user_email)
+            otp_del = await session.execute(
+                sql_text("DELETE FROM password_reset_otps WHERE email = :email"),
+                {"email": user_email}
             )
-            otps = otp_result.scalars().all()
-            for otp in otps:
-                await session.delete(otp)
-            if otps:
-                logger.info(f"[Auth] Deleted {len(otps)} OTP records for: {user_email}")
+            logger.info(f"[Auth] Deleted {otp_del.rowcount} OTP record(s) for: {user_email}")
 
-            # 3. Now delete the user
-            await session.delete(user)
+            # 3. Delete the user record
+            user_del = await session.execute(
+                sql_text("DELETE FROM users WHERE id = :uid"),
+                {"uid": user_id}
+            )
+            logger.info(f"[Auth] Deleted user record for: {user_email} (rows affected: {user_del.rowcount})")
+
+            # Commit the transaction
             await session.commit()
 
-            logger.info(f"[Auth] Account fully deleted for user: {user_email} ({user_id})")
+            # Verify the deletion actually persisted
+            verify = await session.execute(
+                sql_text("SELECT id FROM users WHERE id = :uid"),
+                {"uid": user_id}
+            )
+            if verify.fetchone():
+                logger.error(f"[Auth] CRITICAL: User {user_email} still exists after DELETE+COMMIT! Attempting force delete...")
+                await session.execute(
+                    sql_text("DELETE FROM subscriptions WHERE user_id = :uid"),
+                    {"uid": user_id}
+                )
+                await session.execute(
+                    sql_text("DELETE FROM users WHERE id = :uid"),
+                    {"uid": user_id}
+                )
+                await session.commit()
+                # Re-verify
+                verify2 = await session.execute(
+                    sql_text("SELECT id FROM users WHERE id = :uid"),
+                    {"uid": user_id}
+                )
+                if verify2.fetchone():
+                    logger.critical(f"[Auth] FAILED to delete user {user_email} even after force delete!")
+                    raise HTTPException(status_code=500, detail="Failed to delete account. Please contact support.")
+
+            logger.info(f"[Auth] Account fully deleted and verified for user: {user_email} ({user_id})")
             return {"detail": "Account permanently deleted"}
 
     except HTTPException:
@@ -1583,15 +1623,27 @@ async def toggle_circuit_breaker(request: Request, admin_payload = Depends(requi
 async def admin_get_users(admin_payload = Depends(require_admin)):
     async with AsyncSessionLocal() as session:
         from db import UserSubscription
-        result = await session.execute(select(UserSubscription))
-        users = result.scalars().all()
+        # Get all users with their info
+        user_result = await session.execute(select(User))
+        all_users = user_result.scalars().all()
         safe_users = []
-        for u in users:
+        for u in all_users:
+            # Get subscription for each user
+            sub_result = await session.execute(
+                select(UserSubscription).where(UserSubscription.user_id == u.id)
+            )
+            sub = sub_result.scalar_one_or_none()
             safe_users.append({
-                "user_id": u.user_id,
-                "plan_name": u.plan_name,
-                "active_until": u.active_until.isoformat() if u.active_until else None,
-                "telegram_chat_id": u.telegram_chat_id,
+                "user_id": u.id,
+                "email": u.email,
+                "name": u.full_name,
+                "is_admin": u.is_admin,
+                "is_active": u.is_active,
+                "auth_provider": getattr(u, 'auth_provider', 'email') or 'email',
+                "created_at": u.created_at.isoformat() if u.created_at else None,
+                "plan_name": sub.plan_name if sub else None,
+                "active_until": sub.active_until.isoformat() if sub and sub.active_until else None,
+                "telegram_chat_id": sub.telegram_chat_id if sub else None,
             })
         return {"users": safe_users}
 
@@ -1613,6 +1665,55 @@ async def admin_update_user_plan(user_id: str, request: Request, admin_payload =
         else:
             raise HTTPException(status_code=404, detail="User subscription not found")
     return {"status": "success"}
+
+
+@app.delete("/api/admin/users/by-email")
+async def admin_delete_user_by_email(request: Request, admin_payload = Depends(require_admin)):
+    """Admin endpoint to force-delete a user account by email. Cleans up all related data."""
+    data = await request.json()
+    email = data.get("email")
+    if not email:
+        raise HTTPException(status_code=400, detail="Email is required")
+
+    from sqlalchemy import text as sql_text
+
+    async with AsyncSessionLocal() as session:
+        # Find the user by email
+        result = await session.execute(select(User).where(User.email == email))
+        user = result.scalar_one_or_none()
+        if not user:
+            raise HTTPException(status_code=404, detail=f"No user found with email: {email}")
+
+        user_id = user.id
+
+        # Delete subscription
+        await session.execute(
+            sql_text("DELETE FROM subscriptions WHERE user_id = :uid"),
+            {"uid": user_id}
+        )
+        # Delete OTPs
+        await session.execute(
+            sql_text("DELETE FROM password_reset_otps WHERE email = :email"),
+            {"email": email}
+        )
+        # Delete user
+        await session.execute(
+            sql_text("DELETE FROM users WHERE id = :uid"),
+            {"uid": user_id}
+        )
+        await session.commit()
+
+        # Verify deletion
+        verify = await session.execute(
+            sql_text("SELECT id FROM users WHERE id = :uid"),
+            {"uid": user_id}
+        )
+        if verify.fetchone():
+            logger.error(f"[Admin] Failed to delete user {email}!")
+            raise HTTPException(status_code=500, detail="Failed to delete user account")
+
+        logger.info(f"[Admin] Force-deleted user account: {email} ({user_id})")
+        return {"status": "success", "detail": f"Account {email} permanently deleted"}
 
 
 @app.get("/api/admin/engine/weights")

@@ -76,6 +76,7 @@ class User(Base):
     is_active = Column(Boolean, default=True)
     is_admin = Column(Boolean, default=False)
     created_at = Column(DateTime(timezone=True))
+    auth_provider = Column(String, default="email")  # "email" or "google" — tracks how the user signed up
     subscription = relationship("UserSubscription", back_populates="user", uselist=False, cascade="all, delete-orphan")
 
 class UserSubscription(Base):
@@ -208,6 +209,25 @@ async def init_db():
                         "ALTER TABLE subscriptions ADD COLUMN telegram_chat_id VARCHAR"
                     ))
                     logger.info("[DB] Migration: Added telegram_chat_id column to subscriptions table")
+
+                # Add auth_provider column if missing
+                result = await conn.execute(
+                    __import__('sqlalchemy').text(
+                        "SELECT column_name FROM information_schema.columns "
+                        "WHERE table_name='users' AND column_name='auth_provider'"
+                    )
+                )
+                if not result.fetchone():
+                    await conn.execute(__import__('sqlalchemy').text(
+                        "ALTER TABLE users ADD COLUMN auth_provider VARCHAR DEFAULT 'email'"
+                    ))
+                    logger.info("[DB] Migration: Added auth_provider column to users table")
+                    # Backfill: mark existing users with google_oauth_no_password_ as 'google'
+                    await conn.execute(__import__('sqlalchemy').text(
+                        "UPDATE users SET auth_provider = 'google' "
+                        "WHERE hashed_password LIKE 'google_oauth_no_password_%'"
+                    ))
+                    logger.info("[DB] Migration: Backfilled auth_provider for existing Google OAuth users")
 
                 logger.info("[DB] Schema migration check completed.")
         except Exception as me:

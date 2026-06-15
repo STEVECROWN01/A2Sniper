@@ -76,6 +76,7 @@ interface AppState {
     avatar?: string;
     is_admin?: boolean;
     plan?: string;
+    auth_provider?: string;
   } | null;
   liveStatus: 'LIVE' | 'DISCONNECTED';
   marketInfo: {
