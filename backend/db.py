@@ -117,7 +117,7 @@ async def get_db():
         yield session
 
 async def init_db():
-    """Crée les tables si elles n'existent pas."""
+    """Crée les tables si elles n'existent pas, et ajoute les colonnes manquantes."""
     try:
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
@@ -139,4 +139,77 @@ async def init_db():
             logger.info("[DB] Fallback table creation completed.")
         except Exception as fe:
             logger.error(f"[DB] Fallback table creation also failed: {fe}")
-            # Don't raise — let the app start even if tables can't be created
+
+    # Migrate: add missing columns to existing tables (PostgreSQL only)
+    if _use_pg:
+        try:
+            async with engine.begin() as conn:
+                # Add is_admin column if missing
+                result = await conn.execute(
+                    __import__('sqlalchemy').text(
+                        "SELECT column_name FROM information_schema.columns "
+                        "WHERE table_name='users' AND column_name='is_admin'"
+                    )
+                )
+                if not result.fetchone():
+                    await conn.execute(__import__('sqlalchemy').text(
+                        "ALTER TABLE users ADD COLUMN is_admin BOOLEAN DEFAULT FALSE"
+                    ))
+                    logger.info("[DB] Migration: Added is_admin column to users table")
+
+                # Add is_active column if missing
+                result = await conn.execute(
+                    __import__('sqlalchemy').text(
+                        "SELECT column_name FROM information_schema.columns "
+                        "WHERE table_name='users' AND column_name='is_active'"
+                    )
+                )
+                if not result.fetchone():
+                    await conn.execute(__import__('sqlalchemy').text(
+                        "ALTER TABLE users ADD COLUMN is_active BOOLEAN DEFAULT TRUE"
+                    ))
+                    logger.info("[DB] Migration: Added is_active column to users table")
+
+                # Add created_at column if missing
+                result = await conn.execute(
+                    __import__('sqlalchemy').text(
+                        "SELECT column_name FROM information_schema.columns "
+                        "WHERE table_name='users' AND column_name='created_at'"
+                    )
+                )
+                if not result.fetchone():
+                    await conn.execute(__import__('sqlalchemy').text(
+                        "ALTER TABLE users ADD COLUMN created_at TIMESTAMP WITH TIME ZONE"
+                    ))
+                    logger.info("[DB] Migration: Added created_at column to users table")
+
+                # Add full_name column if missing
+                result = await conn.execute(
+                    __import__('sqlalchemy').text(
+                        "SELECT column_name FROM information_schema.columns "
+                        "WHERE table_name='users' AND column_name='full_name'"
+                    )
+                )
+                if not result.fetchone():
+                    await conn.execute(__import__('sqlalchemy').text(
+                        "ALTER TABLE users ADD COLUMN full_name VARCHAR"
+                    ))
+                    logger.info("[DB] Migration: Added full_name column to users table")
+
+                # Check subscriptions table has telegram_chat_id
+                result = await conn.execute(
+                    __import__('sqlalchemy').text(
+                        "SELECT column_name FROM information_schema.columns "
+                        "WHERE table_name='subscriptions' AND column_name='telegram_chat_id'"
+                    )
+                )
+                if not result.fetchone():
+                    await conn.execute(__import__('sqlalchemy').text(
+                        "ALTER TABLE subscriptions ADD COLUMN telegram_chat_id VARCHAR"
+                    ))
+                    logger.info("[DB] Migration: Added telegram_chat_id column to subscriptions table")
+
+                logger.info("[DB] Schema migration check completed.")
+        except Exception as me:
+            logger.warning(f"[DB] Schema migration check failed (non-fatal): {me}")
+
