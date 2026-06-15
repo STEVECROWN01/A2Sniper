@@ -281,7 +281,7 @@ export default function SettingsPage() {
         setDeleteStep('CONFIRM');
         setIsDeletingAccount(false);
         setTimeout(() => {
-          window.location.href = '/';
+          window.location.href = '/login';
         }, 1500);
         return;
       } else {

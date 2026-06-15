@@ -119,6 +119,40 @@ def check_rate_limit(request: Request, max_requests: int = 100, window_seconds: 
     rate_limit_data[client_ip].append(now)
 
 
+def check_otp_bruteforce(email: str):
+    """Check OTP brute-force attempt tracking. Max 5 attempts per email per 5 minutes."""
+    from db import otp_attempt_tracker
+    now = datetime.now(timezone.utc)
+    if email in otp_attempt_tracker:
+        tracker = otp_attempt_tracker[email]
+        if tracker["count"] >= 5 and (now - tracker["last_attempt"]).total_seconds() < 300:
+            raise HTTPException(status_code=429, detail="Too many OTP attempts. Please wait 5 minutes before trying again.")
+        # Reset counter if lockout period has passed
+        if (now - tracker["last_attempt"]).total_seconds() >= 300:
+            otp_attempt_tracker[email] = {"count": 0, "last_attempt": now}
+
+
+def record_otp_attempt(email: str, success: bool):
+    """Record an OTP verification attempt (success or failure) for brute-force tracking."""
+    from db import otp_attempt_tracker
+    now = datetime.now(timezone.utc)
+    if email not in otp_attempt_tracker:
+        otp_attempt_tracker[email] = {"count": 0, "last_attempt": now}
+    if success:
+        # Reset on success
+        otp_attempt_tracker[email] = {"count": 0, "last_attempt": now}
+    else:
+        otp_attempt_tracker[email]["count"] += 1
+        otp_attempt_tracker[email]["last_attempt"] = now
+
+
+def validate_email(email: str) -> bool:
+    """Validate email format."""
+    import re
+    EMAIL_REGEX = re.compile(r'^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$')
+    return bool(EMAIL_REGEX.match(email))
+
+
 # Admin authentication dependency
 async def require_admin(credentials: HTTPAuthorizationCredentials = Security(security)):
     """Verify the user is an admin. Must be used on all admin endpoints."""
@@ -778,7 +812,9 @@ async def request_live_signal(request: Request, credentials: HTTPAuthorizationCr
 
 
 @app.get("/api/signals")
-async def get_signals(pair: str = None, limit: int = 100):
+async def get_signals(pair: str = None, limit: int = 100, credentials: HTTPAuthorizationCredentials = Security(security)):
+    # Validate and clamp limit to prevent memory exhaustion
+    limit = max(1, min(limit, 500))
     async with AsyncSessionLocal() as session:
         # On récupère les signaux (triés par plus récent)
         # On garde une limite raisonnable pour les filtres d'historique
@@ -867,7 +903,11 @@ async def admin_get_config(admin_payload = Depends(require_admin)):
 async def admin_update_config(request: Request, admin_payload = Depends(require_admin)):
     """Met à jour la configuration système."""
     global _system_config
+    ALLOWED_CONFIG_KEYS = {"maintenance_mode", "public_signal_feed", "max_drawdown_pct", "api_rate_limit", "twofa_enabled", "circuit_breaker_active"}
     data = await request.json()
+    for key in data:
+        if key not in ALLOWED_CONFIG_KEYS:
+            raise HTTPException(status_code=400, detail=f"Invalid config key: {key}")
     _system_config.update(data)
     return {"status": "success", "config": _system_config}
 
@@ -877,7 +917,7 @@ async def admin_update_config(request: Request, admin_payload = Depends(require_
 @app.post("/api/auth/register-send-otp")
 async def register_send_otp(request: Request):
     """Step 1: Validate registration data and send OTP to verify email ownership."""
-    check_rate_limit(request)
+    check_rate_limit(request, max_requests=5, window_seconds=60)  # Strict: 5/min for registration
     try:
         data = await request.json()
     except Exception:
@@ -888,6 +928,10 @@ async def register_send_otp(request: Request):
 
     if not email or not password:
         raise HTTPException(status_code=400, detail="Email and password required")
+
+    # Validate email format
+    if not validate_email(email):
+        raise HTTPException(status_code=400, detail="Invalid email format")
 
     from auth import validate_password_strength, MIN_PASSWORD_LENGTH
     if not validate_password_strength(password):
@@ -922,11 +966,8 @@ async def register_send_otp(request: Request):
 
     if not email_sent:
         logger.warning(f"[Register] OTP generated for {email} but email could not be sent.")
-        # Still return success — the OTP is stored and can be verified
-        # In dev mode, we include the OTP in the response for testing
-        resend_api_key = os.getenv("RESEND_API_KEY")
-        if not resend_api_key:
-            return {"status": "success", "message": "OTP generated (email not configured — check server logs)", "dev_otp": otp_code}
+        # Log OTP server-side only for dev debugging — NEVER return in API response
+        logger.info(f"[Register] DEV OTP for {email}: {otp_code}")
     else:
         logger.info(f"[Register] Verification OTP sent to {email[:3]}***")
 
@@ -936,7 +977,7 @@ async def register_send_otp(request: Request):
 @app.post("/api/auth/register-verify-otp")
 async def register_verify_otp(request: Request):
     """Step 2: Verify the OTP and create the account."""
-    check_rate_limit(request)
+    check_rate_limit(request, max_requests=5, window_seconds=60)  # Strict: 5/min for OTP verify
     try:
         data = await request.json()
     except Exception:
@@ -948,6 +989,9 @@ async def register_verify_otp(request: Request):
 
     if not email or not password or not otp_code:
         raise HTTPException(status_code=400, detail="Email, password, and OTP code required")
+
+    # Check OTP brute-force protection
+    check_otp_bruteforce(email)
 
     # Verify OTP
     async with AsyncSessionLocal() as session:
@@ -961,17 +1005,20 @@ async def register_verify_otp(request: Request):
         otp_record = result.scalar_one_or_none()
 
         if not otp_record:
+            record_otp_attempt(email, success=False)
             raise HTTPException(status_code=400, detail="Invalid or expired verification code")
 
         if otp_record.expires_at.replace(tzinfo=timezone.utc) < datetime.now(timezone.utc):
             # Delete expired OTP
             await session.delete(otp_record)
             await session.commit()
+            record_otp_attempt(email, success=False)
             raise HTTPException(status_code=400, detail="Verification code has expired. Please request a new one.")
 
-        # OTP is valid — delete it
+        # OTP is valid — delete it and record success
         await session.delete(otp_record)
         await session.flush()
+        record_otp_attempt(email, success=True)
 
         # Now create the account
         # Check if user exists and clean up
@@ -1021,7 +1068,7 @@ async def register_verify_otp(request: Request):
 @app.post("/api/auth/register")
 async def register(request: Request):
     """Legacy direct registration (no OTP). Kept for backward compatibility."""
-    check_rate_limit(request)
+    check_rate_limit(request, max_requests=5, window_seconds=60)
     try:
         data = await request.json()
     except Exception:
@@ -1082,13 +1129,13 @@ async def register(request: Request):
         import traceback
         logger.error(f"[Register] Error creating account: {type(e).__name__}: {e}")
         logger.error(f"[Register] Traceback: {traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail=f"Unable to create account: {type(e).__name__}")
+        raise HTTPException(status_code=500, detail="An error occurred while creating your account. Please try again.")
 
     return {"status": "success", "message": "Compte créé avec succès"}
 
 @app.post("/api/auth/login")
 async def login(request: Request):
-    check_rate_limit(request)
+    check_rate_limit(request, max_requests=10, window_seconds=60)  # Strict: 10/min for login
     data = await request.json()
     email = data.get("email")
     password = data.get("password")
@@ -1299,7 +1346,7 @@ async def auth_google(request: Request):
         import traceback
         logger.error(f"[Google Auth] Database error during user lookup/creation: {type(e).__name__}: {e}")
         logger.error(f"[Google Auth] Full traceback: {traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail=f"Internal error during sign-in: {type(e).__name__}: {str(e)[:150]}")
+        raise HTTPException(status_code=500, detail="An internal error occurred during sign-in. Please try again.")
 
 
 async def send_otp_email(recipient_email: str, otp_code: str, purpose: str = "password_reset"):
@@ -1375,7 +1422,7 @@ async def send_otp_email(recipient_email: str, otp_code: str, purpose: str = "pa
 
 @app.post("/api/auth/forgot-password")
 async def forgot_password(request: Request):
-    check_rate_limit(request)
+    check_rate_limit(request, max_requests=3, window_seconds=60)  # Strict: 3/min for password reset
     data = await request.json()
     email = data.get("email")
     
@@ -1421,7 +1468,7 @@ async def forgot_password(request: Request):
 
 @app.post("/api/auth/verify-otp")
 async def verify_otp(request: Request):
-    check_rate_limit(request)
+    check_rate_limit(request, max_requests=5, window_seconds=60)  # Strict: 5/min for OTP verify
     data = await request.json()
     email = data.get("email")
     otp_code = data.get("otp_code")
@@ -1467,6 +1514,7 @@ async def verify_otp(request: Request):
 
 @app.post("/api/auth/reset-password")
 async def reset_password(request: Request):
+    check_rate_limit(request, max_requests=5, window_seconds=60)  # Strict: 5/min for password reset
     data = await request.json()
     email = data.get("email")
     otp_code = data.get("otp_code")
@@ -1474,7 +1522,10 @@ async def reset_password(request: Request):
     
     if not email or not otp_code or not new_password:
         raise HTTPException(status_code=400, detail="All fields are required")
-        
+
+    # Check OTP brute-force protection
+    check_otp_bruteforce(email)
+    
     async with AsyncSessionLocal() as session:
         # Re-vérifier l'OTP
         result = await session.execute(
@@ -1485,12 +1536,14 @@ async def reset_password(request: Request):
         otp_record = result.scalar_one_or_none()
         
         if not otp_record:
+            record_otp_attempt(email, success=False)
             raise HTTPException(status_code=400, detail="Invalid OTP code")
             
         now = datetime.now(timezone.utc)
         expires_at = otp_record.expires_at.replace(tzinfo=timezone.utc) if otp_record.expires_at.tzinfo is None else otp_record.expires_at
         
         if now > expires_at:
+            record_otp_attempt(email, success=False)
             raise HTTPException(status_code=400, detail="This OTP code has expired")
         
         # Validate new password strength
@@ -1511,6 +1564,7 @@ async def reset_password(request: Request):
         await session.execute(delete(PasswordResetOTP).where(PasswordResetOTP.email == email))
         
         await session.commit()
+        record_otp_attempt(email, success=True)
         
     return {"status": "success", "message": "Mot de passe réinitialisé avec succès"}
 
@@ -1601,9 +1655,8 @@ async def delete_account_send_otp(credentials: HTTPAuthorizationCredentials = Se
 
     if not email_sent:
         logger.warning(f"[Delete] Deletion OTP generated for {user_email} but email could not be sent.")
-        resend_api_key = os.getenv("RESEND_API_KEY")
-        if not resend_api_key:
-            return {"status": "success", "message": "Deletion code generated (email not configured)", "dev_otp": otp_code}
+        # Log OTP server-side only — NEVER return in API response
+        logger.info(f"[Delete] DEV OTP for {user_email}: {otp_code}")
     else:
         logger.info(f"[Delete] Deletion OTP sent to {user_email[:3]}***")
 
@@ -1650,16 +1703,19 @@ async def delete_account_confirm(request: Request, credentials: HTTPAuthorizatio
             otp_record = otp_result.scalar_one_or_none()
 
             if not otp_record:
+                record_otp_attempt(user_email, success=False)
                 raise HTTPException(status_code=400, detail="Invalid or expired confirmation code")
 
             if otp_record.expires_at.replace(tzinfo=timezone.utc) < datetime.now(timezone.utc):
                 await session.delete(otp_record)
                 await session.commit()
+                record_otp_attempt(user_email, success=False)
                 raise HTTPException(status_code=400, detail="Confirmation code has expired. Please request a new one.")
 
-            # OTP is valid — delete it
+            # OTP is valid — delete it and record success
             await session.delete(otp_record)
             await session.flush()
+            record_otp_attempt(user_email, success=True)
 
             # Get subscription info for audit trail
             sub_result = await session.execute(
@@ -2044,7 +2100,7 @@ def _deep_clean_ssid(raw: str) -> str:
 
 
 @app.post("/api/market/connect")
-async def connect_market(request: Request):
+async def connect_market(request: Request, credentials: HTTPAuthorizationCredentials = Security(security)):
     try:
         data = await request.json()
     except Exception:
@@ -2104,7 +2160,7 @@ async def connect_market(request: Request):
         logger.error(f"[MARKET] Erreur interne de connexion: {e}")
         raise HTTPException(
             status_code=500,
-            detail=f"Erreur interne de connexion au serveur Pocket Option. Réessayez dans quelques secondes. Détail: {str(e)[:200]}"
+            detail="Internal error connecting to Pocket Option server. Please try again in a few seconds."
         )
 
     if success:
@@ -2125,12 +2181,12 @@ async def connect_market(request: Request):
         )
 
 @app.post("/api/market/disconnect")
-async def disconnect_market():
+async def disconnect_market(credentials: HTTPAuthorizationCredentials = Security(security)):
     await po_scanner.disconnect()
     return {"status": "success", "message": "Déconnecté du marché"}
 
 @app.get("/api/market/status")
-async def get_market_status():
+async def get_market_status(credentials: HTTPAuthorizationCredentials = Security(security)):
     try:
         return {
             "is_connected": po_scanner.is_connected,
@@ -2147,7 +2203,7 @@ async def get_market_status():
             "is_demo": True,
             "uid": None,
             "payouts": {pair: None for pair in OTC_PAIRS},
-            "error": str(e)[:200]
+            "error": "Connection error. Please try again."
         }
 
 

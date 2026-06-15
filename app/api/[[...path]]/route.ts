@@ -15,6 +15,16 @@ import { NextRequest, NextResponse } from 'next/server';
 // Priority: API_BACKEND_URL > NEXT_PUBLIC_API_URL > localhost fallback
 const BACKEND_URL = process.env.API_BACKEND_URL || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
+// Allowed origins for CORS — restrict to known domains
+const ALLOWED_ORIGINS = [
+  'https://a2sniper.vercel.app',
+  'http://localhost:3000',
+  'http://localhost:3001',
+];
+
+// Only forward these headers to the backend (security: prevent header injection)
+const ALLOWED_REQUEST_HEADERS = ['authorization', 'content-type', 'accept'];
+
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ path?: string[] }> }
@@ -47,6 +57,15 @@ export async function DELETE(
   return proxyRequest(request, path);
 }
 
+function getCorSOrigin(request: NextRequest): string {
+  const origin = request.headers.get('origin') || '';
+  if (ALLOWED_ORIGINS.includes(origin)) {
+    return origin;
+  }
+  // Default: allow same-origin (no CORS header = browser blocks cross-origin)
+  return '';
+}
+
 async function proxyRequest(request: NextRequest, path?: string[]) {
   // Build the target URL
   const pathStr = path ? path.join('/') : '';
@@ -57,11 +76,10 @@ async function proxyRequest(request: NextRequest, path?: string[]) {
   const queryString = url.searchParams.toString();
   const fullUrl = queryString ? `${targetUrl}?${queryString}` : targetUrl;
 
-  // Forward headers (excluding host and connection-related headers)
+  // Only forward whitelisted headers (security: prevent header injection / SSRF)
   const headers: Record<string, string> = {};
   request.headers.forEach((value, key) => {
-    const lower = key.toLowerCase();
-    if (!['host', 'connection', 'transfer-encoding', 'content-length'].includes(lower)) {
+    if (ALLOWED_REQUEST_HEADERS.includes(key.toLowerCase())) {
       headers[key] = value;
     }
   });
@@ -95,10 +113,14 @@ async function proxyRequest(request: NextRequest, path?: string[]) {
       }
     });
 
-    // Add CORS headers
-    responseHeaders.set('Access-Control-Allow-Origin', '*');
-    responseHeaders.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-    responseHeaders.set('Access-Control-Allow-Headers', '*');
+    // Add restricted CORS headers (only allow known origins)
+    const corsOrigin = getCorSOrigin(request);
+    if (corsOrigin) {
+      responseHeaders.set('Access-Control-Allow-Origin', corsOrigin);
+      responseHeaders.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+      responseHeaders.set('Access-Control-Allow-Headers', 'Authorization, Content-Type, Accept');
+      responseHeaders.set('Access-Control-Allow-Credentials', 'true');
+    }
 
     const body = await response.text();
     return new NextResponse(body, {
@@ -112,7 +134,7 @@ async function proxyRequest(request: NextRequest, path?: string[]) {
 
     return NextResponse.json(
       {
-        detail: `Backend unreachable: ${message}. Make sure the A2Sniper backend is running on ${BACKEND_URL}.`,
+        detail: 'Service temporarily unavailable. Please try again later.',
       },
       { status: 502 }
     );
@@ -120,13 +142,19 @@ async function proxyRequest(request: NextRequest, path?: string[]) {
 }
 
 // Handle CORS preflight
-export async function OPTIONS() {
+export async function OPTIONS(request: NextRequest) {
+  const corsOrigin = getCorSOrigin(request);
+  if (!corsOrigin) {
+    return new NextResponse(null, { status: 403 });
+  }
+
   return new NextResponse(null, {
     status: 204,
     headers: {
-      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Origin': corsOrigin,
       'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-      'Access-Control-Allow-Headers': '*',
+      'Access-Control-Allow-Headers': 'Authorization, Content-Type, Accept',
+      'Access-Control-Allow-Credentials': 'true',
       'Access-Control-Max-Age': '86400',
     },
   });
