@@ -877,7 +877,10 @@ async def admin_update_config(request: Request, admin_payload = Depends(require_
 @app.post("/api/auth/register")
 async def register(request: Request):
     check_rate_limit(request)
-    data = await request.json()
+    try:
+        data = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid request body")
     email = data.get("email")
     password = data.get("password")
     full_name = data.get("name")
@@ -888,32 +891,38 @@ async def register(request: Request):
     from auth import validate_password_strength, MIN_PASSWORD_LENGTH
     if not validate_password_strength(password):
         raise HTTPException(status_code=400, detail=f"Password must be at least {MIN_PASSWORD_LENGTH} characters with 1 uppercase, 1 digit, and 1 special character")
-        
-    async with AsyncSessionLocal() as session:
-        # Vérifier si l'utilisateur existe déjà
-        result = await session.execute(select(User).where(User.email == email))
-        if result.scalar_one_or_none():
-            raise HTTPException(status_code=400, detail="Email already in use")
+    
+    try:
+        async with AsyncSessionLocal() as session:
+            # Vérifier si l'utilisateur existe déjà
+            result = await session.execute(select(User).where(User.email == email))
+            if result.scalar_one_or_none():
+                raise HTTPException(status_code=400, detail="Email already in use")
+                
+            user_id = str(uuid.uuid4())
+            new_user = User(
+                id=user_id,
+                email=email,
+                hashed_password=get_password_hash(password),
+                full_name=full_name,
+                created_at=datetime.now(timezone.utc)
+            )
+            session.add(new_user)
             
-        user_id = str(uuid.uuid4())
-        new_user = User(
-            id=user_id,
-            email=email,
-            hashed_password=get_password_hash(password),
-            full_name=full_name,
-            created_at=datetime.now(timezone.utc)
-        )
-        session.add(new_user)
-        
-        # Créer une souscription par défaut
-        sub = UserSubscription(
-            user_id=user_id,
-            plan_name="Standard",
-            active_until=datetime.now(timezone.utc) + timedelta(days=7) # 7 jours d'essai
-        )
-        session.add(sub)
-        
-        await session.commit()
+            # Créer une souscription par défaut
+            sub = UserSubscription(
+                user_id=user_id,
+                plan_name="Standard",
+                active_until=datetime.now(timezone.utc) + timedelta(days=7) # 7 jours d'essai
+            )
+            session.add(sub)
+            
+            await session.commit()
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[Register] Error creating account: {type(e).__name__}: {e}")
+        raise HTTPException(status_code=500, detail="Unable to create account. Please try again later.")
         
     return {"status": "success", "message": "Compte créé avec succès"}
 

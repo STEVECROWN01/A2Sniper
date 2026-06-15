@@ -67,17 +67,34 @@ export default function SignupPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, email, password }),
       });
-      const data = await res.json();
+
+      let data;
+      try {
+        data = await res.json();
+      } catch {
+        setError('Server returned an invalid response. Please try again.');
+        setIsLoading(false);
+        return;
+      }
+
       if (res.ok) {
         toast.success('Account created! Redirecting to login...');
         setTimeout(() => {
           router.push('/login');
         }, 2000);
       } else {
-        setError(data.detail || 'Error during registration');
+        // Handle FastAPI validation errors (detail can be array of objects)
+        const detail = data.detail;
+        if (typeof detail === 'string') {
+          setError(detail);
+        } else if (Array.isArray(detail)) {
+          setError(detail.map((d: { msg?: string; message?: string }) => d.msg || d.message || 'Validation error').join('. '));
+        } else {
+          setError('Registration failed. Please try again.');
+        }
       }
     } catch {
-      setError('Network error. Please try again.');
+      setError('Unable to connect. Please check your internet connection and try again.');
     } finally {
       setIsLoading(false);
     }
