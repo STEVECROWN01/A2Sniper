@@ -1937,6 +1937,31 @@ async def admin_delete_user_by_email(request: Request, admin_payload = Depends(r
         return {"status": "success", "detail": f"Account {email} permanently deleted"}
 
 
+@app.get("/api/admin/deleted-accounts")
+async def admin_get_deleted_accounts(admin_payload = Depends(require_admin)):
+    """View the audit trail of all deleted accounts."""
+    async with AsyncSessionLocal() as session:
+        from db import DeletedAccount
+        result = await session.execute(
+            select(DeletedAccount).order_by(DeletedAccount.deleted_at.desc())
+        )
+        records = result.scalars().all()
+        deleted = []
+        for r in records:
+            deleted.append({
+                "id": r.id,
+                "user_id": r.user_id,
+                "email": r.email,
+                "full_name": r.full_name,
+                "auth_provider": r.auth_provider,
+                "plan_name": r.plan_name,
+                "is_admin": r.is_admin,
+                "deleted_at": r.deleted_at.isoformat() if r.deleted_at else None,
+                "deletion_reason": r.deletion_reason,
+            })
+        return {"deleted_accounts": deleted, "total": len(deleted)}
+
+
 @app.get("/api/admin/engine/weights")
 async def admin_get_weights(admin_payload = Depends(require_admin)):
     return {
