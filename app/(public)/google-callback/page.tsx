@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useGoogleAuth } from '@/hooks/use-google-auth';
 import { Loader2 } from 'lucide-react';
 import { motion } from 'framer-motion';
+import { toast } from 'sonner';
 
 export default function GoogleCallbackPage() {
   const router = useRouter();
@@ -36,7 +37,9 @@ export default function GoogleCallbackPage() {
       try {
         const ok = await handleGoogleCallback();
         clearTimeout(timeout);
-        if (!ok) {
+        if (ok) {
+          toast.success('Signed in with Google! Welcome, Sniper.', { duration: 3000 });
+        } else {
           // Check if there's a more specific error from the URL params
           if (errorParam) {
             setError(`Google error: ${errorParam}`);

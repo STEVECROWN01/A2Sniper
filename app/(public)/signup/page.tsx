@@ -78,10 +78,12 @@ export default function SignupPage() {
       }
 
       if (res.ok) {
-        toast.success('Account created! Redirecting to login...');
+        toast.success('Account created successfully! Please sign in with your registered email and password.', {
+          duration: 6000,
+        });
         setTimeout(() => {
           router.push('/login');
-        }, 2000);
+        }, 3500);
       } else {
         // Handle FastAPI validation errors (detail can be array of objects)
         const detail = data.detail;

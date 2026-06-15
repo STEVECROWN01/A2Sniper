@@ -8,6 +8,7 @@ import { Mail, Lock, ArrowRight, Eye, EyeOff, ArrowLeft, KeyRound } from 'lucide
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useAppStore } from '@/lib/store';
+import { toast } from 'sonner';
 import { useGoogleAuth } from '@/hooks/use-google-auth';
 
 type Step = 'LOGIN' | 'FORGOT_EMAIL' | 'FORGOT_OTP' | 'FORGOT_NEW_PWD';
@@ -80,6 +81,9 @@ export default function LoginPage() {
       }
 
       if (res.ok) {
+        toast.success('Signed in successfully! Welcome back, Sniper.', {
+          duration: 3000,
+        });
         localStorage.setItem('a2sniper_token', data.token);
         const userData = data.user || {};
         // Fetch full profile from /api/auth/me to get is_admin and plan
@@ -97,8 +101,13 @@ export default function LoginPage() {
           setUser(userData);
         }
         setAuthenticated(true);
-        router.push('/dashboard');
+        // Keep isLoading true so the button stays in "Signing in..." state
+        // while the page transitions to the dashboard
+        setTimeout(() => {
+          router.push('/dashboard');
+        }, 800);
       } else {
+        setIsLoading(false);
         if (res.status === 401) {
           setError("Invalid email or password. Please check your credentials and try again.");
         } else if (res.status === 422) {
@@ -122,9 +131,10 @@ export default function LoginPage() {
       }
     } catch (err) {
       setError('Unable to connect. Please check your internet connection and try again.');
-    } finally {
       setIsLoading(false);
     }
+    // Note: don't setIsLoading(false) here — on success it stays true
+    // so the user sees the loading spinner during page transition to dashboard
   };
 
   const handleForgotEmailSubmit = async (e: React.FormEvent) => {
