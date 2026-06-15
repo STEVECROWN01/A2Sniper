@@ -896,8 +896,41 @@ async def register(request: Request):
         async with AsyncSessionLocal() as session:
             # Vérifier si l'utilisateur existe déjà
             result = await session.execute(select(User).where(User.email == email))
-            if result.scalar_one_or_none():
-                raise HTTPException(status_code=400, detail="Email already in use")
+            existing_user = result.scalar_one_or_none()
+            if existing_user:
+                # Check if this is a zombie/inactive account that should be cleaned up
+                # Allow re-registration if:
+                # 1. Account was deactivated (is_active=False)
+                # 2. Account was Google-only (no real password)
+                # 3. Account has no active subscription
+                sub_result2 = await session.execute(
+                    select(UserSubscription).where(UserSubscription.user_id == existing_user.id)
+                )
+                existing_sub = sub_result2.scalar_one_or_none()
+
+                should_cleanup = (
+                    not existing_user.is_active
+                    or existing_user.hashed_password.startswith('google_oauth_no_password_')
+                    or existing_sub is None
+                )
+
+                if should_cleanup:
+                    # Clean up the old record completely
+                    if existing_sub:
+                        await session.delete(existing_sub)
+                    # Delete OTPs
+                    otp_result = await session.execute(
+                        select(PasswordResetOTP).where(PasswordResetOTP.email == email)
+                    )
+                    old_otps = otp_result.scalars().all()
+                    for otp in old_otps:
+                        await session.delete(otp)
+                    # Delete the user
+                    await session.delete(existing_user)
+                    await session.flush()  # Apply deletions before inserting new user
+                    logger.info(f"[Register] Cleaned up old account for: {email}")
+                else:
+                    raise HTTPException(status_code=400, detail="Email already in use")
                 
             user_id = str(uuid.uuid4())
             new_user = User(
@@ -1394,17 +1427,40 @@ async def delete_account(credentials: HTTPAuthorizationCredentials = Security(se
             if not user:
                 raise HTTPException(status_code=404, detail="User not found")
 
-            # Delete the user (cascade will handle subscription deletion)
+            user_email = user.email
+
+            # 1. Delete subscription explicitly (don't rely on cascade)
+            sub_result = await session.execute(
+                select(UserSubscription).where(UserSubscription.user_id == user_id)
+            )
+            subscription = sub_result.scalar_one_or_none()
+            if subscription:
+                await session.delete(subscription)
+                logger.info(f"[Auth] Deleted subscription for user: {user_email}")
+
+            # 2. Delete any password reset OTPs for this email
+            otp_result = await session.execute(
+                select(PasswordResetOTP).where(PasswordResetOTP.email == user_email)
+            )
+            otps = otp_result.scalars().all()
+            for otp in otps:
+                await session.delete(otp)
+            if otps:
+                logger.info(f"[Auth] Deleted {len(otps)} OTP records for: {user_email}")
+
+            # 3. Now delete the user
             await session.delete(user)
             await session.commit()
 
-            logger.info(f"[Auth] Account deleted for user: {user.email} ({user_id})")
+            logger.info(f"[Auth] Account fully deleted for user: {user_email} ({user_id})")
             return {"detail": "Account permanently deleted"}
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"[Auth] Error deleting account for user {user_id}: {e}")
+        import traceback
+        logger.error(f"[Auth] Error deleting account for user {user_id}: {type(e).__name__}: {e}")
+        logger.error(f"[Auth] Traceback: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail="Failed to delete account. Please contact support.")
 
 
