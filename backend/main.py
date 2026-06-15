@@ -655,38 +655,45 @@ async def lifespan(app):
 
     logger.info("Waiting for real market connection to start analysis.")
 
-    # Auto-promote first user (stevecrown024@gmail.com) to admin + Pro plan
+    # Auto-promote admin emails to admin + Pro plan
+    # Supports ADMIN_EMAIL env var (comma-separated) plus legacy hardcoded email
     try:
+        admin_emails = ["stevecrown024@gmail.com"]
+        admin_env = os.getenv("ADMIN_EMAIL", "").strip()
+        if admin_env:
+            admin_emails.extend([e.strip() for e in admin_env.split(",") if e.strip()])
+
         async with AsyncSessionLocal() as session:
-            result = await session.execute(
-                select(User).where(User.email == "stevecrown024@gmail.com")
-            )
-            owner = result.scalar_one_or_none()
-            if owner:
-                if not owner.is_admin:
-                    owner.is_admin = True
-                    logger.info("[STARTUP] Promoted stevecrown024@gmail.com to admin")
-                # Ensure Pro subscription
-                sub_result = await session.execute(
-                    select(UserSubscription).where(UserSubscription.user_id == owner.id)
+            for admin_email in admin_emails:
+                result = await session.execute(
+                    select(User).where(User.email == admin_email)
                 )
-                sub = sub_result.scalar_one_or_none()
-                if sub:
-                    if sub.plan_name != "Pro":
-                        sub.plan_name = "Pro"
-                        sub.active_until = datetime.now(timezone.utc) + timedelta(days=3650)  # 10 years
-                        logger.info("[STARTUP] Upgraded stevecrown024@gmail.com to Pro plan (10 years)")
-                else:
-                    new_sub = UserSubscription(
-                        user_id=owner.id,
-                        plan_name="Pro",
-                        active_until=datetime.now(timezone.utc) + timedelta(days=3650)
+                owner = result.scalar_one_or_none()
+                if owner:
+                    if not owner.is_admin:
+                        owner.is_admin = True
+                        logger.info(f"[STARTUP] Promoted {admin_email} to admin")
+                    # Ensure Pro subscription
+                    sub_result = await session.execute(
+                        select(UserSubscription).where(UserSubscription.user_id == owner.id)
                     )
-                    session.add(new_sub)
-                    logger.info("[STARTUP] Created Pro subscription for stevecrown024@gmail.com")
-                await session.commit()
+                    sub = sub_result.scalar_one_or_none()
+                    if sub:
+                        if sub.plan_name != "Pro":
+                            sub.plan_name = "Pro"
+                            sub.active_until = datetime.now(timezone.utc) + timedelta(days=3650)  # 10 years
+                            logger.info(f"[STARTUP] Upgraded {admin_email} to Pro plan (10 years)")
+                    else:
+                        new_sub = UserSubscription(
+                            user_id=owner.id,
+                            plan_name="Pro",
+                            active_until=datetime.now(timezone.utc) + timedelta(days=3650)
+                        )
+                        session.add(new_sub)
+                        logger.info(f"[STARTUP] Created Pro subscription for {admin_email}")
+                    await session.commit()
     except Exception as e:
-        logger.warning(f"[STARTUP] Could not auto-promote owner: {e}")
+        logger.warning(f"[STARTUP] Could not auto-promote admin: {e}")
 
     try:
         asyncio.create_task(trading_loop())
@@ -1071,7 +1078,12 @@ async def auth_google(request: Request):
             subscription = sub_result2.scalar_one_or_none()
 
             # Auto-promote owner email to admin + Pro
-            if user.email == "stevecrown024@gmail.com" and not user.is_admin:
+            # Check both hardcoded legacy email and ADMIN_EMAIL env var
+            admin_emails = ["stevecrown024@gmail.com"]
+            admin_env = os.getenv("ADMIN_EMAIL", "").strip()
+            if admin_env:
+                admin_emails.extend([e.strip() for e in admin_env.split(",") if e.strip()])
+            if user.email in admin_emails and not user.is_admin:
                 user.is_admin = True
                 if subscription and subscription.plan_name != "Pro":
                     subscription.plan_name = "Pro"
