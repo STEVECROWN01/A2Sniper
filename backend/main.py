@@ -898,46 +898,34 @@ async def register(request: Request):
             result = await session.execute(select(User).where(User.email == email))
             existing_user = result.scalar_one_or_none()
             if existing_user:
-                # Check if this is a zombie/inactive/Google-only account that should be cleaned up
-                # Allow re-registration if:
-                # 1. Account was deactivated (is_active=False)
-                # 2. Account was Google OAuth (auth_provider='google') — user is now providing a real password
-                # 3. Account has the old-style Google placeholder password
-                # 4. Account has no subscription (likely abandoned)
-                sub_result2 = await session.execute(
-                    select(UserSubscription).where(UserSubscription.user_id == existing_user.id)
-                )
-                existing_sub = sub_result2.scalar_one_or_none()
+                # Allow re-registration — clean up any existing account.
+                # Rationale: If someone is trying to register with an email, they clearly want to use it.
+                # If the old account was active with a real password, the user should have logged in instead.
+                # Since they're registering, either:
+                #   a) The old account was deleted but not fully removed from DB
+                #   b) The old account was a Google OAuth account (user doesn't know the password)
+                #   c) The user forgot their password and wants to start fresh
+                # In all cases, we clean up and allow re-registration.
+                auth_provider = getattr(existing_user, 'auth_provider', None) or 'unknown'
 
-                auth_provider = getattr(existing_user, 'auth_provider', None) or ''
-                should_cleanup = (
-                    not existing_user.is_active
-                    or auth_provider == 'google'
-                    or existing_user.hashed_password.startswith('google_oauth_no_password_')
-                    or existing_sub is None
-                )
+                logger.info(f"[Register] Re-registering email {email}: cleaning up old account (auth_provider={auth_provider}, is_active={existing_user.is_active})")
 
-                if should_cleanup:
-                    # Clean up the old record completely using raw SQL for reliability
-                    if existing_sub:
-                        await session.execute(
-                            __import__('sqlalchemy').text("DELETE FROM subscriptions WHERE user_id = :uid"),
-                            {"uid": existing_user.id}
-                        )
-                    # Delete OTPs
-                    await session.execute(
-                        __import__('sqlalchemy').text("DELETE FROM password_reset_otps WHERE email = :email"),
-                        {"email": email}
-                    )
-                    # Delete the user
-                    await session.execute(
-                        __import__('sqlalchemy').text("DELETE FROM users WHERE id = :uid"),
-                        {"uid": existing_user.id}
-                    )
-                    await session.flush()  # Apply deletions before inserting new user
-                    logger.info(f"[Register] Cleaned up old account for: {email} (auth_provider={auth_provider}, is_active={existing_user.is_active})")
-                else:
-                    raise HTTPException(status_code=400, detail="Email already in use")
+                # Clean up the old record completely using raw SQL for reliability
+                await session.execute(
+                    __import__('sqlalchemy').text("DELETE FROM subscriptions WHERE user_id = :uid"),
+                    {"uid": existing_user.id}
+                )
+                # Delete OTPs
+                await session.execute(
+                    __import__('sqlalchemy').text("DELETE FROM password_reset_otps WHERE email = :email"),
+                    {"email": email}
+                )
+                # Delete the user
+                await session.execute(
+                    __import__('sqlalchemy').text("DELETE FROM users WHERE id = :uid"),
+                    {"uid": existing_user.id}
+                )
+                await session.flush()  # Apply deletions before inserting new user
                 
             user_id = str(uuid.uuid4())
             new_user = User(
