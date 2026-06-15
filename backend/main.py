@@ -921,8 +921,10 @@ async def register(request: Request):
     except HTTPException:
         raise
     except Exception as e:
+        import traceback
         logger.error(f"[Register] Error creating account: {type(e).__name__}: {e}")
-        raise HTTPException(status_code=500, detail="Unable to create account. Please try again later.")
+        logger.error(f"[Register] Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Unable to create account: {type(e).__name__}")
         
     return {"status": "success", "message": "Compte créé avec succès"}
 
