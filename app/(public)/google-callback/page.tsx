@@ -10,6 +10,7 @@ export default function GoogleCallbackPage() {
   const router = useRouter();
   const { handleGoogleCallback } = useGoogleAuth();
   const [error, setError] = useState('');
+  const [debugInfo, setDebugInfo] = useState('');
   const hasExecuted = useRef(false);
 
   useEffect(() => {
@@ -18,9 +19,17 @@ export default function GoogleCallbackPage() {
     if (hasExecuted.current) return;
     hasExecuted.current = true;
 
+    // Debug: show what's in the URL
+    const searchParams = new URLSearchParams(window.location.search);
+    const code = searchParams.get('code');
+    const errorParam = searchParams.get('error');
+    const hash = window.location.hash;
+    setDebugInfo(`code=${code ? 'yes(' + code.substring(0, 8) + '...)' : 'no'} error=${errorParam || 'none'} hash=${hash ? 'yes' : 'no'} origin=${window.location.origin}`);
+    console.log('[Google Callback] URL debug:', { code: !!code, errorParam, hash: !!hash, origin: window.location.origin });
+
     const timeout = setTimeout(() => {
       setError('Google sign-in timed out. Please try again.');
-      setTimeout(() => router.replace('/login'), 2000);
+      setTimeout(() => router.replace('/login'), 3000);
     }, 15000); // 15-second timeout
 
     (async () => {
@@ -29,19 +38,17 @@ export default function GoogleCallbackPage() {
         clearTimeout(timeout);
         if (!ok) {
           // Check if there's a more specific error from the URL params
-          const params = new URLSearchParams(window.location.search);
-          const errorCode = params.get('error');
-          if (errorCode) {
-            setError(`Google sign-in failed: ${errorCode}. Please try again.`);
+          if (errorParam) {
+            setError(`Google error: ${errorParam}`);
           } else {
             setError('Google sign-in failed. Please try again or use email/password login.');
           }
-          setTimeout(() => router.replace('/login'), 3000);
+          setTimeout(() => router.replace('/login'), 5000);
         }
       } catch (err) {
         clearTimeout(timeout);
-        setError('An error occurred during Google sign-in.');
-        setTimeout(() => router.replace('/login'), 2000);
+        setError('An error occurred during Google sign-in: ' + (err instanceof Error ? err.message : 'Unknown'));
+        setTimeout(() => router.replace('/login'), 5000);
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -58,7 +65,10 @@ export default function GoogleCallbackPage() {
         {error ? (
           <>
             <p className="text-red-400 text-lg font-medium mb-2">Error</p>
-            <p className="text-gray-400 text-sm">{error}</p>
+            <p className="text-gray-400 text-sm mb-3">{error}</p>
+            {debugInfo && (
+              <p className="text-gray-600 text-xs font-mono bg-white/5 p-2 rounded-lg break-all">{debugInfo}</p>
+            )}
           </>
         ) : (
           <>
