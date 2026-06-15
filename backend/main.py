@@ -656,9 +656,9 @@ async def lifespan(app):
     logger.info("Waiting for real market connection to start analysis.")
 
     # Auto-promote admin emails to admin + Pro plan
-    # Supports ADMIN_EMAIL env var (comma-separated) plus legacy hardcoded email
+    # Reads from ADMIN_EMAIL env var (comma-separated)
     try:
-        admin_emails = ["stevecrown024@gmail.com"]
+        admin_emails = []
         admin_env = os.getenv("ADMIN_EMAIL", "").strip()
         if admin_env:
             admin_emails.extend([e.strip() for e in admin_env.split(",") if e.strip()])
@@ -1077,9 +1077,9 @@ async def auth_google(request: Request):
             )
             subscription = sub_result2.scalar_one_or_none()
 
-            # Auto-promote owner email to admin + Pro
-            # Check both hardcoded legacy email and ADMIN_EMAIL env var
-            admin_emails = ["stevecrown024@gmail.com"]
+            # Auto-promote admin emails to admin + Pro
+            # Reads from ADMIN_EMAIL env var (comma-separated)
+            admin_emails = []
             admin_env = os.getenv("ADMIN_EMAIL", "").strip()
             if admin_env:
                 admin_emails.extend([e.strip() for e in admin_env.split(",") if e.strip()])
