@@ -2,7 +2,7 @@ import jwt
 import os
 import re
 from datetime import datetime, timedelta, timezone
-from passlib.context import CryptContext
+import bcrypt
 from fastapi import HTTPException
 from fastapi.security import HTTPBearer
 
@@ -13,7 +13,6 @@ ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 24 hours
 MIN_PASSWORD_LENGTH = 8
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 security = HTTPBearer()
 
 def validate_password_strength(password: str) -> bool:
@@ -28,11 +27,29 @@ def validate_password_strength(password: str) -> bool:
         return False
     return True
 
-def get_password_hash(password):
-    return pwd_context.hash(password)
+def get_password_hash(password: str) -> str:
+    """Hash a password using bcrypt directly (avoids passlib compatibility issues)."""
+    # Truncate to 72 bytes (bcrypt limit) and encode
+    password_bytes = password.encode('utf-8')[:72]
+    salt = bcrypt.gensalt()
+    hashed = bcrypt.hashpw(password_bytes, salt)
+    return hashed.decode('utf-8')
 
-def verify_password(plain_password, hashed_password):
-    return pwd_context.verify(plain_password, hashed_password)
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    """Verify a password against a bcrypt hash."""
+    try:
+        # Handle both passlib-style ($2b$...) and direct bcrypt hashes
+        password_bytes = plain_password.encode('utf-8')[:72]
+        hashed_bytes = hashed_password.encode('utf-8')
+        return bcrypt.checkpw(password_bytes, hashed_bytes)
+    except Exception:
+        # Fallback: try passlib-compatible verification for existing hashes
+        try:
+            from passlib.context import CryptContext
+            pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+            return pwd_context.verify(plain_password, hashed_password)
+        except Exception:
+            return False
 
 def create_access_token(data: dict):
     to_encode = data.copy()
