@@ -100,7 +100,7 @@ export default function LoginPage() {
         router.push('/dashboard');
       } else {
         if (res.status === 401) {
-          setError("Account not found or incorrect password. (If the server was recently restarted, local data may have been reset. Please sign up again!)");
+          setError("Invalid email or password. Please check your credentials and try again.");
         } else if (res.status === 422) {
           // FastAPI validation errors return detail as array of objects
           const details = data.detail;
@@ -121,7 +121,7 @@ export default function LoginPage() {
         }
       }
     } catch (err) {
-      setError('Network error. Please check that the server is running.');
+      setError('Unable to connect. Please check your internet connection and try again.');
     } finally {
       setIsLoading(false);
     }
