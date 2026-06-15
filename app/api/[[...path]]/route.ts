@@ -84,10 +84,13 @@ async function proxyRequest(request: NextRequest, path?: string[]) {
     });
 
     // Forward response headers
+    // IMPORTANT: Strip content-encoding and content-length because Vercel's edge
+    // will re-compress the response. If we forward gzip headers from the backend,
+    // the browser gets double-compressed data → ERR_CONTENT_DECODING_FAILED.
     const responseHeaders = new Headers();
     response.headers.forEach((value, key) => {
       const lower = key.toLowerCase();
-      if (!['transfer-encoding', 'connection'].includes(lower)) {
+      if (!['transfer-encoding', 'connection', 'content-encoding', 'content-length'].includes(lower)) {
         responseHeaders.set(key, value);
       }
     });

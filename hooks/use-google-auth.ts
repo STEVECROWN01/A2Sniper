@@ -59,46 +59,31 @@ export function useGoogleAuth() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ code, redirect_uri: redirectUri }),
         });
-        const data = await res.json();
-        console.log('[Google Auth] Code exchange response:', res.status, data);
 
-        if (res.ok) {
-          localStorage.setItem('a2sniper_token', data.token);
-          // Use user data from response (now includes is_admin and plan)
-          const userData = data.user || {};
-          // Also fetch full profile from /api/auth/me as verification
+        if (!res.ok) {
+          let errorMsg = `Server error (${res.status})`;
           try {
-            const meRes = await fetch(`${baseUrl}/api/auth/me`, {
-              headers: { 'Authorization': `Bearer ${data.token}` }
-            });
-            if (meRes.ok) {
-              const fullUser = await meRes.json();
-              setUser(fullUser);
-            } else {
-              setUser(userData);
-            }
+            const errData = await res.json();
+            errorMsg = 'Server error: ' + (errData.detail || JSON.stringify(errData));
           } catch {
-            setUser(userData);
+            try { errorMsg = 'Server error: ' + await res.text(); } catch {}
           }
-          setAuthenticated(true);
-          router.push('/dashboard');
-          return true;
-        } else {
-          toast.error('Server error: ' + (data.detail || 'Unable to sign in'));
+          toast.error(errorMsg);
           return false;
         }
-      }
 
-      // If we have an access token (implicit flow), verify it via backend
-      const res = await fetch(`${baseUrl}/api/auth/google`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ access_token: accessToken }),
-      });
-      const data = await res.json();
+        let data;
+        try {
+          data = await res.json();
+        } catch (parseErr) {
+          console.error('[Google Auth] Failed to parse response as JSON:', parseErr);
+          toast.error('Server returned invalid response. Please try again.');
+          return false;
+        }
+        console.log('[Google Auth] Code exchange response:', res.status, data);
 
-      if (res.ok) {
         localStorage.setItem('a2sniper_token', data.token);
+        // Use user data from response (now includes is_admin and plan)
         const userData = data.user || {};
         // Also fetch full profile from /api/auth/me as verification
         try {
@@ -117,9 +102,55 @@ export function useGoogleAuth() {
         setAuthenticated(true);
         router.push('/dashboard');
         return true;
-      } else {
-        toast.error('Server error: ' + (data.detail || 'Unable to sign in'));
       }
+
+      // If we have an access token (implicit flow), verify it via backend
+      const res = await fetch(`${baseUrl}/api/auth/google`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ access_token: accessToken }),
+      });
+
+      if (!res.ok) {
+        let errorMsg = `Server error (${res.status})`;
+        try {
+          const errData = await res.json();
+          errorMsg = 'Server error: ' + (errData.detail || JSON.stringify(errData));
+        } catch {
+          try { errorMsg = 'Server error: ' + await res.text(); } catch {}
+        }
+        toast.error(errorMsg);
+        return false;
+      }
+
+      let data;
+      try {
+        data = await res.json();
+      } catch (parseErr) {
+        console.error('[Google Auth] Failed to parse response as JSON:', parseErr);
+        toast.error('Server returned invalid response. Please try again.');
+        return false;
+      }
+
+      localStorage.setItem('a2sniper_token', data.token);
+      const userData = data.user || {};
+      // Also fetch full profile from /api/auth/me as verification
+      try {
+        const meRes = await fetch(`${baseUrl}/api/auth/me`, {
+          headers: { 'Authorization': `Bearer ${data.token}` }
+        });
+        if (meRes.ok) {
+          const fullUser = await meRes.json();
+          setUser(fullUser);
+        } else {
+          setUser(userData);
+        }
+      } catch {
+        setUser(userData);
+      }
+      setAuthenticated(true);
+      router.push('/dashboard');
+      return true;
     } catch (e) {
       console.error(e);
       toast.error('Network error. Please try again.');
