@@ -874,8 +874,9 @@ async def admin_update_config(request: Request, admin_payload = Depends(require_
 
 # ═══════════ AUTH ENDPOINTS ═══════════
 
-@app.post("/api/auth/register")
-async def register(request: Request):
+@app.post("/api/auth/register-send-otp")
+async def register_send_otp(request: Request):
+    """Step 1: Validate registration data and send OTP to verify email ownership."""
     check_rate_limit(request)
     try:
         data = await request.json()
@@ -884,49 +885,179 @@ async def register(request: Request):
     email = data.get("email")
     password = data.get("password")
     full_name = data.get("name")
-    
+
     if not email or not password:
         raise HTTPException(status_code=400, detail="Email and password required")
-        
+
     from auth import validate_password_strength, MIN_PASSWORD_LENGTH
     if not validate_password_strength(password):
         raise HTTPException(status_code=400, detail=f"Password must be at least {MIN_PASSWORD_LENGTH} characters with 1 uppercase, 1 digit, and 1 special character")
-    
+
+    # Generate 6-digit OTP for email verification
+    otp_code = str(secrets.randbelow(900000) + 100000)
+
+    async with AsyncSessionLocal() as session:
+        # Delete any existing registration OTPs for this email
+        await session.execute(
+            __import__('sqlalchemy').text(
+                "DELETE FROM password_reset_otps WHERE email = :email AND purpose = 'registration'"
+            ),
+            {"email": email}
+        )
+
+        # Store the OTP with purpose='registration'
+        new_otp = PasswordResetOTP(
+            id=str(uuid.uuid4()),
+            email=email,
+            otp_code=otp_code,
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=15),
+            created_at=datetime.now(timezone.utc),
+            purpose="registration"
+        )
+        session.add(new_otp)
+        await session.commit()
+
+    # Send verification email
+    email_sent = await send_otp_email(email, otp_code, purpose="registration")
+
+    if not email_sent:
+        logger.warning(f"[Register] OTP generated for {email} but email could not be sent.")
+        # Still return success — the OTP is stored and can be verified
+        # In dev mode, we include the OTP in the response for testing
+        resend_api_key = os.getenv("RESEND_API_KEY")
+        if not resend_api_key:
+            return {"status": "success", "message": "OTP generated (email not configured — check server logs)", "dev_otp": otp_code}
+    else:
+        logger.info(f"[Register] Verification OTP sent to {email[:3]}***")
+
+    return {"status": "success", "message": "Verification code sent to your email."}
+
+
+@app.post("/api/auth/register-verify-otp")
+async def register_verify_otp(request: Request):
+    """Step 2: Verify the OTP and create the account."""
+    check_rate_limit(request)
+    try:
+        data = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid request body")
+    email = data.get("email")
+    password = data.get("password")
+    full_name = data.get("name")
+    otp_code = data.get("otp_code")
+
+    if not email or not password or not otp_code:
+        raise HTTPException(status_code=400, detail="Email, password, and OTP code required")
+
+    # Verify OTP
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(PasswordResetOTP).where(
+                PasswordResetOTP.email == email,
+                PasswordResetOTP.otp_code == otp_code,
+                PasswordResetOTP.purpose == "registration"
+            )
+        )
+        otp_record = result.scalar_one_or_none()
+
+        if not otp_record:
+            raise HTTPException(status_code=400, detail="Invalid or expired verification code")
+
+        if otp_record.expires_at.replace(tzinfo=timezone.utc) < datetime.now(timezone.utc):
+            # Delete expired OTP
+            await session.delete(otp_record)
+            await session.commit()
+            raise HTTPException(status_code=400, detail="Verification code has expired. Please request a new one.")
+
+        # OTP is valid — delete it
+        await session.delete(otp_record)
+        await session.flush()
+
+        # Now create the account
+        # Check if user exists and clean up
+        result = await session.execute(select(User).where(User.email == email))
+        existing_user = result.scalar_one_or_none()
+        if existing_user:
+            auth_provider = getattr(existing_user, 'auth_provider', None) or 'unknown'
+            logger.info(f"[Register] Re-registering email {email}: cleaning up old account (auth_provider={auth_provider})")
+
+            await session.execute(
+                __import__('sqlalchemy').text("DELETE FROM subscriptions WHERE user_id = :uid"),
+                {"uid": existing_user.id}
+            )
+            await session.execute(
+                __import__('sqlalchemy').text("DELETE FROM password_reset_otps WHERE email = :email"),
+                {"email": email}
+            )
+            await session.execute(
+                __import__('sqlalchemy').text("DELETE FROM users WHERE id = :uid"),
+                {"uid": existing_user.id}
+            )
+            await session.flush()
+
+        user_id = str(uuid.uuid4())
+        new_user = User(
+            id=user_id,
+            email=email,
+            hashed_password=get_password_hash(password),
+            full_name=full_name,
+            created_at=datetime.now(timezone.utc)
+        )
+        session.add(new_user)
+
+        sub = UserSubscription(
+            user_id=user_id,
+            plan_name="Standard",
+            active_until=datetime.now(timezone.utc) + timedelta(days=7)
+        )
+        session.add(sub)
+
+        await session.commit()
+
+    logger.info(f"[Register] Account created successfully for {email[:3]}***")
+    return {"status": "success", "message": "Account created successfully"}
+
+
+@app.post("/api/auth/register")
+async def register(request: Request):
+    """Legacy direct registration (no OTP). Kept for backward compatibility."""
+    check_rate_limit(request)
+    try:
+        data = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid request body")
+    email = data.get("email")
+    password = data.get("password")
+    full_name = data.get("name")
+
+    if not email or not password:
+        raise HTTPException(status_code=400, detail="Email and password required")
+
+    from auth import validate_password_strength, MIN_PASSWORD_LENGTH
+    if not validate_password_strength(password):
+        raise HTTPException(status_code=400, detail=f"Password must be at least {MIN_PASSWORD_LENGTH} characters with 1 uppercase, 1 digit, and 1 special character")
+
     try:
         async with AsyncSessionLocal() as session:
-            # Vérifier si l'utilisateur existe déjà
             result = await session.execute(select(User).where(User.email == email))
             existing_user = result.scalar_one_or_none()
             if existing_user:
-                # Allow re-registration — clean up any existing account.
-                # Rationale: If someone is trying to register with an email, they clearly want to use it.
-                # If the old account was active with a real password, the user should have logged in instead.
-                # Since they're registering, either:
-                #   a) The old account was deleted but not fully removed from DB
-                #   b) The old account was a Google OAuth account (user doesn't know the password)
-                #   c) The user forgot their password and wants to start fresh
-                # In all cases, we clean up and allow re-registration.
                 auth_provider = getattr(existing_user, 'auth_provider', None) or 'unknown'
-
                 logger.info(f"[Register] Re-registering email {email}: cleaning up old account (auth_provider={auth_provider}, is_active={existing_user.is_active})")
-
-                # Clean up the old record completely using raw SQL for reliability
                 await session.execute(
                     __import__('sqlalchemy').text("DELETE FROM subscriptions WHERE user_id = :uid"),
                     {"uid": existing_user.id}
                 )
-                # Delete OTPs
                 await session.execute(
                     __import__('sqlalchemy').text("DELETE FROM password_reset_otps WHERE email = :email"),
                     {"email": email}
                 )
-                # Delete the user
                 await session.execute(
                     __import__('sqlalchemy').text("DELETE FROM users WHERE id = :uid"),
                     {"uid": existing_user.id}
                 )
-                await session.flush()  # Apply deletions before inserting new user
-                
+                await session.flush()
+
             user_id = str(uuid.uuid4())
             new_user = User(
                 id=user_id,
@@ -936,15 +1067,14 @@ async def register(request: Request):
                 created_at=datetime.now(timezone.utc)
             )
             session.add(new_user)
-            
-            # Créer une souscription par défaut
+
             sub = UserSubscription(
                 user_id=user_id,
                 plan_name="Standard",
-                active_until=datetime.now(timezone.utc) + timedelta(days=7) # 7 jours d'essai
+                active_until=datetime.now(timezone.utc) + timedelta(days=7)
             )
             session.add(sub)
-            
+
             await session.commit()
     except HTTPException:
         raise
@@ -953,7 +1083,7 @@ async def register(request: Request):
         logger.error(f"[Register] Error creating account: {type(e).__name__}: {e}")
         logger.error(f"[Register] Traceback: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Unable to create account: {type(e).__name__}")
-        
+
     return {"status": "success", "message": "Compte créé avec succès"}
 
 @app.post("/api/auth/login")
@@ -1172,29 +1302,46 @@ async def auth_google(request: Request):
         raise HTTPException(status_code=500, detail=f"Internal error during sign-in: {type(e).__name__}: {str(e)[:150]}")
 
 
-async def send_otp_email(recipient_email: str, otp_code: str):
+async def send_otp_email(recipient_email: str, otp_code: str, purpose: str = "password_reset"):
     resend_api_key = os.getenv("RESEND_API_KEY")
     resend_from_email = os.getenv("RESEND_FROM_EMAIL", "noreply@a2sniper.ai")
     
     if not resend_api_key:
         logger.warning("RESEND_API_KEY non configurée. Impossible d'envoyer l'email.")
         return False
+
+    # Customize email content based on purpose
+    if purpose == "registration":
+        subject = "Verify your A2Sniper account"
+        heading = "Account Verification"
+        message = "You're creating an account on A2Sniper. Please verify your email address by entering this code:"
+        footer_note = "If you didn't try to create an account, please ignore this email."
+    elif purpose == "account_deletion":
+        subject = "Confirm A2Sniper account deletion"
+        heading = "Account Deletion Confirmation"
+        message = "You've requested to delete your A2Sniper account. Please confirm by entering this code:"
+        footer_note = "If you didn't request account deletion, your account is safe. Please secure your credentials."
+    else:
+        subject = "Code de réinitialisation A2Sniper"
+        heading = "Réinitialisation de mot de passe"
+        message = "Vous avez demandé la réinitialisation de votre mot de passe sur A2Sniper. Voici votre code de sécurité OTP :"
+        footer_note = "Ce code est valable pendant 15 minutes. Si vous n'avez pas demandé cette réinitialisation, veuillez ignorer cet email."
     
     import httpx
     try:
         html_content = f"""
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e5e7eb; border-radius: 8px; background-color: #ffffff;">
             <div style="text-align: center; margin-bottom: 20px;">
-                <h2 style="color: #4f46e5; margin: 0;">A2Sniper</h2>
-                <p style="color: #6b7280; font-size: 14px; margin: 5px 0 0 0;">Réinitialisation de mot de passe</p>
+                <h2 style="color: #D4AF37; margin: 0;">A2Sniper</h2>
+                <p style="color: #6b7280; font-size: 14px; margin: 5px 0 0 0;">{heading}</p>
             </div>
             <div style="padding: 20px; background-color: #f9fafb; border-radius: 6px; text-align: center;">
-                <p style="font-size: 16px; color: #374151; margin-top: 0;">Bonjour,</p>
-                <p style="font-size: 16px; color: #374151;">Vous avez demandé la réinitialisation de votre mot de passe sur A2Sniper. Voici votre code de sécurité OTP :</p>
-                <div style="font-size: 32px; font-weight: bold; letter-spacing: 5px; color: #4f46e5; margin: 20px 0; padding: 10px; background-color: #e0e7ff; border-radius: 6px; display: inline-block;">
+                <p style="font-size: 16px; color: #374151; margin-top: 0;">Hello,</p>
+                <p style="font-size: 16px; color: #374151;">{message}</p>
+                <div style="font-size: 32px; font-weight: bold; letter-spacing: 5px; color: #D4AF37; margin: 20px 0; padding: 10px; background-color: #FFF8E1; border-radius: 6px; display: inline-block;">
                     {otp_code}
                 </div>
-                <p style="font-size: 14px; color: #6b7280; margin-bottom: 0;">Ce code est valable pendant 15 minutes. Si vous n'avez pas demandé cette réinitialisation, veuillez ignorer cet email.</p>
+                <p style="font-size: 14px; color: #6b7280; margin-bottom: 0;">{footer_note}</p>
             </div>
         </div>
         """
@@ -1202,7 +1349,7 @@ async def send_otp_email(recipient_email: str, otp_code: str):
         payload = {
             "from": f"A2Sniper <{resend_from_email}>",
             "to": [recipient_email],
-            "subject": "Code de réinitialisation A2Sniper",
+            "subject": subject,
             "html": html_content
         }
         
@@ -1411,12 +1558,74 @@ async def get_me(credentials: HTTPAuthorizationCredentials = Security(security))
         }
 
 
-@app.delete("/api/auth/delete-account")
-async def delete_account(credentials: HTTPAuthorizationCredentials = Security(security)):
-    """Permanently delete the authenticated user's account and all associated data."""
+@app.post("/api/auth/delete-account-send-otp")
+async def delete_account_send_otp(credentials: HTTPAuthorizationCredentials = Security(security)):
+    """Step 1: Send OTP to user's email to confirm account deletion."""
     token = credentials.credentials
     payload = decode_token(token)
     user_id = payload.get("sub")
+
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(select(User).where(User.id == user_id))
+        user = result.scalar_one_or_none()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        user_email = user.email
+
+        # Generate 6-digit OTP
+        otp_code = str(secrets.randbelow(900000) + 100000)
+
+        # Delete any existing deletion OTPs for this email
+        await session.execute(
+            __import__('sqlalchemy').text(
+                "DELETE FROM password_reset_otps WHERE email = :email AND purpose = 'account_deletion'"
+            ),
+            {"email": user_email}
+        )
+
+        # Store the OTP
+        new_otp = PasswordResetOTP(
+            id=str(uuid.uuid4()),
+            email=user_email,
+            otp_code=otp_code,
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=15),
+            created_at=datetime.now(timezone.utc),
+            purpose="account_deletion"
+        )
+        session.add(new_otp)
+        await session.commit()
+
+    # Send verification email
+    email_sent = await send_otp_email(user_email, otp_code, purpose="account_deletion")
+
+    if not email_sent:
+        logger.warning(f"[Delete] Deletion OTP generated for {user_email} but email could not be sent.")
+        resend_api_key = os.getenv("RESEND_API_KEY")
+        if not resend_api_key:
+            return {"status": "success", "message": "Deletion code generated (email not configured)", "dev_otp": otp_code}
+    else:
+        logger.info(f"[Delete] Deletion OTP sent to {user_email[:3]}***")
+
+    return {"status": "success", "message": "A confirmation code has been sent to your email."}
+
+
+@app.post("/api/auth/delete-account-confirm")
+async def delete_account_confirm(request: Request, credentials: HTTPAuthorizationCredentials = Security(security)):
+    """Step 2: Verify OTP and permanently delete the account."""
+    token = credentials.credentials
+    payload = decode_token(token)
+    user_id = payload.get("sub")
+
+    try:
+        data = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid request body")
+    otp_code = data.get("otp_code")
+    if not otp_code:
+        raise HTTPException(status_code=400, detail="OTP code required")
+
+    from sqlalchemy import text as sql_text
 
     try:
         async with AsyncSessionLocal() as session:
@@ -1427,60 +1636,84 @@ async def delete_account(credentials: HTTPAuthorizationCredentials = Security(se
                 raise HTTPException(status_code=404, detail="User not found")
 
             user_email = user.email
+            user_name = user.full_name
+            auth_provider = getattr(user, 'auth_provider', 'email') or 'email'
 
-            # Use raw SQL DELETE for maximum reliability (ORM session.delete can be fragile with async)
-            from sqlalchemy import text as sql_text
+            # Verify OTP
+            otp_result = await session.execute(
+                select(PasswordResetOTP).where(
+                    PasswordResetOTP.email == user_email,
+                    PasswordResetOTP.otp_code == otp_code,
+                    PasswordResetOTP.purpose == "account_deletion"
+                )
+            )
+            otp_record = otp_result.scalar_one_or_none()
 
-            # 1. Delete subscription
-            sub_del = await session.execute(
+            if not otp_record:
+                raise HTTPException(status_code=400, detail="Invalid or expired confirmation code")
+
+            if otp_record.expires_at.replace(tzinfo=timezone.utc) < datetime.now(timezone.utc):
+                await session.delete(otp_record)
+                await session.commit()
+                raise HTTPException(status_code=400, detail="Confirmation code has expired. Please request a new one.")
+
+            # OTP is valid — delete it
+            await session.delete(otp_record)
+            await session.flush()
+
+            # Get subscription info for audit trail
+            sub_result = await session.execute(
+                select(UserSubscription).where(UserSubscription.user_id == user_id)
+            )
+            subscription = sub_result.scalar_one_or_none()
+            plan_name = subscription.plan_name if subscription else "Free"
+
+            # Save deletion record for admin audit trail BEFORE deleting the user
+            from db import DeletedAccount
+            deletion_record = DeletedAccount(
+                id=str(uuid.uuid4()),
+                user_id=user_id,
+                email=user_email,
+                full_name=user_name,
+                auth_provider=auth_provider,
+                plan_name=plan_name,
+                is_admin=user.is_admin,
+                deleted_at=datetime.now(timezone.utc),
+                deletion_reason="user_requested"
+            )
+            session.add(deletion_record)
+            await session.flush()
+
+            # Delete subscription
+            await session.execute(
                 sql_text("DELETE FROM subscriptions WHERE user_id = :uid"),
                 {"uid": user_id}
             )
-            logger.info(f"[Auth] Deleted {sub_del.rowcount} subscription(s) for user: {user_email}")
-
-            # 2. Delete any password reset OTPs for this email
-            otp_del = await session.execute(
+            # Delete any password reset OTPs
+            await session.execute(
                 sql_text("DELETE FROM password_reset_otps WHERE email = :email"),
                 {"email": user_email}
             )
-            logger.info(f"[Auth] Deleted {otp_del.rowcount} OTP record(s) for: {user_email}")
-
-            # 3. Delete the user record
+            # Delete the user record
             user_del = await session.execute(
                 sql_text("DELETE FROM users WHERE id = :uid"),
                 {"uid": user_id}
             )
             logger.info(f"[Auth] Deleted user record for: {user_email} (rows affected: {user_del.rowcount})")
 
-            # Commit the transaction
             await session.commit()
 
-            # Verify the deletion actually persisted
+            # Verify deletion
             verify = await session.execute(
                 sql_text("SELECT id FROM users WHERE id = :uid"),
                 {"uid": user_id}
             )
             if verify.fetchone():
-                logger.error(f"[Auth] CRITICAL: User {user_email} still exists after DELETE+COMMIT! Attempting force delete...")
-                await session.execute(
-                    sql_text("DELETE FROM subscriptions WHERE user_id = :uid"),
-                    {"uid": user_id}
-                )
-                await session.execute(
-                    sql_text("DELETE FROM users WHERE id = :uid"),
-                    {"uid": user_id}
-                )
+                logger.error(f"[Auth] CRITICAL: User {user_email} still exists after DELETE! Force retry...")
+                await session.execute(sql_text("DELETE FROM users WHERE id = :uid"), {"uid": user_id})
                 await session.commit()
-                # Re-verify
-                verify2 = await session.execute(
-                    sql_text("SELECT id FROM users WHERE id = :uid"),
-                    {"uid": user_id}
-                )
-                if verify2.fetchone():
-                    logger.critical(f"[Auth] FAILED to delete user {user_email} even after force delete!")
-                    raise HTTPException(status_code=500, detail="Failed to delete account. Please contact support.")
 
-            logger.info(f"[Auth] Account fully deleted and verified for user: {user_email} ({user_id})")
+            logger.info(f"[Auth] Account fully deleted and verified for user: {user_email} ({user_id}). Audit record saved.")
             return {"detail": "Account permanently deleted"}
 
     except HTTPException:

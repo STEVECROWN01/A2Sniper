@@ -108,6 +108,21 @@ class PasswordResetOTP(Base):
     otp_code = Column(String, index=True, nullable=False)  # Added index for OTP lookups
     expires_at = Column(DateTime, nullable=False)
     created_at = Column(DateTime)
+    purpose = Column(String, default="password_reset")  # "password_reset", "registration", "account_deletion"
+
+class DeletedAccount(Base):
+    """Audit trail for deleted accounts — persists after user is removed."""
+    __tablename__ = "deleted_accounts"
+
+    id = Column(String, primary_key=True, index=True)
+    user_id = Column(String, index=True, nullable=False)
+    email = Column(String, index=True, nullable=False)
+    full_name = Column(String)
+    auth_provider = Column(String)
+    plan_name = Column(String)
+    is_admin = Column(Boolean, default=False)
+    deleted_at = Column(DateTime(timezone=True), nullable=False)
+    deletion_reason = Column(String, default="user_requested")  # "user_requested", "admin_forced"
 
 # OTP brute force tracking
 otp_attempt_tracker = {}  # {email: {"count": int, "last_attempt": datetime}}
@@ -230,6 +245,48 @@ async def init_db():
                     logger.info("[DB] Migration: Backfilled auth_provider for existing Google OAuth users")
 
                 logger.info("[DB] Schema migration check completed.")
-        except Exception as me:
-            logger.warning(f"[DB] Schema migration check failed (non-fatal): {me}")
+
+        # Ensure purpose column exists on password_reset_otps
+        try:
+            async with engine.begin() as conn:
+                result = await conn.execute(
+                    __import__('sqlalchemy').text(
+                        "SELECT column_name FROM information_schema.columns "
+                        "WHERE table_name='password_reset_otps' AND column_name='purpose'"
+                    )
+                )
+                if not result.fetchone():
+                    await conn.execute(__import__('sqlalchemy').text(
+                        "ALTER TABLE password_reset_otps ADD COLUMN purpose VARCHAR DEFAULT 'password_reset'"
+                    ))
+                    logger.info("[DB] Migration: Added purpose column to password_reset_otps table")
+        except Exception as e:
+            logger.warning(f"[DB] Migration for purpose column failed (non-fatal): {e}")
+
+        # Ensure deleted_accounts table exists
+        try:
+            async with engine.begin() as conn:
+                result = await conn.execute(
+                    __import__('sqlalchemy').text(
+                        "SELECT table_name FROM information_schema.tables "
+                        "WHERE table_name='deleted_accounts'"
+                    )
+                )
+                if not result.fetchone():
+                    await conn.execute(__import__('sqlalchemy').text("""
+                        CREATE TABLE deleted_accounts (
+                            id VARCHAR PRIMARY KEY,
+                            user_id VARCHAR NOT NULL,
+                            email VARCHAR NOT NULL,
+                            full_name VARCHAR,
+                            auth_provider VARCHAR,
+                            plan_name VARCHAR,
+                            is_admin BOOLEAN DEFAULT FALSE,
+                            deleted_at TIMESTAMP WITH TIME ZONE NOT NULL,
+                            deletion_reason VARCHAR DEFAULT 'user_requested'
+                        )
+                    """))
+                    logger.info("[DB] Migration: Created deleted_accounts table")
+        except Exception as e:
+            logger.warning(f"[DB] Migration for deleted_accounts table failed (non-fatal): {e}")
 

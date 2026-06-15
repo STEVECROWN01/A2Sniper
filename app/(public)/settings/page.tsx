@@ -55,7 +55,9 @@ export default function SettingsPage() {
 
   // Delete account state
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [deleteStep, setDeleteStep] = useState<'CONFIRM' | 'OTP'>('CONFIRM');
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
+  const [deleteOtpCode, setDeleteOtpCode] = useState('');
   const [isDeletingAccount, setIsDeletingAccount] = useState(false);
 
   // Export data state
@@ -214,7 +216,7 @@ export default function SettingsPage() {
     toast.success(`Fuseau horaire changé : ${tz}`);
   };
 
-  const handleDeleteAccount = async () => {
+  const handleDeleteSendOtp = async () => {
     if (deleteConfirmText !== 'SUPPRIMER') {
       toast.error('Veuillez taper SUPPRIMER pour confirmer.');
       return;
@@ -224,8 +226,8 @@ export default function SettingsPage() {
     try {
       const apiUrl = getApiUrl();
       const token = typeof window !== 'undefined' ? localStorage.getItem('a2sniper_token') : null;
-      const res = await fetch(`${apiUrl}/api/auth/delete-account`, {
-        method: 'DELETE',
+      const res = await fetch(`${apiUrl}/api/auth/delete-account-send-otp`, {
+        method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
@@ -233,7 +235,35 @@ export default function SettingsPage() {
       });
 
       if (res.ok) {
-        toast.success('Compte supprimé avec succès. Redirection vers l\'accueil...');
+        setDeleteStep('OTP');
+        toast.success('Code OTP envoyé à votre email.');
+      } else {
+        const errorData = await res.json().catch(() => ({}));
+        toast.error(errorData.detail || 'Erreur lors de l\'envoi du code OTP. Contactez le support.');
+      }
+    } catch {
+      toast.error('Erreur réseau. Veuillez réessayer.');
+    } finally {
+      setIsDeletingAccount(false);
+    }
+  };
+
+  const handleDeleteConfirm = async () => {
+    setIsDeletingAccount(true);
+    try {
+      const apiUrl = getApiUrl();
+      const token = typeof window !== 'undefined' ? localStorage.getItem('a2sniper_token') : null;
+      const res = await fetch(`${apiUrl}/api/auth/delete-account-confirm`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ otp_code: deleteOtpCode }),
+      });
+
+      if (res.ok) {
+        toast.success('Compte supprimé avec succès.');
         // Clear all local storage and state
         if (typeof window !== 'undefined') {
           localStorage.removeItem('a2sniper_token');
@@ -245,14 +275,15 @@ export default function SettingsPage() {
         }
         // Use Zustand logout to clear store state
         logout();
-        // Redirect immediately to home page
         setShowDeleteDialog(false);
         setDeleteConfirmText('');
+        setDeleteOtpCode('');
+        setDeleteStep('CONFIRM');
         setIsDeletingAccount(false);
         setTimeout(() => {
           window.location.href = '/';
         }, 1500);
-        return; // Exit early so finally block doesn't interfere
+        return;
       } else {
         const errorData = await res.json().catch(() => ({}));
         toast.error(errorData.detail || 'Erreur lors de la suppression du compte. Contactez le support.');
@@ -261,8 +292,6 @@ export default function SettingsPage() {
       toast.error('Erreur réseau. Veuillez réessayer.');
     } finally {
       setIsDeletingAccount(false);
-      setShowDeleteDialog(false);
-      setDeleteConfirmText('');
     }
   };
 
@@ -519,7 +548,7 @@ export default function SettingsPage() {
                         animate={{ opacity: 1 }}
                         exit={{ opacity: 0 }}
                         className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4"
-                        onClick={() => { setShowDeleteDialog(false); setDeleteConfirmText(''); }}
+                        onClick={() => { setShowDeleteDialog(false); setDeleteConfirmText(''); setDeleteOtpCode(''); setDeleteStep('CONFIRM'); }}
                       >
                         <motion.div
                           initial={{ scale: 0.9, opacity: 0 }}
@@ -532,32 +561,65 @@ export default function SettingsPage() {
                             <AlertTriangle className="w-6 h-6 text-red-500" />
                             <h3 className="text-lg font-bold text-white">Supprimer le compte</h3>
                           </div>
-                          <p className="text-sm text-gray-400 mb-6">
-                            Cette action est irréversible. Toutes vos données seront définitivement supprimées.
-                            Tapez <span className="text-red-400 font-bold">SUPPRIMER</span> pour confirmer.
-                          </p>
-                          <input
-                            type="text"
-                            value={deleteConfirmText}
-                            onChange={(e) => setDeleteConfirmText(e.target.value)}
-                            placeholder="Tapez SUPPRIMER"
-                            className="w-full px-3 py-2 bg-[#050507] border border-red-500/30 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent text-white mb-4"
-                          />
-                          <div className="flex gap-3">
-                            <button
-                              onClick={handleDeleteAccount}
-                              disabled={isDeletingAccount || deleteConfirmText !== 'SUPPRIMER'}
-                              className="flex-1 bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg font-bold disabled:opacity-50 transition-colors"
-                            >
-                              {isDeletingAccount ? 'Suppression...' : 'Supprimer définitivement'}
-                            </button>
-                            <button
-                              onClick={() => { setShowDeleteDialog(false); setDeleteConfirmText(''); }}
-                              className="flex-1 bg-gray-800 hover:bg-gray-700 text-gray-300 px-4 py-2 rounded-lg font-bold transition-colors"
-                            >
-                              Annuler
-                            </button>
-                          </div>
+                          {deleteStep === 'CONFIRM' ? (
+                            <>
+                              <p className="text-sm text-gray-400 mb-6">
+                                Cette action est irréversible. Toutes vos données seront définitivement supprimées.
+                                Tapez <span className="text-red-400 font-bold">SUPPRIMER</span> pour confirmer.
+                              </p>
+                              <input
+                                type="text"
+                                value={deleteConfirmText}
+                                onChange={(e) => setDeleteConfirmText(e.target.value)}
+                                placeholder="Tapez SUPPRIMER"
+                                className="w-full px-3 py-2 bg-[#050507] border border-red-500/30 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent text-white mb-4"
+                              />
+                              <div className="flex gap-3">
+                                <button
+                                  onClick={handleDeleteSendOtp}
+                                  disabled={isDeletingAccount || deleteConfirmText !== 'SUPPRIMER'}
+                                  className="flex-1 bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg font-bold disabled:opacity-50 transition-colors"
+                                >
+                                  {isDeletingAccount ? 'Envoi...' : 'Supprimer définitivement'}
+                                </button>
+                                <button
+                                  onClick={() => { setShowDeleteDialog(false); setDeleteConfirmText(''); setDeleteOtpCode(''); setDeleteStep('CONFIRM'); }}
+                                  className="flex-1 bg-gray-800 hover:bg-gray-700 text-gray-300 px-4 py-2 rounded-lg font-bold transition-colors"
+                                >
+                                  Annuler
+                                </button>
+                              </div>
+                            </>
+                          ) : (
+                            <>
+                              <p className="text-sm text-gray-400 mb-6">
+                                Un code OTP a été envoyé à votre email. Entrez-le ci-dessous pour confirmer la suppression.
+                              </p>
+                              <input
+                                type="text"
+                                maxLength={6}
+                                value={deleteOtpCode}
+                                onChange={(e) => setDeleteOtpCode(e.target.value.replace(/[^0-9]/g, ''))}
+                                placeholder="000000"
+                                className="w-full px-3 py-2 bg-[#050507] border border-red-500/30 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent text-white text-center text-lg font-bold tracking-[0.5em] mb-4"
+                              />
+                              <div className="flex gap-3">
+                                <button
+                                  onClick={handleDeleteConfirm}
+                                  disabled={isDeletingAccount || deleteOtpCode.length !== 6}
+                                  className="flex-1 bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg font-bold disabled:opacity-50 transition-colors"
+                                >
+                                  {isDeletingAccount ? 'Suppression...' : 'Confirmer la suppression'}
+                                </button>
+                                <button
+                                  onClick={() => { setShowDeleteDialog(false); setDeleteConfirmText(''); setDeleteOtpCode(''); setDeleteStep('CONFIRM'); }}
+                                  className="flex-1 bg-gray-800 hover:bg-gray-700 text-gray-300 px-4 py-2 rounded-lg font-bold transition-colors"
+                                >
+                                  Annuler
+                                </button>
+                              </div>
+                            </>
+                          )}
                         </motion.div>
                       </motion.div>
                     )}
