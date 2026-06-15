@@ -74,7 +74,9 @@ export default function LoginPage() {
       try {
         data = await res.json();
       } catch (parseErr) {
-        data = {};
+        setError('Server returned an invalid response. Please try again.');
+        setIsLoading(false);
+        return;
       }
 
       if (res.ok) {
@@ -99,8 +101,23 @@ export default function LoginPage() {
       } else {
         if (res.status === 401) {
           setError("Account not found or incorrect password. (If the server was recently restarted, local data may have been reset. Please sign up again!)");
+        } else if (res.status === 422) {
+          // FastAPI validation errors return detail as array of objects
+          const details = data.detail;
+          if (Array.isArray(details)) {
+            setError(details.map((d: { msg?: string; message?: string }) => d.msg || d.message || 'Validation error').join('. '));
+          } else {
+            setError(typeof details === 'string' ? details : 'Invalid email or password');
+          }
         } else {
-          setError(data.detail || 'Invalid email or password');
+          const detail = data.detail;
+          if (typeof detail === 'string') {
+            setError(detail);
+          } else if (Array.isArray(detail)) {
+            setError(detail.map((d: { msg?: string; message?: string }) => d.msg || d.message || 'Error').join('. '));
+          } else {
+            setError('Invalid email or password');
+          }
         }
       }
     } catch (err) {

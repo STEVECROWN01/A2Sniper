@@ -744,8 +744,9 @@ app.add_middleware(
 
 
 @app.post("/api/signals/request")
-async def request_live_signal(request: Request, credentials: HTTPAuthorizationCredentials = Security(security), geo: dict = Depends(geographic_restriction_dependency), rate_limit: None = Depends(lambda req: check_rate_limit(req))):
+async def request_live_signal(request: Request, credentials: HTTPAuthorizationCredentials = Security(security), geo: dict = Depends(geographic_restriction_dependency)):
     """Génère un signal en direct à la demande pour une paire. Requires authentication."""
+    check_rate_limit(request)
     # Geographic restriction check
     if not geo['allowed']:
         raise HTTPException(status_code=403, detail=geo['reason'])
@@ -874,7 +875,8 @@ async def admin_update_config(request: Request, admin_payload = Depends(require_
 # ═══════════ AUTH ENDPOINTS ═══════════
 
 @app.post("/api/auth/register")
-async def register(request: Request, rate_limit: None = Depends(lambda req: check_rate_limit(req))):
+async def register(request: Request):
+    check_rate_limit(request)
     data = await request.json()
     email = data.get("email")
     password = data.get("password")
@@ -916,7 +918,8 @@ async def register(request: Request, rate_limit: None = Depends(lambda req: chec
     return {"status": "success", "message": "Compte créé avec succès"}
 
 @app.post("/api/auth/login")
-async def login(request: Request, rate_limit: None = Depends(lambda req: check_rate_limit(req))):
+async def login(request: Request):
+    check_rate_limit(request)
     data = await request.json()
     email = data.get("email")
     password = data.get("password")
@@ -1182,7 +1185,8 @@ async def send_otp_email(recipient_email: str, otp_code: str):
         return False
 
 @app.post("/api/auth/forgot-password")
-async def forgot_password(request: Request, rate_limit: None = Depends(lambda req: check_rate_limit(req))):
+async def forgot_password(request: Request):
+    check_rate_limit(request)
     data = await request.json()
     email = data.get("email")
     
@@ -1227,7 +1231,8 @@ async def forgot_password(request: Request, rate_limit: None = Depends(lambda re
     return {"status": "success", "message": "Si l'email existe, un code OTP y a été envoyé."}
 
 @app.post("/api/auth/verify-otp")
-async def verify_otp(request: Request, rate_limit: None = Depends(lambda req: check_rate_limit(req))):
+async def verify_otp(request: Request):
+    check_rate_limit(request)
     data = await request.json()
     email = data.get("email")
     otp_code = data.get("otp_code")
