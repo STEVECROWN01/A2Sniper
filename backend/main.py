@@ -1136,29 +1136,37 @@ async def register_send_otp(request: Request):
     # Generate 6-digit OTP for email verification
     otp_code = str(secrets.randbelow(900000) + 100000)
 
-    async with AsyncSessionLocal() as session:
-        # Delete any existing registration OTPs for this email
-        await session.execute(
-            __import__('sqlalchemy').text(
-                "DELETE FROM password_reset_otps WHERE email = :email AND purpose = 'registration'"
-            ),
-            {"email": email}
-        )
+    try:
+        async with AsyncSessionLocal() as session:
+            # Delete any existing registration OTPs for this email
+            await session.execute(
+                __import__('sqlalchemy').text(
+                    "DELETE FROM password_reset_otps WHERE email = :email AND purpose = 'registration'"
+                ),
+                {"email": email}
+            )
 
-        # Store the OTP with purpose='registration'
-        new_otp = PasswordResetOTP(
-            id=str(uuid.uuid4()),
-            email=email,
-            otp_code=otp_code,
-            expires_at=datetime.now(timezone.utc) + timedelta(minutes=15),
-            created_at=datetime.now(timezone.utc),
-            purpose="registration"
-        )
-        session.add(new_otp)
-        await session.commit()
+            # Store the OTP with purpose='registration'
+            new_otp = PasswordResetOTP(
+                id=str(uuid.uuid4()),
+                email=email,
+                otp_code=otp_code,
+                expires_at=datetime.now(timezone.utc) + timedelta(minutes=15),
+                created_at=datetime.now(timezone.utc),
+                purpose="registration"
+            )
+            session.add(new_otp)
+            await session.commit()
+    except Exception as db_err:
+        logger.exception(f"[Register] DB error during OTP storage for {email}: {db_err}")
+        raise HTTPException(status_code=500, detail=f"Database error: {str(db_err)}")
 
     # Send verification email
-    email_sent = await send_otp_email(email, otp_code, purpose="registration")
+    try:
+        email_sent = await send_otp_email(email, otp_code, purpose="registration")
+    except Exception as email_err:
+        logger.exception(f"[Register] send_otp_email failed for {email}: {email_err}")
+        email_sent = False
 
     if not email_sent:
         logger.warning(f"[Register] OTP generated for {email} but email could not be sent.")
@@ -2691,7 +2699,7 @@ async def rate_limit_middleware(request, call_next):
     now = datetime.now(timezone.utc).timestamp()
     
     # Skip rate limiting for health check endpoints
-    if request.url.path in ["/api/status", "/api/market/status", "/api/market/debug"]:
+    if request.url.path in ["/api/status", "/api/market/status", "/api/market/debug", "/api/debug/schema"]:
         response = await call_next(request)
         latency_ms = (time() - start_time) * 1000
         _latency_samples.append(latency_ms)
@@ -2714,3 +2722,45 @@ async def rate_limit_middleware(request, call_next):
     _latency_samples.append(latency_ms)
     
     return response
+
+
+# ═══════════ TEMPORARY DIAGNOSTIC ENDPOINT (REMOVE AFTER DEBUG) ═══════════
+@app.get("/api/debug/schema")
+async def debug_schema():
+    """Public diagnostic — returns the actual columns of password_reset_otps.
+    Temporary: delete after diagnosis is complete.
+    """
+    try:
+        async with AsyncSessionLocal() as session:
+            from sqlalchemy import text
+            result = await session.execute(text(
+                "SELECT column_name, data_type, is_nullable, column_default "
+                "FROM information_schema.columns "
+                "WHERE table_name = 'password_reset_otps' "
+                "ORDER BY ordinal_position"
+            ))
+            rows = result.fetchall()
+            columns = [
+                {
+                    "name": r[0],
+                    "type": r[1],
+                    "nullable": r[2],
+                    "default": r[3]
+                }
+                for r in rows
+            ]
+
+            # Also list all tables
+            tables_result = await session.execute(text(
+                "SELECT table_name FROM information_schema.tables "
+                "WHERE table_schema = 'public' ORDER BY table_name"
+            ))
+            tables = [r[0] for r in tables_result.fetchall()]
+
+            return {
+                "password_reset_otps_columns": columns,
+                "all_tables": tables,
+                "purpose_column_exists": any(c["name"] == "purpose" for c in columns)
+            }
+    except Exception as e:
+        return {"error": str(e), "type": type(e).__name__}
