@@ -91,15 +91,13 @@ export default function AdminDashboard() {
   useEffect(() => {
     const fetchData = async () => {
       const url = getApiUrl();
-      const token = typeof window !== 'undefined' ? localStorage.getItem('a2sniper_token') : null;
-      const headers: Record<string, string> = {};
-      if (token) headers['Authorization'] = `Bearer ${token}`;
       try {
         const [perfRes, statusRes, weightsRes] = await Promise.all([
-          fetch(`${url}/api/performance`, { headers }),
-          fetch(`${url}/api/status`, { headers }),
-          fetch(`${url}/api/admin/engine/weights`, { headers })
+          fetch(`${url}/api/performance`, { credentials: 'include' }),
+          fetch(`${url}/api/status`, { credentials: 'include' }),
+          fetch(`${url}/api/admin/engine/weights`, { credentials: 'include' })
         ]);
+
         
         if (perfRes.ok) setPerfData(await perfRes.json());
         if (statusRes.ok) setStatusData(await statusRes.json());
@@ -130,12 +128,10 @@ export default function AdminDashboard() {
     
     try {
       const url = getApiUrl();
-      const token = typeof window !== 'undefined' ? localStorage.getItem('a2sniper_token') : null;
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      if (token) headers['Authorization'] = `Bearer ${token}`;
       const res = await fetch(`${url}/api/admin/circuit-breaker`, {
         method: 'POST',
-        headers,
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ active: nextState })
       });
       

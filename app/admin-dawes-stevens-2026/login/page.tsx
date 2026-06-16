@@ -30,6 +30,7 @@ export default function AdminLoginPage() {
       const apiUrl = getApiUrl();
       const res = await fetch(`${apiUrl}/api/auth/login`, {
         method: 'POST',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password }),
       });
@@ -42,10 +43,7 @@ export default function AdminLoginPage() {
           toast.error('Accès refusé. Privilèges administrateur requis.');
           return;
         }
-        // Store the JWT token from the backend
-        if (typeof window !== 'undefined') {
-          localStorage.setItem('a2sniper_token', data.token);
-        }
+        // Token is now managed via httpOnly cookie by the API proxy
         setAuthToken(data.token);
         setStep('2fa');
         toast.success('Identité vérifiée. Veuillez saisir le code 2FA.');
@@ -71,9 +69,9 @@ export default function AdminLoginPage() {
       const apiUrl = getApiUrl();
       const res = await fetch(`${apiUrl}/api/auth/verify-otp`, {
         method: 'POST',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
-          ...(authToken ? { 'Authorization': `Bearer ${authToken}` } : {}),
         },
         body: JSON.stringify({ otp_code: otp }),
       });

@@ -36,21 +36,10 @@ export default function SignupPage() {
     }
   }, [isAuthenticated, isInitialized, router]);
 
+  // If store is initialized but auth state unclear, try to initialize
   useEffect(() => {
-    const token = typeof window !== 'undefined' ? localStorage.getItem('a2sniper_token') : null;
-    if (isInitialized && !isAuthenticated && token) {
-      // Try to auto-login immediately
+    if (isInitialized && !isAuthenticated) {
       initialize();
-
-      // Schedule retry in case backend was hot-restarting
-      const timer = setTimeout(() => {
-        const currentToken = typeof window !== 'undefined' ? localStorage.getItem('a2sniper_token') : null;
-        if (!useAppStore.getState().isAuthenticated && currentToken) {
-          initialize();
-        }
-      }, 2000);
-
-      return () => clearTimeout(timer);
     }
   }, [isInitialized, isAuthenticated, initialize]);
 
@@ -70,6 +59,7 @@ export default function SignupPage() {
       const res = await fetch(`${baseUrl}/api/auth/register-send-otp`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({ name, email, password }),
       });
 
@@ -111,6 +101,7 @@ export default function SignupPage() {
       const res = await fetch(`${baseUrl}/api/auth/register-verify-otp`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({ name, email, password, otp_code: otpCode }),
       });
 

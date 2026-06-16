@@ -63,12 +63,9 @@ export default function AdminLayout({
     const fetchAdminInfo = async () => {
       try {
         const url = getApiUrl();
-        const token = typeof window !== 'undefined' ? localStorage.getItem('a2sniper_token') : null;
-        const headers: Record<string, string> = {};
-        if (token) headers['Authorization'] = `Bearer ${token}`;
 
         // Fetch admin config (contains IP whitelist)
-        const configRes = await fetch(`${url}/api/admin/config`, { headers });
+        const configRes = await fetch(`${url}/api/admin/config`, { credentials: 'include' });
         if (configRes.ok) {
           const configData = await configRes.json();
           const config = configData.config || configData;
@@ -78,7 +75,7 @@ export default function AdminLayout({
         }
 
         // Fetch system status for uptime
-        const statusRes = await fetch(`${url}/api/status`, { headers });
+        const statusRes = await fetch(`${url}/api/status`, { credentials: 'include' });
         if (statusRes.ok) {
           const statusData = await statusRes.json();
           // If the API provides a start_time, use it; otherwise estimate from current time

@@ -510,31 +510,61 @@ class PocketOptionScanner:
             logger.debug(f"[SCANNER] Binary data parse error: {e}")
 
     async def _parse_assets_list(self, assets: list):
-        """Parse assets from Pocket Option's list format.
-        
-        PO asset format (19 fields):
-        [id, symbol, name, category, subcategory, payout, ?, ?, ?, ?, ?, ?, ?, ?, ?, timeframes, ?, ?, ?]
-        
-        Examples:
-        [66, "EURUSD_otc", "EUR/USD OTC", "currency", 5, 92, 60, 30, 3, 1, 0, 1, [], ...]
-        [5, "#AAPL", "Apple", "stock", 2, 50, 60, 30, 3, 0, 170, 0, [], ...]
+        """Parse assets from Pocket Option's updateAssets payload.
+
+        Real Pocket Option asset format (the array inside each asset entry):
+        Index → Meaning
+          0  → asset id (int)
+          1  → asset/symbol string (e.g. "EURUSD_otc", "#AAPL")
+          2  → display name (e.g. "EUR/USD OTC")
+          3  → type/category (e.g. "currency", "stock", "crypto")
+          4  → investment type id (int)
+          5  → payout percent (int 0..100)
+
+        Some PO servers may swap fields, so we parse defensively and log a
+        sample so we can verify the format on first connect.
         """
         count = 0
         try:
+            # Log a sample so we can verify the format matches our parser
+            if assets and isinstance(assets[0], list):
+                sample = assets[0]
+                logger.info(f"[SCANNER] updateAssets sample (len={len(sample)}): {sample[:10]}")
+
             for asset_info in assets:
                 if not isinstance(asset_info, list) or len(asset_info) < 6:
                     continue
+
+                # Symbol is at index 1 — must be a non-empty string
                 symbol = asset_info[1] if len(asset_info) > 1 else None
-                payout = asset_info[5] if len(asset_info) > 5 else None
-                
-                if symbol and isinstance(payout, (int, float)) and payout > 0:
-                    self._payouts[symbol] = float(payout)
+                if not isinstance(symbol, str) or not symbol:
+                    continue
+
+                # Payout is at index 5 — must be a positive number 1..100
+                # (PO sends payout as integer percent; some servers send fractional 0..1)
+                payout_raw = asset_info[5] if len(asset_info) > 5 else None
+                if not isinstance(payout_raw, (int, float)) or payout_raw <= 0:
+                    continue
+
+                payout = float(payout_raw)
+                # If payout looks like a fraction (0..1), convert to percent
+                if payout <= 1.0:
+                    payout = payout * 100.0
+
+                # Sanity: payout must be in a reasonable range
+                if 1 <= payout <= 100:
+                    self._payouts[symbol] = payout
                     count += 1
-                    
+
             if count > 0:
-                logger.info(f"[SCANNER] Parsed {count} asset payouts from updateAssets — samples: {dict(list(self._payouts.items())[:5])}")
+                # Log OTC forex samples so the user can compare with the PO UI
+                otc_items = [(k, v) for k, v in self._payouts.items() if "_otc" in k.lower()][:8]
+                logger.info(
+                    f"[SCANNER] Parsed {count} asset payouts. "
+                    f"OTC samples: {dict(otc_items)}"
+                )
         except Exception as e:
-            logger.debug(f"[SCANNER] Asset list parse error: {e}")
+            logger.error(f"[SCANNER] Asset list parse error: {e}")
 
     async def _parse_assets_dict(self, data: dict):
         """Parse assets from Pocket Option's dict format."""
@@ -546,7 +576,10 @@ class PocketOptionScanner:
                         symbol = asset.get("asset", asset.get("symbol", ""))
                         payout = asset.get("payout", None)
                         if symbol and payout is not None:
-                            self._payouts[symbol] = float(payout)
+                            p = float(payout)
+                            if p <= 1.0:
+                                p = p * 100.0
+                            self._payouts[symbol] = p
             if self._payouts:
                 logger.info(f"[SCANNER] Parsed {len(self._payouts)} asset payouts from dict data")
         except Exception as e:
@@ -554,7 +587,7 @@ class PocketOptionScanner:
 
     async def _handle_event(self, event_name: str, event_data: list):
         """Handle Socket.IO named events."""
-        
+
         # Auth success event
         if event_name == "successauth":
             self._is_authenticated = True
@@ -562,11 +595,25 @@ class PocketOptionScanner:
             logger.info("[SCANNER] ✅ Authentification réussie (via event)")
             return
 
-        # Auth failure event  
+        # Auth failure event
         if event_name == "NotAuthorized":
             self._is_authenticated = False
             self._auth_event.set()
             logger.error("[SCANNER] ❌ Authentification refusée (via event)")
+            return
+
+        # updateAssets — Pocket Option sends the full asset list (with payouts)
+        # via this event after auth. Format: [[id, symbol, name, type, ..., payout, ...], ...]
+        if event_name in ("updateAssets", "assets"):
+            try:
+                if event_data:
+                    assets = event_data[0]
+                    if isinstance(assets, list):
+                        await self._parse_assets_list(assets)
+                    elif isinstance(assets, dict):
+                        await self._parse_assets_dict(assets)
+            except Exception as e:
+                logger.error(f"[SCANNER] updateAssets parse error: {e}")
             return
 
         # Payout update
@@ -577,10 +624,16 @@ class PocketOptionScanner:
                     if isinstance(payout_data, list):
                         for item in payout_data:
                             if isinstance(item, dict) and "asset" in item and "payout" in item:
-                                self._payouts[item["asset"]] = float(item["payout"])
+                                p = float(item["payout"])
+                                if p <= 1.0:
+                                    p = p * 100.0
+                                self._payouts[item["asset"]] = p
                     elif isinstance(payout_data, dict):
                         if "asset" in payout_data and "payout" in payout_data:
-                            self._payouts[payout_data["asset"]] = float(payout_data["payout"])
+                            p = float(payout_data["payout"])
+                            if p <= 1.0:
+                                p = p * 100.0
+                            self._payouts[payout_data["asset"]] = p
             except Exception as e:
                 logger.debug(f"[SCANNER] Payout parse error: {e}")
             return
@@ -648,16 +701,28 @@ class PocketOptionScanner:
                 logger.error(f"[SCANNER] Health check error: {e}")
 
     async def _request_initial_data(self):
-        """Request initial market data after authentication."""
+        """Request initial market data after authentication.
+
+        Pocket Option typically pushes the full asset list via updateAssets right
+        after a successful auth — but we also nudge it explicitly. The exact event
+        names vary slightly between PO server versions, so we send a few known
+        variants to maximize the chance of receiving the payout table.
+        """
         if not self._is_authenticated or not self._ws:
             return
-        
-        try:
-            # Request payouts for all assets
-            await self._ws.send('42["getPayout"]')
-            logger.debug("[SCANNER] Requested initial payouts")
-        except Exception as e:
-            logger.warning(f"[SCANNER] Failed to request initial data: {e}")
+
+        nudges = [
+            '42["ps"]',                    # Standard keep-alive / state request
+            '42["getPayout"]',             # Direct payout table request
+            '42["updateAssets"]',          # Some PO versions respond to this
+        ]
+        for nudge in nudges:
+            try:
+                await self._ws.send(nudge)
+            except Exception as e:
+                logger.warning(f"[SCANNER] Failed to send initial nudge {nudge[:20]}: {e}")
+                break
+        logger.info("[SCANNER] Sent initial data requests (getPayout + updateAssets nudge)")
 
     # ═══════════ MARKET DATA ═══════════
 
@@ -728,39 +793,80 @@ class PocketOptionScanner:
         return None
 
     def get_payout(self, pair: str) -> Optional[float]:
-        """Récupère le payout actuel pour une paire."""
+        """Get the current payout for a pair — STRICT lookup, no fuzzy matching.
+
+        PO uses symbol formats like:
+          "EURUSD_otc" for OTC forex
+          "#AAPL" for stocks
+          "#AAPL_otc" for OTC stocks
+        We convert "EUR/USD OTC" → "EURUSD_otc" and do an EXACT lookup.
+        No partial match — partial matching was returning wrong payouts.
+        """
         if not self._is_authenticated:
             return None
-        
-        # PO uses symbol formats like:
-        #   "EURUSD_otc" for OTC forex
-        #   "#AAPL" for stocks
-        #   "#AAPL_otc" for OTC stocks
-        # We need to convert "EUR/USD OTC" → "EURUSD_otc"
+
+        # Build candidate list — all the formats PO might use
         candidates = []
-        
-        # Main conversion: "EUR/USD OTC" → "EURUSD_otc"
+
+        # "EUR/USD OTC" → "EURUSD_otc" (PO's main OTC forex format)
         base = pair.replace('/', '').replace(' ', '_')  # "EUR/USD OTC" → "EURUSD_OTC"
-        # Lowercase the _otc suffix: "EURUSD_otc"
-        base_lower = base.replace('_OTC', '_otc').replace('_otc_OTC', '_otc')
-        candidates.append(base_lower)
-        candidates.append(f"#{base_lower}")  # Some stocks have # prefix
-        
-        # Also try the original pair name
-        candidates.append(pair)
-        
+        base_lower = base.replace('_OTC', '_otc')
+        candidates.extend([
+            base_lower,                    # "EURUSD_otc"
+            base_lower.lower(),            # "eurusd_otc"
+            base,                          # "EURUSD_OTC"
+            base.replace('_OTC', ''),      # "EURUSD" (non-OTC variant)
+            base_lower.replace('_otc', ''), # "eurusd"
+            f"#{base_lower}",              # "#EURUSD_otc" (stock-style)
+            pair,                          # "EUR/USD OTC" (display name)
+        ])
+
+        # Exact-match lookup across all candidates
         for candidate in candidates:
-            payout = self._payouts.get(candidate)
-            if payout is not None:
-                return payout
-        
-        # Partial match fallback
-        pair_base = pair.split(' ')[0].replace('/', '')  # e.g., "EURUSD"
+            if candidate and candidate in self._payouts:
+                return self._payouts[candidate]
+
+        # Case-insensitive exact-match fallback (some PO servers use different casing)
+        pair_lower = pair.lower()
         for symbol, payout in self._payouts.items():
-            if pair_base in symbol:
+            if symbol.lower() == base_lower.lower():
                 return payout
-        
+
+        # No match found — return None (DO NOT do partial match — too dangerous)
+        logger.debug(
+            f"[SCANNER] No exact payout match for '{pair}'. "
+            f"Available symbols sample: {list(self._payouts.keys())[:10]}"
+        )
         return None
+
+    def get_all_payouts(self) -> dict:
+        """Return ALL parsed payouts directly from PO (for transparency/debug)."""
+        return dict(self._payouts)
+
+    def find_pairs_above_payout(self, min_payout: float = 70.0, pair_filter: str = "OTC") -> dict:
+        """Find all pairs with payout >= min_payout. Useful for showing real market opportunities."""
+        result = {}
+        for symbol, payout in self._payouts.items():
+            if payout >= min_payout:
+                if pair_filter and pair_filter.upper() in symbol.upper():
+                    # Convert "EURUSD_otc" → "EUR/USD OTC" for display
+                    display = self._symbol_to_display(symbol)
+                    result[display] = payout
+        return result
+
+    @staticmethod
+    def _symbol_to_display(symbol: str) -> str:
+        """Convert PO symbol like 'EURUSD_otc' to display name 'EUR/USD OTC'."""
+        s = symbol
+        is_otc = "_otc" in s.lower()
+        s = s.replace("_otc", "").replace("_OTC", "")
+        s = s.lstrip("#")
+        # Split into two 3-letter halves (e.g. "EURUSD" → "EUR/USD")
+        if len(s) == 6 and s.isalpha():
+            s = f"{s[:3]}/{s[3:]}"
+        if is_otc:
+            s = f"{s} OTC"
+        return s
 
     # ═══════════ DISCONNECT ═══════════
 

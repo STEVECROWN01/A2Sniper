@@ -23,9 +23,8 @@ export default function AdminLogsPage() {
   const fetchLogs = async () => {
     try {
       const url = getApiUrl();
-      const token = typeof window !== 'undefined' ? localStorage.getItem('a2sniper_token') : null;
       const res = await fetch(`${url}/api/admin/logs?limit=100`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        credentials: 'include',
       });
       if (res.ok) {
         const data = await res.json();

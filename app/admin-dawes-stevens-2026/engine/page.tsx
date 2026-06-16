@@ -21,9 +21,8 @@ export default function AdminEnginePage() {
   const fetchWeights = async () => {
     try {
       const url = getApiUrl();
-      const token = typeof window !== 'undefined' ? localStorage.getItem('a2sniper_token') : null;
       const res = await fetch(`${url}/api/admin/engine/weights`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        credentials: 'include',
       });
       if (res.ok) {
         setWeights(await res.json());
@@ -41,10 +40,10 @@ export default function AdminEnginePage() {
     setIsSaving(true);
     try {
       const url = getApiUrl();
-      const token = typeof window !== 'undefined' ? localStorage.getItem('a2sniper_token') : null;
       const res = await fetch(`${url}/api/admin/engine/weights`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(weights)
       });
       if (res.ok) {

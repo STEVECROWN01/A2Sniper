@@ -193,12 +193,11 @@ export default function RiskManagerPage() {
 
     try {
       const apiUrl = getApiUrl();
-      const token = typeof window !== 'undefined' ? localStorage.getItem('a2sniper_token') : null;
       const res = await fetch(`${apiUrl}/api/risk/settings`, {
         method: 'POST',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
-          ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
         },
         body: JSON.stringify({
           initial_capital: initialCapital,

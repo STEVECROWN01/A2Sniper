@@ -101,16 +101,12 @@ export default function SettingsPage() {
     setIsUploadingPhoto(true);
     try {
       const apiUrl = getApiUrl();
-      const token = typeof window !== 'undefined' ? localStorage.getItem('a2sniper_token') : null;
-
       const formData = new FormData();
       formData.append('avatar', file);
 
       const res = await fetch(`${apiUrl}/api/auth/upload-avatar`, {
         method: 'POST',
-        headers: {
-          ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
-        },
+        credentials: 'include',
         body: formData,
       });
 
@@ -151,13 +147,12 @@ export default function SettingsPage() {
     setIsChangingPassword(true);
     try {
       const apiUrl = getApiUrl();
-      const token = typeof window !== 'undefined' ? localStorage.getItem('a2sniper_token') : null;
       const res = await fetch(`${apiUrl}/api/auth/reset-password`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
         },
+        credentials: 'include',
         body: JSON.stringify({
           current_password: currentPassword,
           new_password: newPassword,
@@ -225,13 +220,12 @@ export default function SettingsPage() {
     setIsDeletingAccount(true);
     try {
       const apiUrl = getApiUrl();
-      const token = typeof window !== 'undefined' ? localStorage.getItem('a2sniper_token') : null;
       const res = await fetch(`${apiUrl}/api/auth/delete-account-send-otp`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
         },
+        credentials: 'include',
       });
 
       if (res.ok) {
@@ -252,29 +246,28 @@ export default function SettingsPage() {
     setIsDeletingAccount(true);
     try {
       const apiUrl = getApiUrl();
-      const token = typeof window !== 'undefined' ? localStorage.getItem('a2sniper_token') : null;
       const res = await fetch(`${apiUrl}/api/auth/delete-account-confirm`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
         },
+        credentials: 'include',
         body: JSON.stringify({ otp_code: deleteOtpCode }),
       });
 
       if (res.ok) {
         toast.success('Compte supprimé avec succès.');
-        // Clear all local storage and state
+        // Clear local storage preferences (NOT auth tokens — those are in httpOnly cookies)
         if (typeof window !== 'undefined') {
-          localStorage.removeItem('a2sniper_token');
           localStorage.removeItem('a2sniper_user');
           localStorage.removeItem('a2sniper_notifications');
           localStorage.removeItem('a2sniper_theme');
           localStorage.removeItem('a2sniper_language');
           localStorage.removeItem('a2sniper_timezone');
+          localStorage.removeItem('a2sniper_last_ssid');
         }
-        // Use Zustand logout to clear store state
-        logout();
+        // Use Zustand logout to clear store state and call backend logout
+        await logout();
         setShowDeleteDialog(false);
         setDeleteConfirmText('');
         setDeleteOtpCode('');
@@ -302,9 +295,8 @@ export default function SettingsPage() {
       let serverData: any = null;
       try {
         const apiUrl = getApiUrl();
-        const token = typeof window !== 'undefined' ? localStorage.getItem('a2sniper_token') : null;
         const res = await fetch(`${apiUrl}/api/auth/export-data`, {
-          headers: { ...(token ? { 'Authorization': `Bearer ${token}` } : {}) },
+          credentials: 'include',
         });
         if (res.ok) serverData = await res.json();
       } catch {}

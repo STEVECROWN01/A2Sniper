@@ -81,6 +81,59 @@ const ChartBackground = () => {
   );
 };
 
+// PairRow — single currency row in the pairs list.
+// Replaces the old hardcoded "Forex OTC Sniper" label with a LIVE countdown
+// to the next 1-minute candle close (i.e. the next signal opportunity).
+// A2Sniper signals expire on the next 1m or 5m candle boundary, so the
+// countdown tells the user how long they have to click before the current
+// opportunity closes.
+function PairRow({ pair, onClick }: { pair: { symbol: string; name?: string; payout: number }, onClick: () => void }) {
+  const [secondsLeft, setSecondsLeft] = useState(0);
+
+  useEffect(() => {
+    const update = () => {
+      const now = new Date();
+      // Seconds remaining until the next minute boundary (next 1m candle close)
+      const remaining = 60 - now.getSeconds();
+      setSecondsLeft(remaining);
+    };
+    update();
+    const timer = setInterval(update, 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  // Color: green if >30s, yellow if 15-30s, red if <15s (urgency indicator)
+  const timeColor = secondsLeft > 30
+    ? 'text-green-400'
+    : secondsLeft > 15
+      ? 'text-yellow-400'
+      : 'text-red-400';
+
+  const mmss = `${Math.floor(secondsLeft / 60).toString().padStart(2, '0')}:${(secondsLeft % 60).toString().padStart(2, '0')}`;
+
+  return (
+    <button
+      onClick={onClick}
+      className="w-full flex items-center justify-between p-3.5 bg-black/60 hover:bg-[#D4AF37]/20 border border-gray-800 hover:border-[#D4AF37]/50 rounded-2xl transition-all group relative overflow-hidden"
+    >
+      <div className="absolute inset-0 bg-gradient-to-r from-[#D4AF37]/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+      <div className="relative z-10 flex flex-col items-start">
+        <span className="text-xs font-black text-white group-hover:text-[#D4AF37] transition-colors">{pair.symbol}</span>
+        <span className={`text-[8px] font-bold uppercase tracking-tighter ${timeColor}`}>
+          ⏱ Next signal in {mmss}
+        </span>
+      </div>
+      <div className="relative z-10 flex items-center gap-3">
+        <div className="text-right">
+          <p className="text-[10px] text-green-400 font-black">{pair.payout}%</p>
+          <p className="text-[8px] text-gray-600 font-bold uppercase">Payout</p>
+        </div>
+        <ChevronRight className="w-4 h-4 text-gray-600 group-hover:text-[#D4AF37] transition-all group-hover:translate-x-1" />
+      </div>
+    </button>
+  );
+}
+
 export function TelegramBotSimulator() {
   const { liveStatus, connectMarket, requestSignal, signals, userStats, marketInfo } = useAppStore();
   const [messages, setMessages] = useState<Message[]>([]);
@@ -192,8 +245,10 @@ export function TelegramBotSimulator() {
     if (!marketInfo || !marketInfo.isConnected || !marketInfo.payouts) {
       return [];
     }
+    // Show all OTC pairs with payout >= 50% (matches backend threshold).
+    // Previously this was >= 70% which hid many valid PO pairs.
     return Object.entries(marketInfo.payouts)
-      .filter(([_, payout]) => payout !== null && payout >= 70)
+      .filter(([_, payout]) => payout !== null && payout >= 50)
       .map(([symbol]) => {
         const pairObj = tradingPairs.find(tp => tp.symbol === symbol);
         return {
@@ -481,24 +536,7 @@ export function TelegramBotSimulator() {
                     </div>
                     <div className="space-y-2">
                       {filteredTradingPairs.slice(pairsScrollIndex, pairsScrollIndex + visiblePairsCount).map((p, i) => (
-                        <button
-                          key={i}
-                          onClick={() => handlePairClick(p.symbol)}
-                          className="w-full flex items-center justify-between p-3.5 bg-black/60 hover:bg-[#D4AF37]/20 border border-gray-800 hover:border-[#D4AF37]/50 rounded-2xl transition-all group relative overflow-hidden"
-                        >
-                          <div className="absolute inset-0 bg-gradient-to-r from-[#D4AF37]/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
-                          <div className="relative z-10 flex flex-col items-start">
-                            <span className="text-xs font-black text-white group-hover:text-[#D4AF37] transition-colors">{p.symbol}</span>
-                            <span className="text-[8px] text-gray-500 font-bold uppercase tracking-tighter">Forex OTC Sniper</span>
-                          </div>
-                          <div className="relative z-10 flex items-center gap-3">
-                            <div className="text-right">
-                              <p className="text-[10px] text-green-400 font-black">{p.payout}%</p>
-                              <p className="text-[8px] text-gray-600 font-bold uppercase">Payout</p>
-                            </div>
-                            <ChevronRight className="w-4 h-4 text-gray-600 group-hover:text-[#D4AF37] transition-all group-hover:translate-x-1" />
-                          </div>
-                        </button>
+                        <PairRow key={i} pair={p} onClick={() => handlePairClick(p.symbol)} />
                       ))}
                     </div>
                     <div className="flex justify-between items-center mt-4 pt-4 border-t border-gray-800/50">

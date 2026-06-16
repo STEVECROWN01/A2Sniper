@@ -13,7 +13,7 @@ export function useAuth(requireAdmin = false) {
     if (!isInitialized) return; // Wait until store is initialized
 
     // Liste des pages publiques
-    const publicPages = ['/', '/login', '/signup', '/pricing', '/legal'];
+    const publicPages = ['/', '/login', '/signup', '/pricing', '/legal', '/google-callback'];
     
     if (!isAuthenticated && !publicPages.includes(pathname)) {
       router.push('/login');

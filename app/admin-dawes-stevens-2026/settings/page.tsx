@@ -23,9 +23,8 @@ export default function AdminSettingsPage() {
   const fetchStatus = async () => {
     try {
       const url = getApiUrl();
-      const token = typeof window !== 'undefined' ? localStorage.getItem('a2sniper_token') : null;
       const res = await fetch(`${url}/api/status`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        credentials: 'include',
       });
       if (res.ok) {
         const data = await res.json();
@@ -44,10 +43,10 @@ export default function AdminSettingsPage() {
     const nextState = !isSuspended;
     try {
       const url = getApiUrl();
-      const token = typeof window !== 'undefined' ? localStorage.getItem('a2sniper_token') : null;
       const res = await fetch(`${url}/api/admin/circuit-breaker`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ active: nextState })
       });
       if (res.ok) {
@@ -62,10 +61,10 @@ export default function AdminSettingsPage() {
   const saveConfig = async () => {
     try {
       const url = getApiUrl();
-      const token = typeof window !== 'undefined' ? localStorage.getItem('a2sniper_token') : null;
       const res = await fetch(`${url}/api/admin/config`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(config)
       });
       if (res.ok) {

@@ -57,6 +57,7 @@ export function useGoogleAuth() {
         const res = await fetch(`${baseUrl}/api/auth/google`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',  // Cookies sent automatically
           body: JSON.stringify({ code, redirect_uri: redirectUri }),
         });
 
@@ -82,14 +83,11 @@ export function useGoogleAuth() {
         }
         console.log('[Google Auth] Code exchange response:', res.status, data);
 
-        localStorage.setItem('a2sniper_token', data.token);
-        // Use user data from response (now includes is_admin and plan)
+        // Tokens are now in httpOnly cookies — no localStorage needed
         const userData = data.user || {};
-        // Also fetch full profile from /api/auth/me as verification
+        // Fetch full profile from /api/auth/me as verification
         try {
-          const meRes = await fetch(`${baseUrl}/api/auth/me`, {
-            headers: { 'Authorization': `Bearer ${data.token}` }
-          });
+          const meRes = await fetch(`${baseUrl}/api/auth/me`, { credentials: 'include' });
           if (meRes.ok) {
             const fullUser = await meRes.json();
             setUser(fullUser);
@@ -108,6 +106,7 @@ export function useGoogleAuth() {
       const res = await fetch(`${baseUrl}/api/auth/google`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({ access_token: accessToken }),
       });
 
@@ -132,13 +131,10 @@ export function useGoogleAuth() {
         return false;
       }
 
-      localStorage.setItem('a2sniper_token', data.token);
+      // Tokens are now in httpOnly cookies — no localStorage needed
       const userData = data.user || {};
-      // Also fetch full profile from /api/auth/me as verification
       try {
-        const meRes = await fetch(`${baseUrl}/api/auth/me`, {
-          headers: { 'Authorization': `Bearer ${data.token}` }
-        });
+        const meRes = await fetch(`${baseUrl}/api/auth/me`, { credentials: 'include' });
         if (meRes.ok) {
           const fullUser = await meRes.json();
           setUser(fullUser);

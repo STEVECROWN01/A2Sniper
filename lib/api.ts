@@ -2,7 +2,8 @@
  * API Client Abstraction Layer
  * 
  * Centralized HTTP client for all API communication.
- * Handles authentication headers, base URL configuration, and error handling.
+ * Auth tokens are now stored in httpOnly cookies — the browser sends them
+ * automatically with credentials: 'include'. No localStorage needed.
  * 
  * Usage:
  *   import { api } from '@/lib/api';
@@ -22,43 +23,23 @@ class ApiClient {
   }
   
   /**
-   * Get auth headers with JWT token from localStorage.
-   * Checks token expiry before including it.
+   * Get standard headers. Auth is handled via httpOnly cookies
+   * (sent automatically with credentials: 'include').
    */
   private getHeaders(): HeadersInit {
-    const token = typeof window !== 'undefined' ? this.getValidToken() : null;
     return {
       'Content-Type': 'application/json',
-      ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
     };
-  }
-
-  /**
-   * Get a valid (non-expired) token from localStorage.
-   * Returns null if token is missing or expired.
-   */
-  private getValidToken(): string | null {
-    try {
-      const token = localStorage.getItem('a2sniper_token');
-      if (!token) return null;
-
-      // Check JWT expiry
-      const payload = JSON.parse(atob(token.split('.')[1]));
-      if (payload.exp && Date.now() >= payload.exp * 1000) {
-        localStorage.removeItem('a2sniper_token');
-        return null;
-      }
-      return token;
-    } catch {
-      return null;
-    }
   }
   
   /**
    * GET request
    */
   async get<T>(path: string): Promise<T> {
-    const res = await fetch(`${this.baseUrl}${path}`, { headers: this.getHeaders() });
+    const res = await fetch(`${this.baseUrl}${path}`, {
+      headers: this.getHeaders(),
+      credentials: 'include',
+    });
     if (!res.ok) {
       throw new ApiError(`API Error: ${res.status}`, res.status, await res.text().catch(() => ''));
     }
@@ -72,6 +53,7 @@ class ApiClient {
     const res = await fetch(`${this.baseUrl}${path}`, {
       method: 'POST',
       headers: this.getHeaders(),
+      credentials: 'include',
       body: JSON.stringify(body),
     });
     if (!res.ok) {
@@ -87,6 +69,7 @@ class ApiClient {
     const res = await fetch(`${this.baseUrl}${path}`, {
       method: 'PUT',
       headers: this.getHeaders(),
+      credentials: 'include',
       body: JSON.stringify(body),
     });
     if (!res.ok) {
@@ -102,6 +85,7 @@ class ApiClient {
     const res = await fetch(`${this.baseUrl}${path}`, {
       method: 'PATCH',
       headers: this.getHeaders(),
+      credentials: 'include',
       body: JSON.stringify(body),
     });
     if (!res.ok) {
@@ -117,6 +101,7 @@ class ApiClient {
     const res = await fetch(`${this.baseUrl}${path}`, {
       method: 'DELETE',
       headers: this.getHeaders(),
+      credentials: 'include',
     });
     if (!res.ok) {
       throw new ApiError(`API Error: ${res.status}`, res.status, await res.text().catch(() => ''));

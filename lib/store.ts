@@ -3,19 +3,15 @@ import { Signal, mockSignals, mockUserStats, UserStats } from './mock-data';
 import { getApiUrl } from './api-config';
 
 // ============================================================================
-// SECURITY WARNING: Auth token is stored in localStorage
+// SECURITY: Auth tokens are now stored in httpOnly cookies
 // ============================================================================
-// This approach is vulnerable to XSS attacks. If an attacker injects malicious
-// JavaScript into the application, they can read the token from localStorage.
-// 
-// RECOMMENDED FIX: Use httpOnly cookies set by the backend instead. The backend
-// should set the JWT as an httpOnly, Secure, SameSite=Strict cookie on login.
-// This would require backend changes to the auth endpoints.
+// The JWT tokens are set as httpOnly cookies by the Next.js API proxy,
+// so they are NOT accessible via JavaScript (XSS protection).
 //
-// For now, we mitigate by:
-// 1. Checking token expiry before using it
-// 2. Clearing expired tokens automatically
-// 3. Not storing sensitive user data alongside the token
+// The browser automatically sends the cookies with /api/* requests.
+// The proxy reads the cookies and adds the Authorization header for the backend.
+//
+// For frontend auth state, we check /api/auth/me to verify the session.
 // ============================================================================
 
 interface SubscriptionPlan {
@@ -105,37 +101,11 @@ interface AppState {
   fetchMarketStatus: () => Promise<void>;
   attemptReconnect: () => Promise<{ success: boolean; message: string }>;
   initialize: () => Promise<void>;
-  logout: () => void;
+  logout: () => Promise<void>;
   requestSignal: (pair: string) => Promise<{ success: boolean; signal?: Signal; message?: string }>;
   checkPlanLimit: (action: string) => { allowed: boolean; reason?: string };
   getAuthHeaders: () => Record<string, string>;
   getApiUrl: () => string;
-}
-
-// Check if a JWT token is expired
-function isTokenExpired(token: string): boolean {
-  try {
-    const payload = JSON.parse(atob(token.split('.')[1]));
-    if (payload.exp) {
-      // exp is in seconds since epoch
-      return Date.now() >= payload.exp * 1000;
-    }
-    return false; // Token without exp claim — treat as valid
-  } catch {
-    return true; // Malformed token — treat as expired
-  }
-}
-
-// Get stored token with expiry check
-function getValidToken(): string | null {
-  if (typeof window === 'undefined') return null;
-  const token = localStorage.getItem('a2sniper_token');
-  if (!token) return null;
-  if (isTokenExpired(token)) {
-    localStorage.removeItem('a2sniper_token');
-    return null;
-  }
-  return token;
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -150,7 +120,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   clockOffset: 0,
   lastConnectedSSID: null as string | null,
   reconnectAttempts: 0,
-  maxReconnectAttempts: 10,  // Higher limit since SSIDs are long-lived
+  maxReconnectAttempts: 10,
   autoConnectDone: false,
   
   setSignals: (signals) => set({ signals }),
@@ -179,21 +149,16 @@ export const useAppStore = create<AppState>((set, get) => ({
     )
   })),
 
-  // Helper to get auth headers — uses getValidToken() for expiry check
+  // Helper to get auth headers — cookies are sent automatically, but we include
+  // Content-Type. The proxy adds Authorization from cookies.
   getAuthHeaders: () => {
-    const token = getValidToken();
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (token) headers['Authorization'] = `Bearer ${token}`;
-    return headers;
+    return { 'Content-Type': 'application/json' };
   },
 
   // Helper to get API base URL (uses shared config)
   getApiUrl: () => getApiUrl(),
 
   // Auto-reconnect using the last known SSID
-  // Pocket Option SSIDs do NOT expire as long as the user doesn't
-  // disconnect their Pocket Option account. So reconnection with a
-  // saved SSID can work for days/weeks.
   attemptReconnect: async () => {
     const state = get();
     const ssid = state.lastConnectedSSID || (typeof window !== 'undefined' ? localStorage.getItem('a2sniper_last_ssid') : null);
@@ -275,11 +240,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     try {
       const url = get().getApiUrl();
       const startTime = Date.now();
-      const headers = get().getAuthHeaders();
-      // If no valid token, skip the fetch
-      if (!headers['Authorization']) return;
-      
-      const res = await fetch(`${url}/api/signals`, { headers });
+      // Cookies are sent automatically — no need to add Authorization header
+      const res = await fetch(`${url}/api/signals`, { credentials: 'include' });
       if (res.ok) {
         // Calculate clock offset from HTTP Date header
         const serverDateStr = res.headers.get('Date');
@@ -316,13 +278,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   fetchPerformance: async () => {
     try {
       const url = get().getApiUrl();
-      const headers = get().getAuthHeaders();
-      if (!headers['Authorization']) return;
-
-      const res = await fetch(`${url}/api/performance`, { headers });
+      const res = await fetch(`${url}/api/performance`, { credentials: 'include' });
       if (res.ok) {
         const data = await res.json();
-        // API returns nested objects: { win_rate_all: { win_rate: 75.5, total: 100, ... }, ... }
         const globalWinRate = data.win_rate_all?.win_rate ?? 0;
         const totalTrades = data.win_rate_all?.total ?? 0;
         set((state) => ({
@@ -345,7 +303,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       const url = get().getApiUrl();
       const res = await fetch(`${url}/api/market/connect`, {
         method: 'POST',
-        headers: get().getAuthHeaders(),
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({ ssid })
       });
       const data = await res.json();
@@ -380,7 +339,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       const url = get().getApiUrl();
       const res = await fetch(`${url}/api/signals/request`, {
         method: 'POST',
-        headers: get().getAuthHeaders(),
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({ pair })
       });
       const data = await res.json();
@@ -410,7 +370,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       const url = get().getApiUrl();
       await fetch(`${url}/api/market/disconnect`, { 
         method: 'POST',
-        headers: get().getAuthHeaders()
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
       });
       set({ liveStatus: 'DISCONNECTED', marketInfo: null });
     } catch (err) {
@@ -421,29 +382,34 @@ export const useAppStore = create<AppState>((set, get) => ({
   fetchMarketStatus: async () => {
     try {
       const url = get().getApiUrl();
-      const headers = get().getAuthHeaders();
-      if (!headers['Authorization']) return;
-
-      const res = await fetch(`${url}/api/market/status`, headers ? { headers } : undefined);
+      const res = await fetch(`${url}/api/market/status`, { credentials: 'include' });
       if (res.ok) {
         const data = await res.json();
         const wasLive = get().liveStatus === 'LIVE';
         const isNowLive = data.is_connected;
 
-        set({ 
+        // Merge the default payouts (8 hardcoded OTC pairs) with ALL OTC pairs
+        // received live from PO. The all_otc_pairs field contains every OTC pair
+        // PO is currently offering, with its real payout.
+        const defaultPayouts: Record<string, number | null> = data.payouts || {};
+        const allOtcPairs: Record<string, number> = data.all_otc_pairs || {};
+        // Merge — all_otc_pairs values take priority (they are the live values)
+        const mergedPayouts: Record<string, number | null> = { ...defaultPayouts };
+        for (const [pair, payout] of Object.entries(allOtcPairs)) {
+          mergedPayouts[pair] = payout;
+        }
+
+        set({
           liveStatus: isNowLive ? 'LIVE' : 'DISCONNECTED',
           marketInfo: {
             isConnected: isNowLive,
-            payouts: data.payouts
+            payouts: mergedPayouts,
           }
         });
 
         // Auto-reconnect: if we were LIVE but now disconnected, try to reconnect
-        // SSIDs are long-lived (don't expire unless user disconnects Pocket Option),
-        // so reconnecting with the saved SSID should work reliably.
         if (wasLive && !isNowLive && get().lastConnectedSSID) {
           console.log('[SESSION] Connection lost — attempting auto-reconnect with saved SSID...');
-          // Progressive delay: 3s first attempt, then 5s, 8s, etc.
           const delay = Math.min(3000 + (get().reconnectAttempts * 2000), 15000);
           setTimeout(async () => {
             const state = get();
@@ -459,64 +425,61 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   initialize: async () => {
-    // Use getValidToken() which checks expiry
-    const token = getValidToken();
-    if (token) {
-      try {
-        const url = get().getApiUrl();
-        const res = await fetch(`${url}/api/auth/me`, {
-          headers: { 'Authorization': `Bearer ${token}` }
-        });
-        if (res.ok) {
-          const user = await res.json();
-          set({ user, isAuthenticated: true, isInitialized: true });
-          await get().fetchSignals();
-          await get().fetchPerformance();
-          await get().fetchMarketStatus();
+    // Check auth via httpOnly cookie — call /api/auth/me
+    // The browser sends the cookie automatically with credentials: 'include'
+    try {
+      const url = get().getApiUrl();
+      const res = await fetch(`${url}/api/auth/me`, { credentials: 'include' });
+      if (res.ok) {
+        const user = await res.json();
+        set({ user, isAuthenticated: true, isInitialized: true });
+        await get().fetchSignals();
+        await get().fetchPerformance();
+        await get().fetchMarketStatus();
 
-          // Auto-connect on page load: if we have a saved SSID but aren't connected,
-          // try to reconnect automatically. SSIDs don't expire (unless user
-          // disconnects Pocket Option), so this is safe and reliable.
-          const savedSSID = typeof window !== 'undefined' ? localStorage.getItem('a2sniper_last_ssid') : null;
-          if (savedSSID && !get().autoConnectDone) {
-            set({ autoConnectDone: true, lastConnectedSSID: savedSSID });
-            // Check market status first — if already connected, skip
-            const statusRes = await fetch(`${url}/api/market/status`, {
-              headers: { 'Authorization': `Bearer ${token}` }
-            });
-            if (statusRes.ok) {
-              const statusData = await statusRes.json();
-              if (!statusData.is_connected) {
-                console.log('[INIT] Auto-connecting with saved SSID...');
-                // Non-blocking: don't await, let it connect in background
-                get().attemptReconnect().then(result => {
-                  if (result.success) {
-                    console.log('[INIT] Auto-connect successful');
-                  } else {
-                    console.log('[INIT] Auto-connect failed — user can connect manually');
-                  }
-                });
-              } else {
-                console.log('[INIT] Already connected to market');
-              }
+        // Auto-connect on page load: if we have a saved SSID but aren't connected
+        const savedSSID = typeof window !== 'undefined' ? localStorage.getItem('a2sniper_last_ssid') : null;
+        if (savedSSID && !get().autoConnectDone) {
+          set({ autoConnectDone: true, lastConnectedSSID: savedSSID });
+          const statusRes = await fetch(`${url}/api/market/status`, { credentials: 'include' });
+          if (statusRes.ok) {
+            const statusData = await statusRes.json();
+            if (!statusData.is_connected) {
+              console.log('[INIT] Auto-connecting with saved SSID...');
+              get().attemptReconnect().then(result => {
+                if (result.success) {
+                  console.log('[INIT] Auto-connect successful');
+                } else {
+                  console.log('[INIT] Auto-connect failed — user can connect manually');
+                }
+              });
+            } else {
+              console.log('[INIT] Already connected to market');
             }
           }
-          return;
-        } else {
-          // Token was rejected by server — clear it (could be revoked or expired server-side)
-          localStorage.removeItem('a2sniper_token');
         }
-      } catch (err) {
-        console.error('Initialization failed', err);
+        return;
       }
+      // If /api/auth/me returns 401, user is not authenticated — that's fine
+    } catch (err) {
+      console.error('Initialization failed', err);
     }
     set({ isInitialized: true });
   },
 
-  logout: () => {
-    if (typeof window !== 'undefined') {
-      localStorage.removeItem('a2sniper_token');
+  logout: async () => {
+    try {
+      const url = get().getApiUrl();
+      // Call backend logout to revoke tokens — cookies are sent automatically
+      await fetch(`${url}/api/auth/logout`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+      });
+    } catch (err) {
+      console.error('Logout API call failed', err);
     }
+    // Clear frontend state
     set({ user: null, isAuthenticated: false });
   }
 }));

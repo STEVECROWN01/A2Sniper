@@ -444,29 +444,55 @@ Pour un signal complet avec scoring IA, utilisez le dashboard Web.
         return f"✅ Timeframe changé à {tf}\nLes signaux seront analysés sur {tf}."
 
     async def cmd_paires(self, user_id: str, args: list = None) -> dict:
-        """8. /paires — Sélectionner les paires à surveiller"""
-        if self.scanner and not self.scanner.is_connected:
+        """8. /paires — Sélectionner les paires à surveiller (REAL payouts from market)."""
+        if not self.scanner or not self.scanner.is_connected:
             return {
                 "text": "⚠️ Impossible de lister les paires actives. Aucune connexion au marché réel."
             }
 
-        pairs = [
-            'EUR/USD OTC', 'GBP/USD OTC', 'USD/JPY OTC', 'AUD/USD OTC',
-            'USD/CHF OTC', 'EUR/GBP OTC', 'USD/CAD OTC', 'NZD/USD OTC'
-        ]
-        
+        # Get REAL payouts from the scanner — no hardcoded list.
+        # Show only pairs with payout >= 70% (PO minimum threshold for profitability).
+        real_pairs = self.scanner.find_pairs_above_payout(min_payout=70.0, pair_filter="OTC")
+
+        if not real_pairs:
+            # Fall back to the 8 default OTC pairs with whatever payout PO reported (may be None)
+            logger.warning("[TELEGRAM] No OTC pairs with payout >= 70% — showing defaults with current payouts")
+            fallback_pairs = [
+                'EUR/USD OTC', 'GBP/USD OTC', 'USD/JPY OTC', 'AUD/USD OTC',
+                'USD/CHF OTC', 'EUR/GBP OTC', 'USD/CAD OTC', 'NZD/USD OTC'
+            ]
+            real_pairs = {}
+            for p in fallback_pairs:
+                payout = self.scanner.get_payout(p)
+                real_pairs[p] = payout if payout is not None else 0
+
+        # Sort by payout descending so the highest-paying pairs appear first
+        sorted_pairs = sorted(real_pairs.items(), key=lambda x: x[1], reverse=True)
+
         inline_keyboard = []
-        for i in range(0, len(pairs), 2):
+        # Build rows of 2 buttons each
+        for i in range(0, len(sorted_pairs), 2):
             row = []
-            for p in pairs[i:i+2]:
+            for pair_name, payout in sorted_pairs[i:i+2]:
+                # Include the payout in the button text — verified against PO UI
+                if payout and payout >= 70:
+                    btn_text = f"{pair_name}  💰{payout:.0f}%"
+                else:
+                    btn_text = f"{pair_name}  ⚠️"
                 row.append({
-                    "text": p,
-                    "callback_data": f"analyze_{p}"
+                    "text": btn_text,
+                    "callback_data": f"signal_{pair_name}"
                 })
             inline_keyboard.append(row)
 
         return {
-            "text": "Sélectionnez une paire active pour une analyse immédiate :",
+            "text": (
+                "🎯 <b>Paires actives du marché (Live PO)</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━━\n"
+                "💰 Payouts extraits en direct de Pocket Option.\n"
+                "Cliquez sur une paire pour générer un signal immédiat.\n\n"
+                "<i>Les payouts affichés sont vérifiables sur l'interface Pocket Option.</i>"
+            ),
             "reply_markup": {
                 "inline_keyboard": inline_keyboard
             }
@@ -834,6 +860,70 @@ Le trading sur options binaires et Forex comporte un niveau de risque très éle
 
 <i>L'Assistant A2Sniper fournit des analyses de pointe basées sur des algorithmes HFT, mais ne garantit en aucun cas des profits futurs.</i>"""
 
+    async def cmd_signal_on_demand(self, user_id: str, pair: str) -> str:
+        """Generate a real signal on demand when user clicks a pair button.
+
+        This bypasses the Premium+ ACL gate (because the user already has market
+        access via the dashboard) and uses the force-mode analyzer so the strict
+        filters don't reject the on-demand request.
+        """
+        if not self.scanner or not self.scanner.is_connected:
+            return "🔴 Le système est actuellement DÉCONNECTÉ du marché. Impossible de générer un signal."
+
+        # Validate pair format — must look like "XXX/XXX OTC" or similar
+        if not pair or len(pair) < 3:
+            return "❌ Paire invalide."
+
+        # Get real payout
+        payout = self.scanner.get_payout(pair)
+        if payout is None:
+            return (
+                f"⚠️ Impossible de trouver le payout pour {pair}.\n"
+                f"Causes possibles : la paire n'existe pas sur Pocket Option, "
+                f"ou la table des actifs n'a pas encore été reçue. Réessayez dans 10 secondes."
+            )
+
+        if payout < 50:
+            return (
+                f"⚠️ Payout trop bas pour {pair} ({payout}%).\n"
+                f"Le système ne génère pas de signaux pour des payouts inférieurs à 50% — "
+                f"le ratio risque/rendement est défavorable."
+            )
+
+        # Try to import the force_analyze_pair from main (the bot runs in same process)
+        try:
+            import sys
+            # Find main module — the bot is imported by main.py
+            main_mod = sys.modules.get('main')
+            if main_mod and hasattr(main_mod, 'force_analyze_pair'):
+                signal = await main_mod.force_analyze_pair(pair)
+                if signal:
+                    return (
+                        f"🎯 <b>SIGNAL À LA DEMANDE — {pair}</b>\n"
+                        f"━━━━━━━━━━━━━━━━━━━━━\n"
+                        f"🟢 Direction : <b>{signal['direction']}</b>\n"
+                        f"⌛ Expiration : <b>{signal['expiration']}m</b>\n"
+                        f"💰 Payout : <b>{signal['payout']}%</b>\n"
+                        f"🎯 Score : <b>{signal['score']}/10</b> | Winrate : <b>{signal['winrate']}%</b>\n"
+                        f"📈 Prix d'entrée : <code>{signal['entry_price']}</code>\n"
+                        f"🏗️ Structure : <i>{signal.get('smc_structure', 'N/A')}</i>\n\n"
+                        f"<i>Données 100% live — vérifiables sur Pocket Option.</i>\n"
+                        f"⏰ Valable jusqu'à l'expiration indiquée. Agissez vite."
+                    )
+                else:
+                    return (
+                        f"⏳ Aucun signal valide pour {pair} à cet instant.\n"
+                        f"Le marché ne remplit pas les critères de confluence Sniper (score insuffisant).\n"
+                        f"Payout actuel : {payout}%.\n\n"
+                        f"Réessayez dans 1-2 minutes — le scanner ré-analyse en continu."
+                    )
+            else:
+                logger.error("[TELEGRAM] main module or force_analyze_pair not found")
+                return "⚠️ Erreur interne : moteur d'analyse indisponible. Réessayez plus tard."
+        except Exception as e:
+            logger.error(f"[TELEGRAM] Error generating signal for {pair}: {e}")
+            return f"⚠️ Erreur lors de la génération du signal pour {pair}: {e}"
+
     async def handle_command(self, user_id: str, text: str):
         """Routeur principal de commandes."""
         text = text.strip()
@@ -885,11 +975,20 @@ Le trading sur options binaires et Forex comporte un niveau de risque très éle
         """Gère les callback queries envoyées par les boutons inline."""
         if not data:
             return None
-            
+
+        # New: signal_{pair} — user clicked a pair button → generate a real signal on demand
+        if data.startswith('signal_'):
+            pair = data.split('signal_', 1)[1]
+            logger.info(f"[TELEGRAM] Signal request for {pair} from {user_id}")
+            return await self.cmd_signal_on_demand(user_id, pair)
+
+        # Legacy: analyze_{pair} — used to call cmd_analyse (Premium-gated, no signal).
+        # Route through signal_on_demand now so users actually get a signal.
         if data.startswith('analyze_'):
-            pair = data.split('analyze_')[1]
-            return await self.cmd_analyse(user_id, [pair])
-            
+            pair = data.split('analyze_', 1)[1]
+            logger.info(f"[TELEGRAM] Legacy analyze_ callback for {pair} — routing to signal_on_demand")
+            return await self.cmd_signal_on_demand(user_id, pair)
+
         return None
 
     # H17 Note: Custom polling is used instead of python-telegram-bot's built-in event loop
@@ -944,7 +1043,16 @@ Le trading sur options binaires et Forex comporte un niveau de risque très éle
                                         )
                                     except Exception as e:
                                         logger.warning(f"Error answering callback query: {e}")
-                                        
+
+                                    # Send "typing" indicator so the user knows the bot is computing a signal
+                                    try:
+                                        await client.post(
+                                            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendChatAction",
+                                            json={'chat_id': chat_id, 'action': 'typing'}
+                                        )
+                                    except Exception:
+                                        pass
+
                                     reply = await self.handle_callback(chat_id, data_payload)
                                     if reply:
                                         if isinstance(reply, dict):

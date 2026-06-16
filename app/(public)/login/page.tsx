@@ -46,17 +46,10 @@ export default function LoginPage() {
     }
   }, [isAuthenticated, isInitialized, router]);
 
+  // If store is initialized but auth state unclear, try to initialize
   useEffect(() => {
-    const token = typeof window !== 'undefined' ? localStorage.getItem('a2sniper_token') : null;
-    if (isInitialized && !isAuthenticated && token) {
+    if (isInitialized && !isAuthenticated) {
       initialize();
-      const timer = setTimeout(() => {
-        const currentToken = typeof window !== 'undefined' ? localStorage.getItem('a2sniper_token') : null;
-        if (!useAppStore.getState().isAuthenticated && currentToken) {
-          initialize();
-        }
-      }, 2000);
-      return () => clearTimeout(timer);
     }
   }, [isInitialized, isAuthenticated, initialize]);
 
@@ -69,6 +62,7 @@ export default function LoginPage() {
       const res = await fetch(`${apiUrl}/api/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({ email, password })
       });
 
@@ -85,13 +79,12 @@ export default function LoginPage() {
         toast.success('Signed in successfully! Welcome back, Sniper.', {
           duration: 3000,
         });
-        localStorage.setItem('a2sniper_token', data.token);
+        // Tokens are now in httpOnly cookies — no need to store in localStorage
+        // The proxy handles cookie management automatically
         const userData = data.user || {};
         // Fetch full profile from /api/auth/me to get is_admin and plan
         try {
-          const meRes = await fetch(`${apiUrl}/api/auth/me`, {
-            headers: { 'Authorization': `Bearer ${data.token}` }
-          });
+          const meRes = await fetch(`${apiUrl}/api/auth/me`, { credentials: 'include' });
           if (meRes.ok) {
             const fullUser = await meRes.json();
             setUser(fullUser);
@@ -147,6 +140,7 @@ export default function LoginPage() {
       const res = await fetch(`${apiUrl}/api/auth/forgot-password`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({ email: forgotEmail })
       });
       const data = await res.json();
@@ -171,6 +165,7 @@ export default function LoginPage() {
       const res = await fetch(`${apiUrl}/api/auth/verify-otp`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({ email: forgotEmail, otp_code: otpCode })
       });
       const data = await res.json();
@@ -200,6 +195,7 @@ export default function LoginPage() {
       const res = await fetch(`${apiUrl}/api/auth/reset-password`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({ email: forgotEmail, otp_code: otpCode, new_password: newPassword })
       });
       const data = await res.json();

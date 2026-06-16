@@ -22,9 +22,8 @@ export default function AdminUsersPage() {
     setIsLoading(true);
     try {
       const url = getApiUrl();
-      const token = typeof window !== 'undefined' ? localStorage.getItem('a2sniper_token') : null;
       const res = await fetch(`${url}/api/admin/users`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        credentials: 'include',
       });
       if (res.ok) {
         const data = await res.json();
@@ -44,10 +43,10 @@ export default function AdminUsersPage() {
   const updatePlan = async (userId: string, newPlan: string) => {
     try {
       const url = getApiUrl();
-      const token = typeof window !== 'undefined' ? localStorage.getItem('a2sniper_token') : null;
       const res = await fetch(`${url}/api/admin/users/${userId}/plan`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ plan: newPlan })
       });
       if (res.ok) {

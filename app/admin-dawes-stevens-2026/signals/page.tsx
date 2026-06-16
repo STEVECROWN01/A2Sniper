@@ -189,10 +189,9 @@ export default function AdminSignalsPage() {
   const confirmDelete = async (id: string) => {
     try {
       const url = getApiUrl();
-      const token = typeof window !== 'undefined' ? localStorage.getItem('a2sniper_token') : null;
       const res = await fetch(`${url}/api/admin/signals/${id}`, {
         method: 'DELETE',
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        credentials: 'include',
       });
       if (res.ok) {
         toast.success("Signal deleted successfully.");

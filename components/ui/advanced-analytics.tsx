@@ -56,13 +56,12 @@ export function AdvancedAnalytics({ timeframe = '24H' }: AdvancedAnalyticsProps)
       }
 
       const apiUrl = getApiUrl();
-      const token = typeof window !== 'undefined' ? localStorage.getItem('a2sniper_token') : null;
 
       // Fetch performance data from API
       const perfRes = await fetch(`${apiUrl}/api/performance?timeframe=${timeframe}`, {
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
-          ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
         },
       });
 

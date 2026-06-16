@@ -80,11 +80,7 @@ export default function DashboardPage() {
       try {
         const apiUrl = getApiUrl();
         const res = await fetch(`${apiUrl}/api/status`, {
-          headers: {
-            ...(typeof window !== 'undefined' && localStorage.getItem('a2sniper_token')
-              ? { 'Authorization': `Bearer ${localStorage.getItem('a2sniper_token')}` }
-              : {}),
-          },
+          credentials: 'include',
         });
         if (res.ok) {
           setSystemStatus('online');

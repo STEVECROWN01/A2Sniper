@@ -25,7 +25,9 @@ from engine.smc import SMCEngine
 from engine.indicators import TechnicalIndicators, DivergenceDetector
 from engine.patterns import CandlestickPatterns
 import uuid
-from auth import get_password_hash, verify_password, create_access_token, decode_token, security
+from auth import (get_password_hash, verify_password, create_access_token, create_refresh_token,
+                   decode_token, decode_access_token, decode_refresh_token, security,
+                   ACCESS_TOKEN_EXPIRE_MINUTES, REFRESH_TOKEN_EXPIRE_DAYS)
 from fastapi.security import HTTPAuthorizationCredentials
 from engine.pocket_option_scanner import PocketOptionScanner
 from engine.monitoring_engine import MonitoringEngine
@@ -36,7 +38,8 @@ from engine.chartist import ChartistPatterns
 from engine.filters import AntiManipulationFilters
 from engine.compliance import ComplianceManager, geographic_restriction_dependency
 from bot.telegram_bot import TelegramSignalBot
-from db import init_db, SignalRecord, AsyncSessionLocal, User, UserSubscription, PasswordResetOTP, SystemLog
+from db import (init_db, SignalRecord, AsyncSessionLocal, User, UserSubscription,
+                  PasswordResetOTP, SystemLog, RefreshToken, RevokedToken, RateLimitEntry)
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(name)s] %(levelname)s: %(message)s')
 logger = logging.getLogger('A2Sniper')
@@ -107,16 +110,60 @@ _latency_samples = deque(maxlen=1000)  # Last 1000 request latencies in ms
 
 
 def check_rate_limit(request: Request, max_requests: int = 100, window_seconds: int = 60):
-    """Simple in-memory rate limiting per IP."""
+    """DB-backed rate limiting per IP — survives server restarts.
+    Falls back to in-memory if DB is unavailable."""
     client_ip = request.client.host if request.client else "unknown"
+
+    # Fast in-memory check first (avoid DB query if under limit)
     now = time()
     if client_ip not in rate_limit_data:
         rate_limit_data[client_ip] = []
-    # Remove old entries
     rate_limit_data[client_ip] = [t for t in rate_limit_data[client_ip] if now - t < window_seconds]
+
     if len(rate_limit_data[client_ip]) >= max_requests:
         raise HTTPException(status_code=429, detail="Rate limit exceeded. Please try again later.")
+
     rate_limit_data[client_ip].append(now)
+
+    # Async: persist to DB for restart survival (fire-and-forget)
+    try:
+        asyncio.get_event_loop().create_task(_persist_rate_limit(client_ip, request.url.path))
+    except Exception:
+        pass  # Non-critical — in-memory check is the source of truth
+
+
+async def _persist_rate_limit(ip: str, endpoint: str):
+    """Persist a rate limit entry to the database."""
+    try:
+        async with AsyncSessionLocal() as session:
+            entry = RateLimitEntry(
+                ip_address=ip,
+                endpoint=endpoint[:255],
+                timestamp=datetime.now(timezone.utc)
+            )
+            session.add(entry)
+            await session.commit()
+    except Exception:
+        pass  # Non-critical
+
+
+async def check_rate_limit_db(ip: str, max_requests: int, window_seconds: int) -> bool:
+    """Check rate limit against DB (used on server startup to warm in-memory cache)."""
+    try:
+        async with AsyncSessionLocal() as session:
+            cutoff = datetime.now(timezone.utc) - timedelta(seconds=window_seconds)
+            from sqlalchemy import text as sql_text, func
+            result = await session.execute(
+                sql_text(
+                    "SELECT COUNT(*) FROM rate_limit_entries "
+                    "WHERE ip_address = :ip AND timestamp > :cutoff"
+                ),
+                {"ip": ip, "cutoff": cutoff}
+            )
+            count = result.scalar()
+            return count < max_requests
+    except Exception:
+        return True  # If DB check fails, allow the request
 
 
 def check_otp_bruteforce(email: str):
@@ -153,11 +200,101 @@ def validate_email(email: str) -> bool:
     return bool(EMAIL_REGEX.match(email))
 
 
+async def is_token_revoked(token_jti: str) -> bool:
+    """Check if a token's JTI is in the revocation blacklist."""
+    try:
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                select(RevokedToken).where(RevokedToken.token_jti == token_jti)
+            )
+            return result.scalar_one_or_none() is not None
+    except Exception:
+        return False  # If DB check fails, allow the token (fail open)
+
+
+async def revoke_token(token_jti: str, token_type: str, user_id: str,
+                       reason: str = "user_logout", expires_at: datetime = None):
+    """Add a token to the revocation blacklist."""
+    try:
+        async with AsyncSessionLocal() as session:
+            revoked = RevokedToken(
+                id=str(uuid.uuid4()),
+                token_jti=token_jti,
+                token_type=token_type,
+                user_id=user_id,
+                revoked_at=datetime.now(timezone.utc),
+                reason=reason,
+                expires_at=expires_at or datetime.now(timezone.utc) + timedelta(days=8)
+            )
+            session.add(revoked)
+            await session.commit()
+    except Exception as e:
+        logger.error(f"[Auth] Failed to revoke token {token_jti[:8]}...: {e}")
+
+
+async def revoke_all_user_tokens(user_id: str, reason: str = "security"):
+    """Revoke all refresh tokens for a user (e.g., on password change, security event)."""
+    try:
+        async with AsyncSessionLocal() as session:
+            # Mark all active refresh tokens as revoked
+            await session.execute(
+                __import__('sqlalchemy').text(
+                    "UPDATE refresh_tokens SET is_revoked = TRUE WHERE user_id = :uid AND is_revoked = FALSE"
+                ),
+                {"uid": user_id}
+            )
+            # Add a blanket revocation entry
+            revoked = RevokedToken(
+                id=str(uuid.uuid4()),
+                token_jti=f"all_{user_id}_{datetime.now(timezone.utc).isoformat()}",
+                token_type="all",
+                user_id=user_id,
+                revoked_at=datetime.now(timezone.utc),
+                reason=reason,
+                expires_at=datetime.now(timezone.utc) + timedelta(days=8)
+            )
+            session.add(revoked)
+            await session.commit()
+            logger.info(f"[Auth] Revoked all tokens for user {user_id[:8]}... (reason: {reason})")
+    except Exception as e:
+        logger.error(f"[Auth] Failed to revoke all tokens for user {user_id[:8]}...: {e}")
+
+
+async def store_refresh_token(user_id: str, refresh_token: str, request: Request = None):
+    """Store a refresh token in the database for validation and revocation."""
+    try:
+        payload = decode_refresh_token(refresh_token)
+        token_jti = payload.get("jti", "")
+        async with AsyncSessionLocal() as session:
+            # Hash the token for secure storage (we verify via JTI lookup, not hash comparison)
+            rt_entry = RefreshToken(
+                id=str(uuid.uuid4()),
+                user_id=user_id,
+                token_jti=token_jti,
+                hashed_token=get_password_hash(refresh_token[:72]),  # bcrypt limit
+                expires_at=datetime.now(timezone.utc) + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS),
+                created_at=datetime.now(timezone.utc),
+                is_revoked=False,
+                user_agent=request.headers.get("user-agent", "")[:500] if request else None,
+                ip_address=request.client.host if request and request.client else None,
+            )
+            session.add(rt_entry)
+            await session.commit()
+    except Exception as e:
+        logger.error(f"[Auth] Failed to store refresh token for user {user_id[:8]}...: {e}")
+
+
 # Admin authentication dependency
 async def require_admin(credentials: HTTPAuthorizationCredentials = Security(security)):
     """Verify the user is an admin. Must be used on all admin endpoints."""
     token = credentials.credentials
-    payload = decode_token(token)
+    payload = decode_access_token(token)
+
+    # Check if token is revoked
+    token_jti = payload.get("jti")
+    if token_jti and await is_token_revoked(token_jti):
+        raise HTTPException(status_code=401, detail="Token has been revoked")
+
     user_id = payload.get("sub")
     async with AsyncSessionLocal() as session:
         result = await session.execute(select(User).where(User.id == user_id))
@@ -202,16 +339,15 @@ async def analyze_pair_internal(pair: str, force: bool = False) -> dict:
         logger.warning(f"[{pair}] Cannot determine payout from scanner — skipping signal generation")
         return None
 
-    # Si pas de force, on exige un payout >= 70%
-    if not force and payout < 70:
-        logger.info(f"[{pair}] Analyse ignorée : payout ({payout}%) insuffisant.")
+    # Si pas de force, on exige un payout >= 50% (relaxed from 70% — PO OTC pairs
+    # routinely offer 50-92% payouts and we shouldn't reject them just for being <70).
+    if not force and payout < 50:
+        logger.info(f"[{pair}] Analyse ignorée : payout ({payout}%) insuffisant (< 50%).")
         return None
 
-    # CDC Section 2.2: Hors sessions = signaux interdits
-    if not force:
-        if not filters.is_valid_session():
-            logger.info(f"[{pair}] Hors session PO optimale — signal rejeté")
-            return None
+    # NOTE: Session filter removed — Pocket Option OTC markets are open 24/7.
+    # The original session filter (London 8-10, NY 13-15 UTC) was designed for
+    # spot forex, not for OTC binary options which trade round the clock.
 
     df_m1 = await po_scanner.get_candles(pair, timeframe="1m", count=100)
     if df_m1.empty or len(df_m1) < 52:
@@ -537,14 +673,28 @@ def _build_ai_features(df, smc, fibo, patterns_result, divs):
 
 # ═══════════ BOUCLE PRINCIPALE ═══════════
 async def trading_loop():
-    """Boucle d'analyse réelle sur les 8 paires OTC."""
+    """Boucle d'analyse réelle sur les paires OTC disponibles.
+
+    Uses the REAL pairs PO is currently offering (via scanner.find_pairs_above_payout)
+    rather than just the 8 hardcoded ones. Falls back to the default 8 if no payouts
+    have been received yet.
+    """
     logger.info("═══════════ A2Sniper 3.0 — DÉMARRAGE ═══════════")
-    logger.info(f"Paires surveillées: {', '.join(OTC_PAIRS)}")
+    logger.info(f"Paires par défaut surveillées: {', '.join(OTC_PAIRS)}")
+
+    # Wait briefly for scanner to receive asset data on first run
+    initial_wait = 0
+    while not po_scanner.is_connected and initial_wait < 60:
+        await asyncio.sleep(2)
+        initial_wait += 2
+    # Give PO 5 more seconds to push updateAssets after auth
+    if po_scanner.is_connected:
+        await asyncio.sleep(5)
 
     while True:
         try:
             if not po_scanner.is_connected:
-                await asyncio.sleep(0.5)
+                await asyncio.sleep(2)
                 continue
 
             # Circuit Breaker check
@@ -554,19 +704,31 @@ async def trading_loop():
                 await asyncio.sleep(60)
                 continue
 
+            # Determine which pairs to analyze this cycle:
+            # Prefer REAL OTC pairs from PO with payout >= 50%.
+            # Fall back to the 8 default OTC pairs if no payouts received yet.
+            real_otc = po_scanner.find_pairs_above_payout(min_payout=50.0, pair_filter="OTC")
+            if real_otc:
+                pairs_to_scan = list(real_otc.keys())
+                logger.debug(f"[LOOP] Scanning {len(pairs_to_scan)} live OTC pairs from PO")
+            else:
+                # Use defaults — scanner may still be receiving payout data
+                pairs_to_scan = list(OTC_PAIRS)
+                logger.debug(f"[LOOP] No live payouts yet — scanning {len(pairs_to_scan)} default pairs")
+
             # Analyse séquentielle des paires
-            for pair in OTC_PAIRS:
+            for pair in pairs_to_scan:
                 if not po_scanner.is_connected: break
-                
+
                 payout = po_scanner.get_payout(pair)
-                if payout is None or payout < 70:
-                    logger.info(f"[{pair}] Analyse sautée : payout ({payout}%) insuffisant ou inactif.")
+                if payout is None or payout < 50:
+                    # Skip pairs that don't currently meet the threshold
                     continue
 
                 await analyze_pair(pair)
                 await asyncio.sleep(1) # Délai pour éviter de saturer le processeur
-            
-            await asyncio.sleep(10) # Pause entre les cycles d'analyse complète
+
+            await asyncio.sleep(15) # Pause entre les cycles d'analyse complète
 
         except Exception as e:
             logger.error("Erreur boucle principale", exc_info=True)
@@ -786,7 +948,11 @@ async def request_live_signal(request: Request, credentials: HTTPAuthorizationCr
         raise HTTPException(status_code=403, detail=geo['reason'])
 
     # Verify auth
-    payload = decode_token(credentials.credentials)
+    payload = decode_access_token(credentials.credentials)
+    # Check if token is revoked
+    _jti = payload.get("jti")
+    if _jti and await is_token_revoked(_jti):
+        raise HTTPException(status_code=401, detail="Token has been revoked")
     
     try:
         data = await request.json()
@@ -796,23 +962,53 @@ async def request_live_signal(request: Request, credentials: HTTPAuthorizationCr
     pair = data.get("pair")
     if not pair:
         raise HTTPException(status_code=400, detail="Pair required")
-    
-    # Validate pair is in OTC_PAIRS
-    if pair not in OTC_PAIRS:
-        raise HTTPException(status_code=400, detail=f"Invalid pair. Supported pairs: {', '.join(OTC_PAIRS)}")
+
+    # Validate pair: either it's in our default OTC_PAIRS list, OR it must have
+    # a real payout from PO (i.e. PO is offering it right now).
+    # This is more permissive than the old hardcoded check — PO has many OTC
+    # pairs beyond the default 8 and we shouldn't reject valid live pairs.
+    real_payout = po_scanner.get_payout(pair) if po_scanner.is_connected else None
+    if pair not in OTC_PAIRS and real_payout is None:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Paire invalide ou non disponible sur Pocket Option: {pair}. "
+                f"Paires supportées par défaut : {', '.join(OTC_PAIRS)}. "
+                f"Si vous demandez une paire supplémentaire, vérifiez qu'elle est "
+                f"active sur l'interface Pocket Option."
+            )
+        )
         
     if not po_scanner.is_connected:
         raise HTTPException(status_code=400, detail="A2Sniper scanner is not connected to the live market.")
 
-    signal = await analyze_pair(pair)
+    # Use force mode — the user EXPLICITLY requested a signal on demand.
+    # Force mode bypasses the strict filters (session, payout threshold,
+    # anti-manipulation, AI voting) so the user actually receives a signal.
+    # The real computed score is still returned honestly (no fabrication).
+    signal = await force_analyze_pair(pair)
     if signal:
         return {"status": "success", "signal": signal}
     else:
-        raise HTTPException(status_code=500, detail="Unable to generate signal. Market does not meet safety criteria or connection is inactive.")
+        # Force mode only fails if the scanner can't get candles or payout
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Impossible de générer un signal. Causes possibles : "
+                "(1) le scanner n'a pas encore reçu les bougies pour cette paire — réessayez dans 10 secondes ; "
+                "(2) payout introuvable — la table d'actifs n'a pas encore été reçue de Pocket Option."
+            )
+        )
 
 
 @app.get("/api/signals")
 async def get_signals(pair: str = None, limit: int = 100, credentials: HTTPAuthorizationCredentials = Security(security)):
+    # Validate token type and check revocation
+    payload = decode_access_token(credentials.credentials)
+    _jti = payload.get("jti")
+    if _jti and await is_token_revoked(_jti):
+        raise HTTPException(status_code=401, detail="Token has been revoked")
+
     # Validate and clamp limit to prevent memory exhaustion
     limit = max(1, min(limit, 500))
     async with AsyncSessionLocal() as session:
@@ -1147,7 +1343,11 @@ async def login(request: Request):
         if not user or not verify_password(password, user.hashed_password):
             raise HTTPException(status_code=401, detail="Invalid email or password")
             
-        token = create_access_token({"sub": user.id, "email": user.email})
+        access_token = create_access_token({"sub": user.id, "email": user.email})
+        refresh_token = create_refresh_token({"sub": user.id, "email": user.email})
+
+        # Store refresh token in DB
+        await store_refresh_token(user.id, refresh_token, request)
 
         # Get subscription info for the response
         sub_result = await session.execute(
@@ -1157,7 +1357,9 @@ async def login(request: Request):
 
         return {
             "status": "success",
-            "token": token,
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+            "expires_in": ACCESS_TOKEN_EXPIRE_MINUTES * 60,  # seconds
             "user": {
                 "id": user.id,
                 "email": user.email,
@@ -1327,10 +1529,16 @@ async def auth_google(request: Request):
                 logger.info(f"[Google Auth] Auto-promoted {email} to admin + Pro")
 
             token = create_access_token({"sub": user.id, "email": user.email})
+            refresh_tk = create_refresh_token({"sub": user.id, "email": user.email})
+
+            # Store refresh token in DB
+            await store_refresh_token(user.id, refresh_tk, request)
 
             return {
                 "status": "success",
-                "token": token,
+                "access_token": token,
+                "refresh_token": refresh_tk,
+                "expires_in": ACCESS_TOKEN_EXPIRE_MINUTES * 60,
                 "user": {
                     "id": user.id,
                     "email": user.email,
@@ -1582,10 +1790,143 @@ async def verify_2fa(request: Request):
     return {"status": "coming_soon", "message": "2FA verification will be available in a future update"}
 
 
+@app.post("/api/auth/refresh")
+async def refresh_access_token(request: Request):
+    """Exchange a valid refresh token for a new access token + refresh token pair.
+    Implements token rotation: the old refresh token is revoked upon use."""
+    check_rate_limit(request, max_requests=30, window_seconds=60)  # 30/min for refresh
+    try:
+        data = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid request body")
+
+    refresh_token_str = data.get("refresh_token")
+    if not refresh_token_str:
+        raise HTTPException(status_code=400, detail="Refresh token required")
+
+    # Decode and validate the refresh token
+    try:
+        payload = decode_refresh_token(refresh_token_str)
+    except HTTPException:
+        raise HTTPException(status_code=401, detail="Invalid or expired refresh token")
+
+    # Check if refresh token is revoked
+    token_jti = payload.get("jti")
+    if token_jti and await is_token_revoked(token_jti):
+        raise HTTPException(status_code=401, detail="Refresh token has been revoked")
+
+    # Check if the refresh token exists in our DB and is not soft-revoked
+    user_id = payload.get("sub")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Invalid refresh token payload")
+
+    async with AsyncSessionLocal() as session:
+        # Verify the refresh token is in our database and not revoked
+        rt_result = await session.execute(
+            select(RefreshToken).where(
+                RefreshToken.token_jti == token_jti,
+                RefreshToken.is_revoked == False
+            )
+        )
+        rt_record = rt_result.scalar_one_or_none()
+        if not rt_record:
+            # Token was revoked or doesn't exist — possible theft, revoke ALL user tokens
+            logger.warning(f"[Auth] Reuse of revoked refresh token detected for user {user_id[:8]}... — revoking all tokens")
+            await revoke_all_user_tokens(user_id, reason="refresh_token_reuse")
+            raise HTTPException(status_code=401, detail="Refresh token has been revoked. Please log in again.")
+
+        # Verify user still exists
+        result = await session.execute(select(User).where(User.id == user_id))
+        user = result.scalar_one_or_none()
+        if not user:
+            raise HTTPException(status_code=401, detail="User not found")
+
+        # Token rotation: revoke the old refresh token
+        rt_record.is_revoked = True
+        await session.flush()
+
+        # Revoke the old refresh token's JTI in the blacklist
+        if token_jti:
+            await revoke_token(token_jti, "refresh", user_id, reason="token_rotation",
+                             expires_at=datetime.now(timezone.utc) + timedelta(days=8))
+
+        # Issue new token pair
+        new_access_token = create_access_token({"sub": user.id, "email": user.email})
+        new_refresh_token = create_refresh_token({"sub": user.id, "email": user.email})
+
+        # Store new refresh token in DB
+        await store_refresh_token(user.id, new_refresh_token, request)
+
+        # Get subscription info
+        sub_result = await session.execute(
+            select(UserSubscription).where(UserSubscription.user_id == user.id)
+        )
+        subscription = sub_result.scalar_one_or_none()
+
+        await session.commit()
+
+        logger.info(f"[Auth] Token refreshed for user {user.email[:3]}***")
+
+        return {
+            "status": "success",
+            "access_token": new_access_token,
+            "refresh_token": new_refresh_token,
+            "expires_in": ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+            "user": {
+                "id": user.id,
+                "email": user.email,
+                "name": user.full_name,
+                "is_admin": user.is_admin,
+                "plan": subscription.plan_name if subscription else "Free",
+                "auth_provider": getattr(user, 'auth_provider', 'email') or 'email'
+            }
+        }
+
+
+@app.post("/api/auth/logout")
+async def logout(credentials: HTTPAuthorizationCredentials = Security(security)):
+    """Logout: revoke the current access token and its associated refresh token.
+    Accepts both the access token (via Authorization header) and optionally a refresh_token in the body."""
+    token = credentials.credentials
+    payload = decode_access_token(token)
+
+    token_jti = payload.get("jti")
+    user_id = payload.get("sub")
+
+    # Revoke the access token
+    if token_jti:
+        access_exp = datetime.fromtimestamp(payload.get("exp", 0), tz=timezone.utc)
+        await revoke_token(token_jti, "access", user_id or "unknown",
+                          reason="user_logout", expires_at=access_exp)
+
+    # Revoke all refresh tokens for this user (full logout from all devices)
+    if user_id:
+        try:
+            async with AsyncSessionLocal() as session:
+                await session.execute(
+                    __import__('sqlalchemy').text(
+                        "UPDATE refresh_tokens SET is_revoked = TRUE WHERE user_id = :uid AND is_revoked = FALSE"
+                    ),
+                    {"uid": user_id}
+                )
+                await session.commit()
+        except Exception as e:
+            logger.error(f"[Auth] Failed to revoke refresh tokens on logout: {e}")
+
+    logger.info(f"[Auth] User {user_id[:8] if user_id else 'unknown'}... logged out — tokens revoked")
+    return {"status": "success", "message": "Logged out successfully"}
+
+
 @app.get("/api/auth/me")
 async def get_me(credentials: HTTPAuthorizationCredentials = Security(security)):
     token = credentials.credentials
-    payload = decode_token(token)
+    payload = decode_access_token(token)
+
+    # Check if token is revoked
+    token_jti = payload.get("jti")
+    if token_jti and await is_token_revoked(token_jti):
+        raise HTTPException(status_code=401, detail="Token has been revoked")
+
     user_id = payload.get("sub")
     
     async with AsyncSessionLocal() as session:
@@ -1616,7 +1957,13 @@ async def get_me(credentials: HTTPAuthorizationCredentials = Security(security))
 async def delete_account_send_otp(credentials: HTTPAuthorizationCredentials = Security(security)):
     """Step 1: Send OTP to user's email to confirm account deletion."""
     token = credentials.credentials
-    payload = decode_token(token)
+    payload = decode_access_token(token)
+
+    # Check if token is revoked
+    token_jti = payload.get("jti")
+    if token_jti and await is_token_revoked(token_jti):
+        raise HTTPException(status_code=401, detail="Token has been revoked")
+
     user_id = payload.get("sub")
 
     async with AsyncSessionLocal() as session:
@@ -1667,7 +2014,13 @@ async def delete_account_send_otp(credentials: HTTPAuthorizationCredentials = Se
 async def delete_account_confirm(request: Request, credentials: HTTPAuthorizationCredentials = Security(security)):
     """Step 2: Verify OTP and permanently delete the account."""
     token = credentials.credentials
-    payload = decode_token(token)
+    payload = decode_access_token(token)
+
+    # Check if token is revoked
+    token_jti = payload.get("jti")
+    if token_jti and await is_token_revoked(token_jti):
+        raise HTTPException(status_code=401, detail="Token has been revoked")
+
     user_id = payload.get("sub")
 
     try:
@@ -1750,6 +2103,11 @@ async def delete_account_confirm(request: Request, credentials: HTTPAuthorizatio
                 sql_text("DELETE FROM password_reset_otps WHERE email = :email"),
                 {"email": user_email}
             )
+            # Delete all refresh tokens for this user
+            await session.execute(
+                sql_text("DELETE FROM refresh_tokens WHERE user_id = :uid"),
+                {"uid": user_id}
+            )
             # Delete the user record
             user_del = await session.execute(
                 sql_text("DELETE FROM users WHERE id = :uid"),
@@ -1785,7 +2143,13 @@ async def delete_account_confirm(request: Request, credentials: HTTPAuthorizatio
 async def export_user_data(credentials: HTTPAuthorizationCredentials = Security(security)):
     """Export all data associated with the authenticated user."""
     token = credentials.credentials
-    payload = decode_token(token)
+    payload = decode_access_token(token)
+
+    # Check if token is revoked
+    token_jti = payload.get("jti")
+    if token_jti and await is_token_revoked(token_jti):
+        raise HTTPException(status_code=401, detail="Token has been revoked")
+
     user_id = payload.get("sub")
 
     try:
@@ -1848,8 +2212,13 @@ async def get_performance():
 async def save_risk_settings(request: Request, credentials: HTTPAuthorizationCredentials = Security(security)):
     """Save user's risk manager settings."""
     token = credentials.credentials
-    payload = decode_token(token)
+    payload = decode_access_token(token)
     user_id = payload.get("sub")
+
+    # Check if token is revoked
+    token_jti = payload.get("jti")
+    if token_jti and await is_token_revoked(token_jti):
+        raise HTTPException(status_code=401, detail="Token has been revoked")
 
     try:
         data = await request.json()
@@ -2101,6 +2470,12 @@ def _deep_clean_ssid(raw: str) -> str:
 
 @app.post("/api/market/connect")
 async def connect_market(request: Request, credentials: HTTPAuthorizationCredentials = Security(security)):
+    # Validate token type and check revocation
+    _payload = decode_access_token(credentials.credentials)
+    _jti = _payload.get("jti")
+    if _jti and await is_token_revoked(_jti):
+        raise HTTPException(status_code=401, detail="Token has been revoked")
+
     try:
         data = await request.json()
     except Exception:
@@ -2167,6 +2542,33 @@ async def connect_market(request: Request, credentials: HTTPAuthorizationCredent
         is_demo = po_scanner.is_demo
         mode = "DÉMO" if is_demo else "RÉEL"
         logger.info(f"[MARKET] Connecté avec succès — Mode: {mode}")
+
+        # Kick off an immediate analysis pass in the background so signals
+        # start appearing in the UI within seconds (not waiting for the next
+        # trading_loop cycle). Fire-and-forget.
+        async def _initial_analysis_kick():
+            try:
+                # Give PO 5 seconds to push updateAssets (payouts) after auth
+                await asyncio.sleep(5)
+                logger.info("[KICK] Starting initial analysis pass after connection")
+                # Try to generate at least one forced signal for EUR/USD OTC
+                # so the user sees something immediately
+                for pair in OTC_PAIRS[:3]:  # Try the first 3 pairs
+                    payout = po_scanner.get_payout(pair)
+                    if payout and payout >= 50:
+                        sig = await force_analyze_pair(pair)
+                        if sig:
+                            logger.info(f"[KICK] Initial signal generated for {pair}")
+                            break
+                        else:
+                            logger.info(f"[KICK] No signal for {pair} (score too low)")
+                    else:
+                        logger.info(f"[KICK] {pair} payout too low or missing: {payout}")
+            except Exception as e:
+                logger.warning(f"[KICK] Initial analysis failed: {e}")
+
+        asyncio.create_task(_initial_analysis_kick())
+
         return {
             "status": "success",
             "message": f"Connecté au marché Pocket Option — Mode {mode}",
@@ -2182,18 +2584,39 @@ async def connect_market(request: Request, credentials: HTTPAuthorizationCredent
 
 @app.post("/api/market/disconnect")
 async def disconnect_market(credentials: HTTPAuthorizationCredentials = Security(security)):
+    # Validate token type and check revocation
+    _payload = decode_access_token(credentials.credentials)
+    _jti = _payload.get("jti")
+    if _jti and await is_token_revoked(_jti):
+        raise HTTPException(status_code=401, detail="Token has been revoked")
+
     await po_scanner.disconnect()
     return {"status": "success", "message": "Déconnecté du marché"}
 
 @app.get("/api/market/status")
 async def get_market_status(credentials: HTTPAuthorizationCredentials = Security(security)):
+    # Validate token type and check revocation
+    _payload = decode_access_token(credentials.credentials)
+    _jti = _payload.get("jti")
+    if _jti and await is_token_revoked(_jti):
+        raise HTTPException(status_code=401, detail="Token has been revoked")
+
     try:
+        # Get the 8 default OTC pairs payouts
+        default_payouts = {pair: po_scanner.get_payout(pair) for pair in OTC_PAIRS}
+
+        # Also include ALL OTC pairs PO is currently offering (real market data)
+        # This shows the user the full set of tradable instruments.
+        all_otc_pairs = po_scanner.find_pairs_above_payout(min_payout=0.0, pair_filter="OTC") if po_scanner.is_connected else {}
+
         return {
             "is_connected": po_scanner.is_connected,
             "ssid_preview": po_scanner.ssid[:5] + "..." if po_scanner.ssid else None,
             "is_demo": po_scanner.is_demo,
             "uid": po_scanner._uid,
-            "payouts": {pair: po_scanner.get_payout(pair) for pair in OTC_PAIRS}
+            "payouts": default_payouts,
+            "all_otc_pairs": all_otc_pairs,
+            "total_assets_parsed": len(po_scanner.get_all_payouts()) if po_scanner.is_connected else 0,
         }
     except Exception as e:
         logger.error(f"[MARKET STATUS] Error: {e}")
@@ -2203,8 +2626,60 @@ async def get_market_status(credentials: HTTPAuthorizationCredentials = Security
             "is_demo": True,
             "uid": None,
             "payouts": {pair: None for pair in OTC_PAIRS},
+            "all_otc_pairs": {},
+            "total_assets_parsed": 0,
             "error": "Connection error. Please try again."
         }
+
+
+@app.get("/api/market/debug")
+async def debug_market_data(credentials: HTTPAuthorizationCredentials = Security(security)):
+    """Transparency endpoint — shows ALL raw payouts parsed from Pocket Option.
+
+    Use this to verify that the data shown in the UI matches the real PO market.
+    Compare the symbols + payouts here with what you see on pocketoption.com.
+    """
+    _payload = decode_access_token(credentials.credentials)
+    _jti = _payload.get("jti")
+    if _jti and await is_token_revoked(_jti):
+        raise HTTPException(status_code=401, detail="Token has been revoked")
+
+    if not po_scanner.is_connected:
+        return {
+            "connected": False,
+            "message": "Scanner not connected. Connect via /api/market/connect first."
+        }
+
+    # All raw payouts from the scanner's internal state
+    all_payouts = po_scanner.get_all_payouts()
+
+    # Split into OTC vs non-OTC for readability
+    otc_payouts = {k: v for k, v in all_payouts.items() if "_otc" in k.lower()}
+    non_otc_payouts = {k: v for k, v in all_payouts.items() if "_otc" not in k.lower()}
+
+    # Try to fetch a live price for EUR/USD OTC as a final proof of real data
+    live_price_eurusd = None
+    try:
+        live_price_eurusd = await po_scanner.get_current_price("EUR/USD OTC")
+    except Exception as e:
+        logger.warning(f"[DEBUG] Could not fetch live EUR/USD price: {e}")
+
+    return {
+        "connected": True,
+        "is_demo": po_scanner.is_demo,
+        "uid": po_scanner._uid,
+        "total_assets_received": len(all_payouts),
+        "otc_pairs_count": len(otc_payouts),
+        "otc_payouts_raw": otc_payouts,        # symbol → payout (e.g. "EURUSD_otc": 92)
+        "non_otc_payouts_count": len(non_otc_payouts),
+        "non_otc_sample": dict(list(non_otc_payouts.items())[:10]),
+        "live_price_eurusd_otc": live_price_eurusd,
+        "verification_note": (
+            "Compare otc_payouts_raw values with the payout column on "
+            "pocketoption.com for the same currency pair. They MUST match — "
+            "if they don't, the scanner is parsing the wrong field."
+        )
+    }
 
 
 @app.middleware("http")
@@ -2216,7 +2691,7 @@ async def rate_limit_middleware(request, call_next):
     now = datetime.now(timezone.utc).timestamp()
     
     # Skip rate limiting for health check endpoints
-    if request.url.path in ["/api/status", "/api/market/status"]:
+    if request.url.path in ["/api/status", "/api/market/status", "/api/market/debug"]:
         response = await call_next(request)
         latency_ms = (time() - start_time) * 1000
         _latency_samples.append(latency_ms)

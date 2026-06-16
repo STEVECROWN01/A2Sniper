@@ -7,7 +7,7 @@ import os
 import logging
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import declarative_base, sessionmaker
-from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, JSON, Numeric, ForeignKey
+from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, JSON, Numeric, ForeignKey, Index
 from sqlalchemy.orm import relationship
 
 logger = logging.getLogger(__name__)
@@ -124,7 +124,60 @@ class DeletedAccount(Base):
     deleted_at = Column(DateTime(timezone=True), nullable=False)
     deletion_reason = Column(String, default="user_requested")  # "user_requested", "admin_forced"
 
-# OTP brute force tracking
+
+class RefreshToken(Base):
+    """Persistent refresh tokens for JWT authentication. Survives server restarts."""
+    __tablename__ = "refresh_tokens"
+
+    id = Column(String, primary_key=True, index=True)
+    user_id = Column(String, index=True, nullable=False)
+    token_jti = Column(String, unique=True, index=True, nullable=False)  # JWT ID for targeted revocation
+    hashed_token = Column(String, nullable=False)  # Hashed refresh token for verification
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False)
+    is_revoked = Column(Boolean, default=False, index=True)  # Soft-revoke flag
+    # Device/browser info for user visibility
+    user_agent = Column(String, nullable=True)
+    ip_address = Column(String, nullable=True)
+
+    __table_args__ = (
+        Index('ix_refresh_tokens_user_active', 'user_id', 'is_revoked'),
+    )
+
+
+class RevokedToken(Base):
+    """Token blacklist — both access and refresh tokens can be revoked here."""
+    __tablename__ = "revoked_tokens"
+
+    id = Column(String, primary_key=True, index=True)
+    token_jti = Column(String, unique=True, index=True, nullable=False)  # JWT ID
+    token_type = Column(String, nullable=False)  # "access" or "refresh"
+    user_id = Column(String, index=True, nullable=False)
+    revoked_at = Column(DateTime(timezone=True), nullable=False)
+    reason = Column(String, default="user_logout")  # "user_logout", "security", "password_change", "admin_revoke"
+    expires_at = Column(DateTime(timezone=True), nullable=False)  # When the token naturally expires (for cleanup)
+
+    __table_args__ = (
+        Index('ix_revoked_tokens_jti', 'token_jti'),
+        Index('ix_revoked_tokens_expires', 'expires_at'),
+    )
+
+
+class RateLimitEntry(Base):
+    """Persistent rate limit tracking — survives server restarts."""
+    __tablename__ = "rate_limit_entries"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    ip_address = Column(String, index=True, nullable=False)
+    endpoint = Column(String, nullable=False)  # e.g., "login", "register", "global"
+    timestamp = Column(DateTime(timezone=True), nullable=False, index=True)
+
+    __table_args__ = (
+        Index('ix_rate_limit_ip_timestamp', 'ip_address', 'timestamp'),
+    )
+
+
+# OTP brute force tracking (in-memory, with DB fallback)
 otp_attempt_tracker = {}  # {email: {"count": int, "last_attempt": datetime}}
 
 async def get_db():
@@ -245,6 +298,8 @@ async def init_db():
                     logger.info("[DB] Migration: Backfilled auth_provider for existing Google OAuth users")
 
                 logger.info("[DB] Schema migration check completed.")
+        except Exception as e:
+            logger.warning(f"[DB] Schema migration check failed (non-fatal): {e}")
 
         # Ensure purpose column exists on password_reset_otps
         try:
@@ -290,3 +345,105 @@ async def init_db():
         except Exception as e:
             logger.warning(f"[DB] Migration for deleted_accounts table failed (non-fatal): {e}")
 
+        # Ensure new security tables exist (refresh_tokens, revoked_tokens, rate_limit_entries)
+        for table_name, create_sql in [
+            ("refresh_tokens", """
+                CREATE TABLE IF NOT EXISTS refresh_tokens (
+                    id VARCHAR PRIMARY KEY,
+                    user_id VARCHAR NOT NULL,
+                    token_jti VARCHAR UNIQUE NOT NULL,
+                    hashed_token VARCHAR NOT NULL,
+                    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+                    created_at TIMESTAMP WITH TIME ZONE NOT NULL,
+                    is_revoked BOOLEAN DEFAULT FALSE,
+                    user_agent VARCHAR,
+                    ip_address VARCHAR
+                )
+            """),
+            ("revoked_tokens", """
+                CREATE TABLE IF NOT EXISTS revoked_tokens (
+                    id VARCHAR PRIMARY KEY,
+                    token_jti VARCHAR UNIQUE NOT NULL,
+                    token_type VARCHAR NOT NULL,
+                    user_id VARCHAR NOT NULL,
+                    revoked_at TIMESTAMP WITH TIME ZONE NOT NULL,
+                    reason VARCHAR DEFAULT 'user_logout',
+                    expires_at TIMESTAMP WITH TIME ZONE NOT NULL
+                )
+            """),
+            ("rate_limit_entries", """
+                CREATE TABLE IF NOT EXISTS rate_limit_entries (
+                    id SERIAL PRIMARY KEY,
+                    ip_address VARCHAR NOT NULL,
+                    endpoint VARCHAR NOT NULL,
+                    timestamp TIMESTAMP WITH TIME ZONE NOT NULL
+                )
+            """),
+        ]:
+            try:
+                async with engine.begin() as conn:
+                    await conn.execute(__import__('sqlalchemy').text(create_sql))
+                    # Create indexes if they don't exist
+                    index_sqls = {
+                        "refresh_tokens": [
+                            "CREATE INDEX IF NOT EXISTS ix_refresh_tokens_user_active ON refresh_tokens (user_id, is_revoked)",
+                            "CREATE INDEX IF NOT EXISTS ix_refresh_tokens_jti ON refresh_tokens (token_jti)",
+                        ],
+                        "revoked_tokens": [
+                            "CREATE INDEX IF NOT EXISTS ix_revoked_tokens_jti ON revoked_tokens (token_jti)",
+                            "CREATE INDEX IF NOT EXISTS ix_revoked_tokens_expires ON revoked_tokens (expires_at)",
+                        ],
+                        "rate_limit_entries": [
+                            "CREATE INDEX IF NOT EXISTS ix_rate_limit_ip_timestamp ON rate_limit_entries (ip_address, timestamp)",
+                        ],
+                    }
+                    for idx_sql in index_sqls.get(table_name, []):
+                        try:
+                            await conn.execute(__import__('sqlalchemy').text(idx_sql))
+                        except Exception:
+                            pass  # Index may already exist
+                    logger.info(f"[DB] Migration: Ensured {table_name} table exists")
+            except Exception as e:
+                logger.warning(f"[DB] Migration for {table_name} table failed (non-fatal): {e}")
+
+    # Clean up expired rate limit entries on startup (older than 2 hours)
+    try:
+        async with AsyncSessionLocal() as session:
+            from sqlalchemy import text as sql_text
+            cutoff = datetime.now(timezone.utc) - timedelta(hours=2)
+            await session.execute(
+                sql_text("DELETE FROM rate_limit_entries WHERE timestamp < :cutoff"),
+                {"cutoff": cutoff}
+            )
+            await session.commit()
+            logger.info("[DB] Cleaned up expired rate limit entries")
+    except Exception as e:
+        logger.warning(f"[DB] Rate limit cleanup failed (non-fatal): {e}")
+
+    # Clean up expired revoked tokens on startup
+    try:
+        async with AsyncSessionLocal() as session:
+            from sqlalchemy import text as sql_text
+            cutoff = datetime.now(timezone.utc)
+            await session.execute(
+                sql_text("DELETE FROM revoked_tokens WHERE expires_at < :cutoff"),
+                {"cutoff": cutoff}
+            )
+            await session.commit()
+            logger.info("[DB] Cleaned up expired revoked tokens")
+    except Exception as e:
+        logger.warning(f"[DB] Revoked tokens cleanup failed (non-fatal): {e}")
+
+    # Clean up expired refresh tokens on startup
+    try:
+        async with AsyncSessionLocal() as session:
+            from sqlalchemy import text as sql_text
+            cutoff = datetime.now(timezone.utc)
+            await session.execute(
+                sql_text("DELETE FROM refresh_tokens WHERE expires_at < :cutoff"),
+                {"cutoff": cutoff}
+            )
+            await session.commit()
+            logger.info("[DB] Cleaned up expired refresh tokens")
+    except Exception as e:
+        logger.warning(f"[DB] Refresh tokens cleanup failed (non-fatal): {e}")
