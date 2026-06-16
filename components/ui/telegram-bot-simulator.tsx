@@ -87,7 +87,22 @@ const ChartBackground = () => {
 // A2Sniper signals expire on the next 1m or 5m candle boundary, so the
 // countdown tells the user how long they have to click before the current
 // opportunity closes.
-function PairRow({ pair, onClick }: { pair: { symbol: string; name?: string; payout: number }, onClick: () => void }) {
+//
+// Payout display follows PO's UI conventions:
+//   - Active pair:   "+92%" (with plus sign — matches PO UI exactly)
+//   - Inactive pair: "N/A"  (pair is greyed-out on PO UI, not tradable right now)
+function PairRow({
+  pair,
+  onClick
+}: {
+  pair: {
+    symbol: string;
+    name?: string;
+    payout: number | null;
+    isActive?: boolean;
+  },
+  onClick: () => void
+}) {
   const [secondsLeft, setSecondsLeft] = useState(0);
 
   useEffect(() => {
@@ -102,6 +117,17 @@ function PairRow({ pair, onClick }: { pair: { symbol: string; name?: string; pay
     return () => clearInterval(timer);
   }, []);
 
+  // Determine pair status — payout=null OR isActive=false means INACTIVE (N/A on PO UI)
+  const isActive = pair.isActive !== false && pair.payout !== null && pair.payout !== undefined;
+  const payoutDisplay = isActive ? `+${Math.round(pair.payout as number)}%` : 'N/A';
+
+  // Color: green if active & high payout, yellow if active & low, gray if inactive
+  const payoutColor = !isActive
+    ? 'text-gray-500'
+    : (pair.payout as number) >= 70
+      ? 'text-green-400'
+      : 'text-yellow-400';
+
   // Color: green if >30s, yellow if 15-30s, red if <15s (urgency indicator)
   const timeColor = secondsLeft > 30
     ? 'text-green-400'
@@ -114,21 +140,32 @@ function PairRow({ pair, onClick }: { pair: { symbol: string; name?: string; pay
   return (
     <button
       onClick={onClick}
-      className="w-full flex items-center justify-between p-3.5 bg-black/60 hover:bg-[#D4AF37]/20 border border-gray-800 hover:border-[#D4AF37]/50 rounded-2xl transition-all group relative overflow-hidden"
+      disabled={!isActive}
+      className={`w-full flex items-center justify-between p-3.5 border rounded-2xl transition-all group relative overflow-hidden ${
+        isActive
+          ? 'bg-black/60 hover:bg-[#D4AF37]/20 border-gray-800 hover:border-[#D4AF37]/50'
+          : 'bg-black/30 border-gray-900 opacity-60 cursor-not-allowed'
+      }`}
     >
-      <div className="absolute inset-0 bg-gradient-to-r from-[#D4AF37]/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+      {isActive && (
+        <div className="absolute inset-0 bg-gradient-to-r from-[#D4AF37]/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+      )}
       <div className="relative z-10 flex flex-col items-start">
-        <span className="text-xs font-black text-white group-hover:text-[#D4AF37] transition-colors">{pair.symbol}</span>
+        <span className={`text-xs font-black transition-colors ${
+          isActive ? 'text-white group-hover:text-[#D4AF37]' : 'text-gray-500'
+        }`}>{pair.symbol}</span>
         <span className={`text-[8px] font-bold uppercase tracking-tighter ${timeColor}`}>
-          ⏱ Next signal in {mmss}
+          {isActive ? `⏱ Next signal in ${mmss}` : '🚫 Inactive on PO'}
         </span>
       </div>
       <div className="relative z-10 flex items-center gap-3">
         <div className="text-right">
-          <p className="text-[10px] text-green-400 font-black">{pair.payout}%</p>
+          <p className={`text-[10px] font-black ${payoutColor}`}>{payoutDisplay}</p>
           <p className="text-[8px] text-gray-600 font-bold uppercase">Payout</p>
         </div>
-        <ChevronRight className="w-4 h-4 text-gray-600 group-hover:text-[#D4AF37] transition-all group-hover:translate-x-1" />
+        {isActive && (
+          <ChevronRight className="w-4 h-4 text-gray-600 group-hover:text-[#D4AF37] transition-all group-hover:translate-x-1" />
+        )}
       </div>
     </button>
   );
@@ -245,18 +282,53 @@ export function TelegramBotSimulator() {
     if (!marketInfo || !marketInfo.isConnected || !marketInfo.payouts) {
       return [];
     }
-    // Show all OTC pairs with payout >= 50% (matches backend threshold).
-    // Previously this was >= 70% which hid many valid PO pairs.
-    return Object.entries(marketInfo.payouts)
-      .filter(([_, payout]) => payout !== null && payout >= 50)
-      .map(([symbol]) => {
-        const pairObj = tradingPairs.find(tp => tp.symbol === symbol);
-        return {
-          symbol,
-          name: pairObj ? pairObj.name : symbol,
-          payout: marketInfo.payouts[symbol] || 0
-        };
+    // Show all OTC pairs. Inactive pairs (payout=null) show as "N/A" (matches PO UI).
+    // Active pairs with payout >= 50 are shown by default; inactive defaults are
+    // also shown so the user sees that PO has them greyed-out.
+    const pairStatus = (marketInfo as any).pair_status || {};
+    const allOtcs = (marketInfo as any).all_otc_pairs || {};
+
+    // Build a combined list: default 8 OTC pairs (with their is_active status) +
+    // any additional active OTC pairs PO is currently offering.
+    const seenSymbols = new Set<string>();
+    const result: Array<{ symbol: string; name?: string; payout: number | null; isActive: boolean }> = [];
+
+    // 1. Default 8 pairs — always show (active = green payout, inactive = N/A)
+    for (const symbol of Object.keys(marketInfo.payouts)) {
+      if (seenSymbols.has(symbol)) continue;
+      seenSymbols.add(symbol);
+      const status = pairStatus[symbol] || {};
+      const isActive = status.is_active !== false && marketInfo.payouts[symbol] !== null;
+      const pairObj = tradingPairs.find(tp => tp.symbol === symbol);
+      result.push({
+        symbol,
+        name: pairObj ? pairObj.name : symbol,
+        payout: isActive ? (marketInfo.payouts[symbol] ?? null) : null,
+        isActive,
       });
+    }
+
+    // 2. Additional active OTC pairs (not in default 8) — these have real payouts
+    for (const [symbol, payout] of Object.entries(allOtcs)) {
+      if (seenSymbols.has(symbol)) continue;
+      if (payout === null || payout === undefined) continue;
+      seenSymbols.add(symbol);
+      const pairObj = tradingPairs.find(tp => tp.symbol === symbol);
+      result.push({
+        symbol,
+        name: pairObj ? pairObj.name : symbol,
+        payout: payout as number,
+        isActive: true,
+      });
+    }
+
+    // Sort: active first (by payout desc), inactive at the bottom
+    result.sort((a, b) => {
+      if (a.isActive !== b.isActive) return a.isActive ? -1 : 1;
+      return (b.payout ?? 0) - (a.payout ?? 0);
+    });
+
+    return result;
   }, [marketInfo]);
 
   const scrollToBottom = () => {

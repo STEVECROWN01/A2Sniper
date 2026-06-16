@@ -77,7 +77,11 @@ class PocketOptionScanner:
         self._is_authenticated = False
         self._sid = None  # Socket.IO session ID
         self._uid = None
-        self._payouts = {}  # asset -> payout%
+        # Payout store: maps symbol -> {"payout": float, "is_active": bool, "updated_at": iso}
+        # PO sends the FULL asset list (including greyed-out / inactive pairs) on every
+        # updateAssets event. We MUST track is_active separately so we can show "N/A"
+        # for inactive pairs (matching PO's UI behaviour) instead of stale payouts.
+        self._payouts = {}  # symbol -> {"payout": float, "is_active": bool, "updated_at": str}
         self._candles_cache = {}  # asset -> DataFrame
         self._receive_task = None
         self._ping_task = None
@@ -510,29 +514,51 @@ class PocketOptionScanner:
             logger.debug(f"[SCANNER] Binary data parse error: {e}")
 
     async def _parse_assets_list(self, assets: list):
-        """Parse assets from Pocket Option's updateAssets payload.
+        """Parse assets from Pocket Option's `updateAssets` payload.
 
-        Real Pocket Option asset format (the array inside each asset entry):
-        Index → Meaning
-          0  → asset id (int)
-          1  → asset/symbol string (e.g. "EURUSD_otc", "#AAPL")
-          2  → display name (e.g. "EUR/USD OTC")
-          3  → type/category (e.g. "currency", "stock", "crypto")
-          4  → investment type id (int)
-          5  → payout percent (int 0..100)
+        Verified field layout (from real 183-asset snapshot — source:
+        ChipaDevTeam/PocketOptionAPI example_payouts.json + lordralinc/pocket_option):
+        Each asset entry is a positional array with 19 fields:
+          Index → Field
+            0   → id (int)
+            1   → symbol (str, e.g. "EURUSD_otc", "#AAPL")
+            2   → label/display name (str, e.g. "EUR/USD OTC")
+            3   → type (str, e.g. "currency", "stock", "crypto")
+            4   → precision (int, decimal places)
+            5   → payout (int, 0..92 — percentage; PO caps at 92%)
+            6   → min_duration (int, seconds)
+            7   → max_duration (int, seconds)
+            8   → step_duration (int, seconds)
+            9   → volatility_index (int; 0=real market, 1=OTC/synthetic)
+           10   → linked_id (int, ID of OTC counterpart)
+           11   → leverage (int)
+           12   → extra_data (list)
+           13   → expire_time (int, unix timestamp — session expiry)
+           14   → is_active (bool) ← FALSE = greyed out / "N/A" in PO UI
+           15   → timeframes (list of dicts)
+           16   → start_time (int, unix timestamp; -1 = N/A)
+           17   → default_timeframe (int, seconds)
+           18   → status_code (int, unix timestamp)
 
-        Some PO servers may swap fields, so we parse defensively and log a
-        sample so we can verify the format on first connect.
+        CRITICAL: PO keeps stale payout values in the payload for greyed-out
+        (inactive) pairs. We MUST read is_active at index [14] and only treat
+        a payout as "live" when is_active=True. Otherwise our payouts won't
+        match what PO shows in the UI (PO hides inactive pairs / shows "N/A").
         """
         count = 0
+        active_count = 0
+        inactive_count = 0
         try:
             # Log a sample so we can verify the format matches our parser
             if assets and isinstance(assets[0], list):
                 sample = assets[0]
-                logger.info(f"[SCANNER] updateAssets sample (len={len(sample)}): {sample[:10]}")
+                logger.info(f"[SCANNER] updateAssets sample (len={len(sample)}): {sample[:19]}")
+
+            now_iso = datetime.now(timezone.utc).isoformat()
 
             for asset_info in assets:
-                if not isinstance(asset_info, list) or len(asset_info) < 6:
+                if not isinstance(asset_info, list) or len(asset_info) < 15:
+                    # Need at least 15 fields to read is_active at index 14
                     continue
 
                 # Symbol is at index 1 — must be a non-empty string
@@ -540,36 +566,72 @@ class PocketOptionScanner:
                 if not isinstance(symbol, str) or not symbol:
                     continue
 
-                # Payout is at index 5 — must be a positive number 1..100
-                # (PO sends payout as integer percent; some servers send fractional 0..1)
+                # Payout is at index 5 (verified against real PO data)
                 payout_raw = asset_info[5] if len(asset_info) > 5 else None
-                if not isinstance(payout_raw, (int, float)) or payout_raw <= 0:
+                if not isinstance(payout_raw, (int, float)) or payout_raw < 0:
                     continue
 
                 payout = float(payout_raw)
                 # If payout looks like a fraction (0..1), convert to percent
-                if payout <= 1.0:
+                if 0 < payout <= 1.0:
                     payout = payout * 100.0
 
-                # Sanity: payout must be in a reasonable range
-                if 1 <= payout <= 100:
-                    self._payouts[symbol] = payout
-                    count += 1
+                # Sanity: PO caps payouts at 92% (verified). Anything > 92
+                # suggests we're reading the wrong field — skip it.
+                if not (0 <= payout <= 92):
+                    continue
+
+                # is_active is at index 14 (verified) — FALSE = greyed out / N/A
+                is_active_raw = asset_info[14] if len(asset_info) > 14 else True
+                # Be defensive: PO uses bool, but some servers may send 0/1 or strings
+                if isinstance(is_active_raw, bool):
+                    is_active = is_active_raw
+                elif isinstance(is_active_raw, (int, float)):
+                    is_active = bool(is_active_raw)
+                elif isinstance(is_active_raw, str):
+                    is_active = is_active_raw.lower() in ("true", "1", "yes", "active")
+                else:
+                    is_active = True  # Default to active if we can't tell
+
+                # Store EVERYTHING (including inactive payouts) so we can distinguish
+                # "this pair is inactive right now" from "we never received this pair".
+                # Callers (get_payout, get_all_payouts, etc.) will filter on is_active.
+                self._payouts[symbol] = {
+                    "payout": payout,
+                    "is_active": is_active,
+                    "updated_at": now_iso,
+                }
+                count += 1
+                if is_active:
+                    active_count += 1
+                else:
+                    inactive_count += 1
 
             if count > 0:
-                # Log OTC forex samples so the user can compare with the PO UI
-                otc_items = [(k, v) for k, v in self._payouts.items() if "_otc" in k.lower()][:8]
+                # Log OTC forex samples split by active/inactive so user can verify
+                # against PO's UI (active pairs show payout, inactive show N/A).
+                active_otc_items = [
+                    (k, v["payout"]) for k, v in self._payouts.items()
+                    if "_otc" in k.lower() and v["is_active"]
+                ][:8]
+                inactive_otc_items = [
+                    (k, v["payout"]) for k, v in self._payouts.items()
+                    if "_otc" in k.lower() and not v["is_active"]
+                ][:8]
                 logger.info(
-                    f"[SCANNER] Parsed {count} asset payouts. "
-                    f"OTC samples: {dict(otc_items)}"
+                    f"[SCANNER] updateAssets parsed: {count} total "
+                    f"({active_count} active, {inactive_count} inactive). "
+                    f"Active OTC samples: {dict(active_otc_items)}. "
+                    f"Inactive OTC samples (N/A on PO): {dict(inactive_otc_items)}"
                 )
         except Exception as e:
-            logger.error(f"[SCANNER] Asset list parse error: {e}")
+            logger.error(f"[SCANNER] Asset list parse error: {e}", exc_info=True)
 
     async def _parse_assets_dict(self, data: dict):
-        """Parse assets from Pocket Option's dict format."""
+        """Parse assets from Pocket Option's dict format (legacy fallback)."""
         try:
             assets = data.get("assets", data.get("data", []))
+            now_iso = datetime.now(timezone.utc).isoformat()
             if isinstance(assets, list):
                 for asset in assets:
                     if isinstance(asset, dict):
@@ -577,9 +639,16 @@ class PocketOptionScanner:
                         payout = asset.get("payout", None)
                         if symbol and payout is not None:
                             p = float(payout)
-                            if p <= 1.0:
+                            if 0 < p <= 1.0:
                                 p = p * 100.0
-                            self._payouts[symbol] = p
+                            # Cap at 92% (PO's verified max)
+                            if 0 <= p <= 92:
+                                is_active = asset.get("is_active", asset.get("active", True))
+                                self._payouts[symbol] = {
+                                    "payout": p,
+                                    "is_active": bool(is_active),
+                                    "updated_at": now_iso,
+                                }
             if self._payouts:
                 logger.info(f"[SCANNER] Parsed {len(self._payouts)} asset payouts from dict data")
         except Exception as e:
@@ -616,24 +685,38 @@ class PocketOptionScanner:
                 logger.error(f"[SCANNER] updateAssets parse error: {e}")
             return
 
-        # Payout update
+        # Payout update (incremental — PO may send these between full updateAssets snapshots)
         if event_name == "payout" or event_name == "payoutChange":
             try:
                 if event_data:
                     payout_data = event_data[0] if isinstance(event_data[0], list) else event_data
+                    now_iso = datetime.now(timezone.utc).isoformat()
                     if isinstance(payout_data, list):
                         for item in payout_data:
                             if isinstance(item, dict) and "asset" in item and "payout" in item:
                                 p = float(item["payout"])
-                                if p <= 1.0:
+                                if 0 < p <= 1.0:
                                     p = p * 100.0
-                                self._payouts[item["asset"]] = p
+                                if 0 <= p <= 92:
+                                    # Preserve existing is_active, default True
+                                    existing = self._payouts.get(item["asset"], {})
+                                    self._payouts[item["asset"]] = {
+                                        "payout": p,
+                                        "is_active": existing.get("is_active", item.get("is_active", True)),
+                                        "updated_at": now_iso,
+                                    }
                     elif isinstance(payout_data, dict):
                         if "asset" in payout_data and "payout" in payout_data:
                             p = float(payout_data["payout"])
-                            if p <= 1.0:
+                            if 0 < p <= 1.0:
                                 p = p * 100.0
-                            self._payouts[payout_data["asset"]] = p
+                            if 0 <= p <= 92:
+                                existing = self._payouts.get(payout_data["asset"], {})
+                                self._payouts[payout_data["asset"]] = {
+                                    "payout": p,
+                                    "is_active": existing.get("is_active", payout_data.get("is_active", True)),
+                                    "updated_at": now_iso,
+                                }
             except Exception as e:
                 logger.debug(f"[SCANNER] Payout parse error: {e}")
             return
@@ -792,7 +875,7 @@ class PocketOptionScanner:
             return float(df['close'].iloc[-1])
         return None
 
-    def get_payout(self, pair: str) -> Optional[float]:
+    def get_payout(self, pair: str, active_only: bool = True) -> Optional[float]:
         """Get the current payout for a pair — STRICT lookup, no fuzzy matching.
 
         PO uses symbol formats like:
@@ -801,6 +884,11 @@ class PocketOptionScanner:
           "#AAPL_otc" for OTC stocks
         We convert "EUR/USD OTC" → "EURUSD_otc" and do an EXACT lookup.
         No partial match — partial matching was returning wrong payouts.
+
+        Args:
+            pair: Display name like "EUR/USD OTC" or PO symbol like "EURUSD_otc"
+            active_only: If True, return None for inactive (greyed-out / N/A) pairs.
+                         Set False to get the last known payout even if inactive.
         """
         if not self._is_authenticated:
             return None
@@ -822,37 +910,114 @@ class PocketOptionScanner:
         ])
 
         # Exact-match lookup across all candidates
+        match_symbol = None
         for candidate in candidates:
             if candidate and candidate in self._payouts:
-                return self._payouts[candidate]
+                match_symbol = candidate
+                break
 
-        # Case-insensitive exact-match fallback (some PO servers use different casing)
-        pair_lower = pair.lower()
-        for symbol, payout in self._payouts.items():
+        # Case-insensitive exact-match fallback
+        if not match_symbol:
+            pair_lower = pair.lower()
+            for symbol in self._payouts.keys():
+                if symbol.lower() == base_lower.lower():
+                    match_symbol = symbol
+                    break
+
+        if not match_symbol:
+            logger.debug(
+                f"[SCANNER] No exact payout match for '{pair}'. "
+                f"Available symbols sample: {list(self._payouts.keys())[:10]}"
+            )
+            return None
+
+        entry = self._payouts[match_symbol]
+        if active_only and not entry.get("is_active", True):
+            # Pair is currently greyed out / N/A on PO — return None to signal that
+            logger.info(f"[SCANNER] '{pair}' (symbol='{match_symbol}') is INACTIVE on PO — returning None (N/A)")
+            return None
+        return entry.get("payout")
+
+    def get_pair_status(self, pair: str) -> Optional[dict]:
+        """Get full status info for a pair: payout + is_active + updated_at.
+        Returns None if pair not found in PO's asset list.
+        """
+        if not self._is_authenticated:
+            return None
+
+        candidates = []
+        base = pair.replace('/', '').replace(' ', '_')
+        base_lower = base.replace('_OTC', '_otc')
+        candidates.extend([
+            base_lower, base_lower.lower(), base,
+            base.replace('_OTC', ''), base_lower.replace('_otc', ''),
+            f"#{base_lower}", pair,
+        ])
+
+        for candidate in candidates:
+            if candidate and candidate in self._payouts:
+                return {"symbol": candidate, **self._payouts[candidate]}
+
+        # Case-insensitive fallback
+        for symbol, entry in self._payouts.items():
             if symbol.lower() == base_lower.lower():
-                return payout
-
-        # No match found — return None (DO NOT do partial match — too dangerous)
-        logger.debug(
-            f"[SCANNER] No exact payout match for '{pair}'. "
-            f"Available symbols sample: {list(self._payouts.keys())[:10]}"
-        )
+                return {"symbol": symbol, **entry}
         return None
 
-    def get_all_payouts(self) -> dict:
-        """Return ALL parsed payouts directly from PO (for transparency/debug)."""
-        return dict(self._payouts)
+    def get_all_payouts(self, active_only: bool = False) -> dict:
+        """Return ALL parsed payouts directly from PO.
 
-    def find_pairs_above_payout(self, min_payout: float = 70.0, pair_filter: str = "OTC") -> dict:
-        """Find all pairs with payout >= min_payout. Useful for showing real market opportunities."""
+        Args:
+            active_only: If True, only return payouts for pairs where is_active=True
+                         (i.e. pairs that are NOT greyed-out on PO UI). Default False
+                         for transparency/debug.
+        Returns:
+            dict mapping symbol -> payout (float)  [backward-compatible with old API]
+        """
+        if active_only:
+            return {k: v["payout"] for k, v in self._payouts.items() if v.get("is_active", True)}
+        return {k: v["payout"] for k, v in self._payouts.items()}
+
+    def get_all_payouts_detailed(self) -> dict:
+        """Return full payout info including is_active flag.
+        Returns:
+            dict mapping symbol -> {"payout": float, "is_active": bool, "updated_at": str}
+        """
+        return {k: dict(v) for k, v in self._payouts.items()}
+
+    def find_pairs_above_payout(self, min_payout: float = 70.0, pair_filter: str = "OTC",
+                                 active_only: bool = True) -> dict:
+        """Find all pairs with payout >= min_payout.
+
+        Args:
+            min_payout: Minimum payout threshold (e.g. 70.0)
+            pair_filter: Filter symbols by this substring (e.g. "OTC")
+            active_only: If True (default), exclude inactive/greyed-out pairs.
+                         This matches PO's UI behaviour where N/A pairs aren't tradable.
+        """
         result = {}
-        for symbol, payout in self._payouts.items():
+        for symbol, entry in self._payouts.items():
+            payout = entry.get("payout", 0)
+            is_active = entry.get("is_active", True)
+            if active_only and not is_active:
+                continue  # Skip greyed-out pairs (matches PO UI)
             if payout >= min_payout:
                 if pair_filter and pair_filter.upper() in symbol.upper():
-                    # Convert "EURUSD_otc" → "EUR/USD OTC" for display
                     display = self._symbol_to_display(symbol)
                     result[display] = payout
         return result
+
+    @staticmethod
+    def format_payout(payout: Optional[float]) -> str:
+        """Format a payout value for display — matches PO's UI format.
+        PO shows payouts as '+92%' (with the plus sign).
+        Returns 'N/A' if payout is None (pair is inactive/greyed-out).
+        """
+        if payout is None:
+            return "N/A"
+        if not isinstance(payout, (int, float)):
+            return "N/A"
+        return f"+{payout:.0f}%"
 
     @staticmethod
     def _symbol_to_display(symbol: str) -> str:

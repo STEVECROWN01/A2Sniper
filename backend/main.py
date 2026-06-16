@@ -2610,12 +2610,27 @@ async def get_market_status(credentials: HTTPAuthorizationCredentials = Security
         raise HTTPException(status_code=401, detail="Token has been revoked")
 
     try:
-        # Get the 8 default OTC pairs payouts
+        # Get the 8 default OTC pairs payouts (None if pair is inactive/N/A on PO)
         default_payouts = {pair: po_scanner.get_payout(pair) for pair in OTC_PAIRS}
 
-        # Also include ALL OTC pairs PO is currently offering (real market data)
-        # This shows the user the full set of tradable instruments.
-        all_otc_pairs = po_scanner.find_pairs_above_payout(min_payout=0.0, pair_filter="OTC") if po_scanner.is_connected else {}
+        # Also include ALL active OTC pairs PO is currently offering (real market data)
+        # active_only=True ensures we don't show greyed-out/N/A pairs (matches PO UI)
+        all_otc_pairs = po_scanner.find_pairs_above_payout(min_payout=0.0, pair_filter="OTC", active_only=True) if po_scanner.is_connected else {}
+
+        # Also expose is_active status for the default 8 pairs so the UI can show "N/A"
+        # for inactive pairs instead of a stale payout
+        default_pair_status = {}
+        if po_scanner.is_connected:
+            for pair in OTC_PAIRS:
+                status = po_scanner.get_pair_status(pair)
+                if status:
+                    default_pair_status[pair] = {
+                        "payout": status["payout"] if status["is_active"] else None,
+                        "is_active": status["is_active"],
+                        "display": po_scanner.format_payout(status["payout"]) if status["is_active"] else "N/A",
+                    }
+                else:
+                    default_pair_status[pair] = {"payout": None, "is_active": False, "display": "N/A"}
 
         return {
             "is_connected": po_scanner.is_connected,
@@ -2623,6 +2638,7 @@ async def get_market_status(credentials: HTTPAuthorizationCredentials = Security
             "is_demo": po_scanner.is_demo,
             "uid": po_scanner._uid,
             "payouts": default_payouts,
+            "pair_status": default_pair_status,
             "all_otc_pairs": all_otc_pairs,
             "total_assets_parsed": len(po_scanner.get_all_payouts()) if po_scanner.is_connected else 0,
         }
@@ -2634,6 +2650,7 @@ async def get_market_status(credentials: HTTPAuthorizationCredentials = Security
             "is_demo": True,
             "uid": None,
             "payouts": {pair: None for pair in OTC_PAIRS},
+            "pair_status": {pair: {"payout": None, "is_active": False, "display": "N/A"} for pair in OTC_PAIRS},
             "all_otc_pairs": {},
             "total_assets_parsed": 0,
             "error": "Connection error. Please try again."
@@ -2642,10 +2659,16 @@ async def get_market_status(credentials: HTTPAuthorizationCredentials = Security
 
 @app.get("/api/market/debug")
 async def debug_market_data(credentials: HTTPAuthorizationCredentials = Security(security)):
-    """Transparency endpoint — shows ALL raw payouts parsed from Pocket Option.
+    """Transparency endpoint — shows ALL raw payouts + is_active status from PO.
 
-    Use this to verify that the data shown in the UI matches the real PO market.
-    Compare the symbols + payouts here with what you see on pocketoption.com.
+    Use this to verify that the data shown in the UI matches the real PO market:
+      1. ACTIVE pairs (is_active=true) → compare payout with PO's UI (shows "+92%" etc.)
+      2. INACTIVE pairs (is_active=false) → these show "N/A" (greyed out) in PO's UI
+         and we should NOT display a payout for them in our UI.
+
+    PO sends the full asset list (including inactive/greyed-out pairs) on every
+    updateAssets event. The is_active flag (index [14] in the asset array) tells
+    us which pairs are currently tradable vs greyed-out.
     """
     _payload = decode_access_token(credentials.credentials)
     _jti = _payload.get("jti")
@@ -2658,12 +2681,29 @@ async def debug_market_data(credentials: HTTPAuthorizationCredentials = Security
             "message": "Scanner not connected. Connect via /api/market/connect first."
         }
 
-    # All raw payouts from the scanner's internal state
-    all_payouts = po_scanner.get_all_payouts()
+    # Get detailed payouts (including is_active flag)
+    detailed = po_scanner.get_all_payouts_detailed()
 
-    # Split into OTC vs non-OTC for readability
-    otc_payouts = {k: v for k, v in all_payouts.items() if "_otc" in k.lower()}
-    non_otc_payouts = {k: v for k, v in all_payouts.items() if "_otc" not in k.lower()}
+    # Split into OTC vs non-OTC, and active vs inactive
+    active_otc = {}      # symbol -> payout  (these match PO's UI payouts)
+    inactive_otc = {}    # symbol -> last known payout  (these show "N/A" on PO)
+    active_non_otc = {}
+    inactive_non_otc = {}
+
+    for symbol, info in detailed.items():
+        payout = info.get("payout", 0)
+        is_active = info.get("is_active", True)
+        is_otc = "_otc" in symbol.lower()
+        if is_active:
+            if is_otc:
+                active_otc[symbol] = payout
+            else:
+                active_non_otc[symbol] = payout
+        else:
+            if is_otc:
+                inactive_otc[symbol] = payout
+            else:
+                inactive_non_otc[symbol] = payout
 
     # Try to fetch a live price for EUR/USD OTC as a final proof of real data
     live_price_eurusd = None
@@ -2672,20 +2712,47 @@ async def debug_market_data(credentials: HTTPAuthorizationCredentials = Security
     except Exception as e:
         logger.warning(f"[DEBUG] Could not fetch live EUR/USD price: {e}")
 
+    # Also show the status of major pairs (active/inactive + payout) for easy verification
+    major_pairs_status = {}
+    for pair in ["EUR/USD OTC", "GBP/USD OTC", "USD/JPY OTC", "USD/CHF OTC",
+                  "AUD/USD OTC", "USD/CAD OTC", "NZD/USD OTC", "EUR/GBP OTC",
+                  "EUR/JPY OTC", "GBP/JPY OTC"]:
+        status = po_scanner.get_pair_status(pair)
+        if status:
+            major_pairs_status[pair] = {
+                "symbol": status["symbol"],
+                "payout": status["payout"],
+                "is_active": status["is_active"],
+                "display": po_scanner.format_payout(status["payout"]) if status["is_active"] else "N/A",
+                "updated_at": status.get("updated_at"),
+            }
+        else:
+            major_pairs_status[pair] = {"symbol": None, "payout": None, "is_active": False, "display": "N/A"}
+
     return {
         "connected": True,
         "is_demo": po_scanner.is_demo,
         "uid": po_scanner._uid,
-        "total_assets_received": len(all_payouts),
-        "otc_pairs_count": len(otc_payouts),
-        "otc_payouts_raw": otc_payouts,        # symbol → payout (e.g. "EURUSD_otc": 92)
-        "non_otc_payouts_count": len(non_otc_payouts),
-        "non_otc_sample": dict(list(non_otc_payouts.items())[:10]),
+        "total_assets_received": len(detailed),
+        "otc_pairs_count": len(active_otc) + len(inactive_otc),
+        "active_otc_count": len(active_otc),
+        "inactive_otc_count": len(inactive_otc),
+        # Active OTC pairs — these are TRADABLE right now (compare with PO UI)
+        "active_otc_payouts": active_otc,
+        # Inactive OTC pairs — these show "N/A" on PO UI (DO NOT trade these)
+        "inactive_otc_payouts": inactive_otc,
+        # Sample of non-OTC pairs (stocks, crypto, etc.)
+        "active_non_otc_sample": dict(list(active_non_otc.items())[:10]),
+        "inactive_non_otc_sample": dict(list(inactive_non_otc.items())[:10]),
+        # Major forex pairs — easy to verify against PO UI
+        "major_pairs_status": major_pairs_status,
         "live_price_eurusd_otc": live_price_eurusd,
         "verification_note": (
-            "Compare otc_payouts_raw values with the payout column on "
-            "pocketoption.com for the same currency pair. They MUST match — "
-            "if they don't, the scanner is parsing the wrong field."
+            "1. Compare 'major_pairs_status' payouts with what PO shows for the same pair "
+            "(should match exactly: '+92%', '+47%', etc.). "
+            "2. Pairs where is_active=false are GREYED OUT on PO UI (show 'N/A') — "
+            "we should not display a payout for them either. "
+            "3. Payouts update every 30-60s when PO sends a new updateAssets snapshot."
         )
     }
 

@@ -78,6 +78,10 @@ interface AppState {
   marketInfo: {
     isConnected: boolean;
     payouts: Record<string, number | null>;
+    // pair_status maps each pair name -> {payout, is_active, display}
+    // is_active=false means the pair is currently greyed-out/N/A on PO's UI
+    pair_status?: Record<string, { payout: number | null; is_active: boolean; display: string }>;
+    all_otc_pairs?: Record<string, number>;
   } | null;
   isInitialized: boolean;
   clockOffset: number;
@@ -393,7 +397,11 @@ export const useAppStore = create<AppState>((set, get) => ({
         // PO is currently offering, with its real payout.
         const defaultPayouts: Record<string, number | null> = data.payouts || {};
         const allOtcPairs: Record<string, number> = data.all_otc_pairs || {};
+        const pairStatus: Record<string, { payout: number | null; is_active: boolean; display: string }> =
+          data.pair_status || {};
+
         // Merge — all_otc_pairs values take priority (they are the live values)
+        // Pairs in pair_status with is_active=false will have payout=null in defaultPayouts
         const mergedPayouts: Record<string, number | null> = { ...defaultPayouts };
         for (const [pair, payout] of Object.entries(allOtcPairs)) {
           mergedPayouts[pair] = payout;
@@ -404,6 +412,8 @@ export const useAppStore = create<AppState>((set, get) => ({
           marketInfo: {
             isConnected: isNowLive,
             payouts: mergedPayouts,
+            pair_status: pairStatus,
+            all_otc_pairs: allOtcPairs,
           }
         });
 
