@@ -60,7 +60,7 @@ class SignalRecord(Base):
     score = Column(Integer)  # CDC Section 7: confluence score out of 10
     payout = Column(Integer)
     classification = Column(String)
-    timestamp = Column(DateTime)
+    timestamp = Column(DateTime(timezone=True))
     is_win = Column(Boolean, nullable=True)
     analysis_details = Column(JSON)
     hash_signature = Column(String)
@@ -94,7 +94,7 @@ class SystemLog(Base):
     __tablename__ = "system_logs"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    timestamp = Column(DateTime)
+    timestamp = Column(DateTime(timezone=True))
     level = Column(String)
     module = Column(String)
     message = Column(String)
@@ -106,8 +106,8 @@ class PasswordResetOTP(Base):
     id = Column(String, primary_key=True, index=True)
     email = Column(String, index=True, nullable=False)
     otp_code = Column(String, index=True, nullable=False)  # Added index for OTP lookups
-    expires_at = Column(DateTime, nullable=False)
-    created_at = Column(DateTime)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    created_at = Column(DateTime(timezone=True))
     purpose = Column(String, default="password_reset")  # "password_reset", "registration", "account_deletion"
 
 class DeletedAccount(Base):
@@ -251,6 +251,21 @@ async def init_db():
                         "ALTER TABLE users ADD COLUMN created_at TIMESTAMP WITH TIME ZONE"
                     ))
                     logger.info("[DB] Migration: Added created_at column to users table")
+                else:
+                    # Column exists — ensure it's WITH TIME ZONE (was originally naive)
+                    tz_result = await conn.execute(
+                        __import__('sqlalchemy').text(
+                            "SELECT data_type FROM information_schema.columns "
+                            "WHERE table_name='users' AND column_name='created_at'"
+                        )
+                    )
+                    tz_row = tz_result.fetchone()
+                    if tz_row and tz_row[0] != "timestamp with time zone":
+                        await conn.execute(__import__('sqlalchemy').text(
+                            "ALTER TABLE users ALTER COLUMN created_at "
+                            "TYPE TIMESTAMP WITH TIME ZONE USING created_at AT TIME ZONE 'UTC'"
+                        ))
+                        logger.info("[DB] Migration: Changed users.created_at to TIMESTAMP WITH TIME ZONE")
 
                 # Add full_name column if missing
                 result = await conn.execute(
@@ -317,6 +332,48 @@ async def init_db():
                     logger.info("[DB] Migration: Added purpose column to password_reset_otps table")
         except Exception as e:
             logger.warning(f"[DB] Migration for purpose column failed (non-fatal): {e}")
+
+        # Ensure password_reset_otps.expires_at and created_at are TIMESTAMP WITH TIME ZONE
+        # (was originally declared without timezone, causing "can't subtract offset-naive and
+        #  offset-aware datetimes" errors when code passes tz-aware datetimes)
+        try:
+            async with engine.begin() as conn:
+                for col in ("expires_at", "created_at"):
+                    result = await conn.execute(
+                        __import__('sqlalchemy').text(
+                            f"SELECT data_type FROM information_schema.columns "
+                            f"WHERE table_name='password_reset_otps' AND column_name='{col}'"
+                        )
+                    )
+                    row = result.fetchone()
+                    if row and row[0] != "timestamp with time zone":
+                        await conn.execute(__import__('sqlalchemy').text(
+                            f"ALTER TABLE password_reset_otps ALTER COLUMN {col} "
+                            f"TYPE TIMESTAMP WITH TIME ZONE USING {col} AT TIME ZONE 'UTC'"
+                        ))
+                        logger.info(f"[DB] Migration: Changed password_reset_otps.{col} to TIMESTAMP WITH TIME ZONE")
+        except Exception as e:
+            logger.warning(f"[DB] Migration for password_reset_otps timestamp tz failed (non-fatal): {e}")
+
+        # Same fix for signal_records.timestamp and system_logs.timestamp
+        try:
+            async with engine.begin() as conn:
+                for table_name, col in [("signal_records", "timestamp"), ("system_logs", "timestamp")]:
+                    result = await conn.execute(
+                        __import__('sqlalchemy').text(
+                            f"SELECT data_type FROM information_schema.columns "
+                            f"WHERE table_name='{table_name}' AND column_name='{col}'"
+                        )
+                    )
+                    row = result.fetchone()
+                    if row and row[0] != "timestamp with time zone":
+                        await conn.execute(__import__('sqlalchemy').text(
+                            f"ALTER TABLE {table_name} ALTER COLUMN {col} "
+                            f"TYPE TIMESTAMP WITH TIME ZONE USING {col} AT TIME ZONE 'UTC'"
+                        ))
+                        logger.info(f"[DB] Migration: Changed {table_name}.{col} to TIMESTAMP WITH TIME ZONE")
+        except Exception as e:
+            logger.warning(f"[DB] Migration for signal_logs timestamp tz failed (non-fatal): {e}")
 
         # Ensure deleted_accounts table exists
         try:
