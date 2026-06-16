@@ -89,8 +89,10 @@ const ChartBackground = () => {
 // opportunity closes.
 //
 // Payout display follows PO's UI conventions:
-//   - Active pair:   "+92%" (with plus sign — matches PO UI exactly)
-//   - Inactive pair: "N/A"  (pair is greyed-out on PO UI, not tradable right now)
+//   - All pairs shown here are ACTIVE on PO with payout ≥ 70%
+//   - Payout is displayed as "+92%" (with plus sign — matches PO UI exactly)
+//   - Inactive pairs are EXCLUDED entirely from the upstream data,
+//     so this component never receives an inactive pair.
 function PairRow({
   pair,
   onClick
@@ -98,7 +100,7 @@ function PairRow({
   pair: {
     symbol: string;
     name?: string;
-    payout: number | null;
+    payout: number;
     isActive?: boolean;
   },
   onClick: () => void
@@ -117,16 +119,14 @@ function PairRow({
     return () => clearInterval(timer);
   }, []);
 
-  // Determine pair status — payout=null OR isActive=false means INACTIVE (N/A on PO UI)
-  const isActive = pair.isActive !== false && pair.payout !== null && pair.payout !== undefined;
-  const payoutDisplay = isActive ? `+${Math.round(pair.payout as number)}%` : 'N/A';
+  // Pair is always active (upstream filter ensures this) — payout is always ≥ 70%
+  const isActive = true;
+  const payoutDisplay = `+${Math.round(pair.payout)}%`;
 
-  // Color: green if active & high payout, yellow if active & low, gray if inactive
-  const payoutColor = !isActive
-    ? 'text-gray-500'
-    : (pair.payout as number) >= 70
-      ? 'text-green-400'
-      : 'text-yellow-400';
+  // Color: green if payout ≥ 85%, yellow if 70-84% (still above threshold)
+  const payoutColor = pair.payout >= 85
+    ? 'text-green-400'
+    : 'text-yellow-400';
 
   // Color: green if >30s, yellow if 15-30s, red if <15s (urgency indicator)
   const timeColor = secondsLeft > 30
@@ -282,33 +282,33 @@ export function TelegramBotSimulator() {
     if (!marketInfo || !marketInfo.isConnected || !marketInfo.payouts) {
       return [];
     }
-    // Show all OTC pairs. Inactive pairs (payout=null) show as "N/A" (matches PO UI).
-    // Active pairs with payout >= 50 are shown by default; inactive defaults are
-    // also shown so the user sees that PO has them greyed-out.
+    // Backend now only returns ACTIVE pairs with payout ≥ 70%.
+    // Inactive pairs and pairs below the threshold are EXCLUDED entirely
+    // (we never display them — they're simply not in the marketInfo object).
+    // All pairs shown here are guaranteed to be active and tradable right now.
     const pairStatus = (marketInfo as any).pair_status || {};
     const allOtcs = (marketInfo as any).all_otc_pairs || {};
 
-    // Build a combined list: default 8 OTC pairs (with their is_active status) +
-    // any additional active OTC pairs PO is currently offering.
+    // Build a list of tradable pairs (all are active + payout ≥ 70% by construction)
     const seenSymbols = new Set<string>();
-    const result: Array<{ symbol: string; name?: string; payout: number | null; isActive: boolean }> = [];
+    const result: Array<{ symbol: string; name?: string; payout: number; isActive: boolean }> = [];
 
-    // 1. Default 8 pairs — always show (active = green payout, inactive = N/A)
+    // 1. Default OTC pairs that meet the criteria (active + ≥ 70%)
     for (const symbol of Object.keys(marketInfo.payouts)) {
       if (seenSymbols.has(symbol)) continue;
       seenSymbols.add(symbol);
-      const status = pairStatus[symbol] || {};
-      const isActive = status.is_active !== false && marketInfo.payouts[symbol] !== null;
+      const payout = marketInfo.payouts[symbol];
+      if (payout === null || payout === undefined) continue;
       const pairObj = tradingPairs.find(tp => tp.symbol === symbol);
       result.push({
         symbol,
         name: pairObj ? pairObj.name : symbol,
-        payout: isActive ? (marketInfo.payouts[symbol] ?? null) : null,
-        isActive,
+        payout: payout as number,
+        isActive: true,
       });
     }
 
-    // 2. Additional active OTC pairs (not in default 8) — these have real payouts
+    // 2. Additional active OTC pairs (not in default 8) — also active + ≥ 70%
     for (const [symbol, payout] of Object.entries(allOtcs)) {
       if (seenSymbols.has(symbol)) continue;
       if (payout === null || payout === undefined) continue;
@@ -322,11 +322,8 @@ export function TelegramBotSimulator() {
       });
     }
 
-    // Sort: active first (by payout desc), inactive at the bottom
-    result.sort((a, b) => {
-      if (a.isActive !== b.isActive) return a.isActive ? -1 : 1;
-      return (b.payout ?? 0) - (a.payout ?? 0);
-    });
+    // Sort by payout descending (highest payout first)
+    result.sort((a, b) => b.payout - a.payout);
 
     return result;
   }, [marketInfo]);

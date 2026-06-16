@@ -339,10 +339,11 @@ async def analyze_pair_internal(pair: str, force: bool = False) -> dict:
         logger.warning(f"[{pair}] Cannot determine payout from scanner — skipping signal generation")
         return None
 
-    # Si pas de force, on exige un payout >= 50% (relaxed from 70% — PO OTC pairs
-    # routinely offer 50-92% payouts and we shouldn't reject them just for being <70).
-    if not force and payout < 50:
-        logger.info(f"[{pair}] Analyse ignorée : payout ({payout}%) insuffisant (< 50%).")
+    # Payout threshold: only generate signals for pairs with payout >= 70%.
+    # This matches the user requirement: only consider active pairs with payout ≥ 70%.
+    # Pairs with payout < 70% are ignored entirely (not fetched, not displayed).
+    if not force and payout < 70:
+        logger.info(f"[{pair}] Analyse ignorée : payout ({payout}%) insuffisant (< 70%).")
         return None
 
     # NOTE: Session filter removed — Pocket Option OTC markets are open 24/7.
@@ -705,9 +706,9 @@ async def trading_loop():
                 continue
 
             # Determine which pairs to analyze this cycle:
-            # Prefer REAL OTC pairs from PO with payout >= 50%.
-            # Fall back to the 8 default OTC pairs if no payouts received yet.
-            real_otc = po_scanner.find_pairs_above_payout(min_payout=50.0, pair_filter="OTC")
+            # Only REAL OTC pairs from PO that are ACTIVE with payout >= 70%.
+            # Pairs below this threshold are excluded entirely (user requirement).
+            real_otc = po_scanner.find_pairs_above_payout(min_payout=70.0, pair_filter="OTC", active_only=True)
             if real_otc:
                 pairs_to_scan = list(real_otc.keys())
                 logger.debug(f"[LOOP] Scanning {len(pairs_to_scan)} live OTC pairs from PO")
@@ -721,8 +722,8 @@ async def trading_loop():
                 if not po_scanner.is_connected: break
 
                 payout = po_scanner.get_payout(pair)
-                if payout is None or payout < 50:
-                    # Skip pairs that don't currently meet the threshold
+                if payout is None or payout < 70:
+                    # Skip pairs that don't currently meet the threshold (active + ≥ 70%)
                     continue
 
                 await analyze_pair(pair)
@@ -963,28 +964,44 @@ async def request_live_signal(request: Request, credentials: HTTPAuthorizationCr
     if not pair:
         raise HTTPException(status_code=400, detail="Pair required")
 
-    # Validate pair: either it's in our default OTC_PAIRS list, OR it must have
-    # a real payout from PO (i.e. PO is offering it right now).
-    # This is more permissive than the old hardcoded check — PO has many OTC
-    # pairs beyond the default 8 and we shouldn't reject valid live pairs.
-    real_payout = po_scanner.get_payout(pair) if po_scanner.is_connected else None
-    if pair not in OTC_PAIRS and real_payout is None:
+    # Validate pair: must be ACTIVE on PO AND have payout >= 70%.
+    # Inactive pairs and pairs with payout < 70% are rejected entirely
+    # (matching user requirement: only consider active pairs with payout ≥ 70%).
+    # If the scanner isn't connected, we can't verify, so reject.
+    if not po_scanner.is_connected:
+        raise HTTPException(
+            status_code=400,
+            detail="A2Sniper scanner is not connected to the live market. Please connect first."
+        )
+
+    real_payout = po_scanner.get_payout(pair)
+    if real_payout is None:
+        # get_payout returns None when pair is inactive (greyed-out on PO) OR not found.
+        # In both cases, the pair is not currently tradable — reject it.
         raise HTTPException(
             status_code=400,
             detail=(
-                f"Paire invalide ou non disponible sur Pocket Option: {pair}. "
-                f"Paires supportées par défaut : {', '.join(OTC_PAIRS)}. "
-                f"Si vous demandez une paire supplémentaire, vérifiez qu'elle est "
-                f"active sur l'interface Pocket Option."
+                f"Paire non disponible sur Pocket Option: {pair}. "
+                f"La paire est soit inactive (grisée sur PO), soit inexistante. "
+                f"Utilisez /api/market/status pour voir la liste des paires actuellement "
+                f"actives avec un payout ≥ 70%."
             )
         )
-        
-    if not po_scanner.is_connected:
-        raise HTTPException(status_code=400, detail="A2Sniper scanner is not connected to the live market.")
+
+    if real_payout < 70:
+        # Pair is active but payout is below the profitability threshold.
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Paire {pair} a un payout de {real_payout:.0f}% (< 70%). "
+                f"Le système ne considère que les paires avec payout ≥ 70%. "
+                f"Réessayez plus tard lorsque PO augmentera le payout de cette paire."
+            )
+        )
 
     # Use force mode — the user EXPLICITLY requested a signal on demand.
-    # Force mode bypasses the strict filters (session, payout threshold,
-    # anti-manipulation, AI voting) so the user actually receives a signal.
+    # Force mode bypasses the strict filters (session, anti-manipulation,
+    # AI voting) so the user actually receives a signal.
     # The real computed score is still returned honestly (no fabrication).
     signal = await force_analyze_pair(pair)
     if signal:
@@ -2563,7 +2580,7 @@ async def connect_market(request: Request, credentials: HTTPAuthorizationCredent
                 # so the user sees something immediately
                 for pair in OTC_PAIRS[:3]:  # Try the first 3 pairs
                     payout = po_scanner.get_payout(pair)
-                    if payout and payout >= 50:
+                    if payout and payout >= 70:
                         sig = await force_analyze_pair(pair)
                         if sig:
                             logger.info(f"[KICK] Initial signal generated for {pair}")
@@ -2610,39 +2627,45 @@ async def get_market_status(credentials: HTTPAuthorizationCredentials = Security
         raise HTTPException(status_code=401, detail="Token has been revoked")
 
     try:
-        # Get the 8 default OTC pairs payouts (None if pair is inactive/N/A on PO)
-        default_payouts = {pair: po_scanner.get_payout(pair) for pair in OTC_PAIRS}
+        # ONLY fetch active OTC pairs with payout >= 70% — inactive pairs are
+        # EXCLUDED entirely (not displayed, not used for signals). The asset
+        # refresh loop polls PO every 30s so this list reflects what PO
+        # currently offers as tradable.
+        all_otc_pairs = po_scanner.find_pairs_above_payout(
+            min_payout=70.0, pair_filter="OTC", active_only=True
+        ) if po_scanner.is_connected else {}
 
-        # Also include ALL active OTC pairs PO is currently offering (real market data)
-        # active_only=True ensures we don't show greyed-out/N/A pairs (matches PO UI)
-        all_otc_pairs = po_scanner.find_pairs_above_payout(min_payout=0.0, pair_filter="OTC", active_only=True) if po_scanner.is_connected else {}
-
-        # Also expose is_active status for the default 8 pairs so the UI can show "N/A"
-        # for inactive pairs instead of a stale payout
+        # Also expose per-default-pair status (only for active ones with payout ≥ 70%).
+        # Inactive defaults are NOT included — they simply don't appear.
         default_pair_status = {}
         if po_scanner.is_connected:
             for pair in OTC_PAIRS:
                 status = po_scanner.get_pair_status(pair)
-                if status:
+                if status and status["is_active"] and status["payout"] is not None and status["payout"] >= 70.0:
                     default_pair_status[pair] = {
-                        "payout": status["payout"] if status["is_active"] else None,
-                        "is_active": status["is_active"],
-                        "display": po_scanner.format_payout(status["payout"]) if status["is_active"] else "N/A",
+                        "payout": status["payout"],
+                        "is_active": True,
+                        "display": po_scanner.format_payout(status["payout"]),
                     }
-                else:
-                    default_pair_status[pair] = {"payout": None, "is_active": False, "display": "N/A"}
+                # else: pair is inactive OR payout < 70% → exclude entirely
+
+        # Default payouts dict — only includes pairs that meet the threshold
+        default_payouts = {
+            pair: info["payout"]
+            for pair, info in default_pair_status.items()
+        }
 
         return {
             "is_connected": po_scanner.is_connected,
             "ssid_preview": po_scanner.ssid[:5] + "..." if po_scanner.ssid else None,
             "is_demo": po_scanner.is_demo,
             "uid": po_scanner._uid,
+            # Only includes pairs that are active AND payout ≥ 70%
             "payouts": default_payouts,
             "pair_status": default_pair_status,
             "all_otc_pairs": all_otc_pairs,
-            "total_assets_parsed": len(po_scanner.get_all_payouts()) if po_scanner.is_connected else 0,
+            "total_active_pairs_70_plus": len(all_otc_pairs),
             # Freshness report — exposes last_assets_update timestamp + age
-            # so the frontend can show "Updated 5s ago" and re-fetch when stale.
             "freshness": po_scanner.get_freshness_report() if po_scanner.is_connected else None,
         }
     except Exception as e:
@@ -2652,10 +2675,10 @@ async def get_market_status(credentials: HTTPAuthorizationCredentials = Security
             "ssid_preview": None,
             "is_demo": True,
             "uid": None,
-            "payouts": {pair: None for pair in OTC_PAIRS},
-            "pair_status": {pair: {"payout": None, "is_active": False, "display": "N/A"} for pair in OTC_PAIRS},
+            "payouts": {},
+            "pair_status": {},
             "all_otc_pairs": {},
-            "total_assets_parsed": 0,
+            "total_active_pairs_70_plus": 0,
             "freshness": None,
             "error": "Connection error. Please try again."
         }
@@ -2663,16 +2686,17 @@ async def get_market_status(credentials: HTTPAuthorizationCredentials = Security
 
 @app.get("/api/market/debug")
 async def debug_market_data(credentials: HTTPAuthorizationCredentials = Security(security)):
-    """Transparency endpoint — shows ALL raw payouts + is_active status from PO.
+    """Transparency endpoint — shows ONLY active OTC pairs with payout >= 70%.
 
-    Use this to verify that the data shown in the UI matches the real PO market:
-      1. ACTIVE pairs (is_active=true) → compare payout with PO's UI (shows "+92%" etc.)
-      2. INACTIVE pairs (is_active=false) → these show "N/A" (greyed out) in PO's UI
-         and we should NOT display a payout for them in our UI.
+    Use this to verify that the data shown in the UI matches what PO currently
+    offers as TRADABLE pairs. Inactive pairs are excluded entirely (matching
+    the user requirement: "do not fetch, do not display inactive pairs").
 
-    PO sends the full asset list (including inactive/greyed-out pairs) on every
-    updateAssets event. The is_active flag (index [14] in the asset array) tells
-    us which pairs are currently tradable vs greyed-out.
+    For diagnostic purposes only, we also include:
+      - `freshness`: how stale our data is (should be <60s)
+      - `active_otc_count`: total active OTC pairs PO currently offers
+      - `inactive_otc_count`: how many pairs PO has greyed-out right now
+        (for transparency only — these are NOT used by the system)
     """
     _payload = decode_access_token(credentials.credentials)
     _jti = _payload.get("jti")
@@ -2688,11 +2712,14 @@ async def debug_market_data(credentials: HTTPAuthorizationCredentials = Security
     # Get detailed payouts (including is_active flag)
     detailed = po_scanner.get_all_payouts_detailed()
 
-    # Split into OTC vs non-OTC, and active vs inactive
-    active_otc = {}      # symbol -> payout  (these match PO's UI payouts)
-    inactive_otc = {}    # symbol -> last known payout  (these show "N/A" on PO)
+    # Split into OTC vs non-OTC, and active vs inactive.
+    # ONLY active OTC pairs with payout ≥ 70% are returned as "tradable".
+    # Inactive pairs are counted for transparency but NOT exposed individually.
+    active_otc_70_plus = {}   # symbol -> payout  (these are what the system uses)
+    active_otc_below_70 = {}  # symbol -> payout  (active but below threshold — excluded)
     active_non_otc = {}
-    inactive_non_otc = {}
+    inactive_otc_count = 0
+    inactive_non_otc_count = 0
 
     for symbol, info in detailed.items():
         payout = info.get("payout", 0)
@@ -2700,14 +2727,17 @@ async def debug_market_data(credentials: HTTPAuthorizationCredentials = Security
         is_otc = "_otc" in symbol.lower()
         if is_active:
             if is_otc:
-                active_otc[symbol] = payout
+                if payout >= 70.0:
+                    active_otc_70_plus[symbol] = payout
+                else:
+                    active_otc_below_70[symbol] = payout
             else:
                 active_non_otc[symbol] = payout
         else:
             if is_otc:
-                inactive_otc[symbol] = payout
+                inactive_otc_count += 1
             else:
-                inactive_non_otc[symbol] = payout
+                inactive_non_otc_count += 1
 
     # Try to fetch a live price for EUR/USD OTC as a final proof of real data
     live_price_eurusd = None
@@ -2716,56 +2746,57 @@ async def debug_market_data(credentials: HTTPAuthorizationCredentials = Security
     except Exception as e:
         logger.warning(f"[DEBUG] Could not fetch live EUR/USD price: {e}")
 
-    # Also show the status of major pairs (active/inactive + payout) for easy verification
+    # Show status of major pairs — but ONLY active ones with payout ≥ 70%
+    # (inactive or below-threshold pairs are excluded entirely, matching user requirement)
     major_pairs_status = {}
     for pair in ["EUR/USD OTC", "GBP/USD OTC", "USD/JPY OTC", "USD/CHF OTC",
                   "AUD/USD OTC", "USD/CAD OTC", "NZD/USD OTC", "EUR/GBP OTC",
                   "EUR/JPY OTC", "GBP/JPY OTC"]:
         status = po_scanner.get_pair_status(pair)
-        if status:
+        if status and status["is_active"] and status["payout"] is not None and status["payout"] >= 70.0:
             major_pairs_status[pair] = {
                 "symbol": status["symbol"],
                 "payout": status["payout"],
-                "is_active": status["is_active"],
-                "display": po_scanner.format_payout(status["payout"]) if status["is_active"] else "N/A",
+                "display": po_scanner.format_payout(status["payout"]),
                 "updated_at": status.get("updated_at"),
             }
-        else:
-            major_pairs_status[pair] = {"symbol": None, "payout": None, "is_active": False, "display": "N/A"}
+        # else: pair is inactive OR payout < 70% → NOT included
 
     return {
         "connected": True,
         "is_demo": po_scanner.is_demo,
         "uid": po_scanner._uid,
         "total_assets_received": len(detailed),
-        "otc_pairs_count": len(active_otc) + len(inactive_otc),
-        "active_otc_count": len(active_otc),
-        "inactive_otc_count": len(inactive_otc),
-        # ─── FRESHNESS DIAGNOSTICS ─────────────────────────────────────────
-        # Use these to verify our payouts aren't stale. If `last_assets_update_age_seconds`
-        # is > 60s, our payouts may not match PO's UI (PO updates second-by-second).
-        # The asset refresh loop nudges PO every 30s to push a fresh snapshot.
+        # ─── Counts for transparency ────────────────────────────────────
+        "active_otc_count_70_plus": len(active_otc_70_plus),
+        "active_otc_count_below_70": len(active_otc_below_70),
+        "inactive_otc_count": inactive_otc_count,
+        "inactive_non_otc_count": inactive_non_otc_count,
+        # ─── FRESHNESS DIAGNOSTICS ─────────────────────────────────────
+        # If `last_assets_update_age_seconds` is >60s, our payouts may not
+        # match PO's UI (PO updates second-by-second). The asset refresh loop
+        # nudges PO every 30s to push a fresh snapshot.
         "freshness": po_scanner.get_freshness_report(),
-        # Active OTC pairs — these are TRADABLE right now (compare with PO UI)
-        "active_otc_payouts": active_otc,
-        # Inactive OTC pairs — these show "N/A" on PO UI (DO NOT trade these)
-        "inactive_otc_payouts": inactive_otc,
-        # Sample of non-OTC pairs (stocks, crypto, etc.)
+        # ─── TRADABLE pairs (active + payout ≥ 70%) ────────────────────
+        # These are what the system actually uses for signal generation.
+        "tradable_otc_pairs": active_otc_70_plus,
+        # Active OTC pairs with payout < 70% — shown for diagnostic only.
+        # System does NOT use these for signal generation (below threshold).
+        "active_otc_below_70": active_otc_below_70,
+        # Sample of non-OTC active pairs (stocks, crypto, etc.)
         "active_non_otc_sample": dict(list(active_non_otc.items())[:10]),
-        "inactive_non_otc_sample": dict(list(inactive_non_otc.items())[:10]),
-        # Major forex pairs — easy to verify against PO UI
+        # Major forex pairs — easy to verify against PO UI (only active + ≥70%)
         "major_pairs_status": major_pairs_status,
         "live_price_eurusd_otc": live_price_eurusd,
         "verification_note": (
-            "1. Compare 'major_pairs_status' payouts with what PO shows for the same pair "
-            "(should match exactly: '+92%', '+47%', etc.). "
-            "2. Pairs where is_active=false are GREYED OUT on PO UI (show 'N/A') — "
-            "we should not display a payout for them either. "
-            "3. Payouts update every 30-60s when PO sends a new updateAssets snapshot. "
-            "4. Check 'freshness.last_assets_update_age_seconds' — if >60s, data is stale "
-            "(refresh loop may have stalled; check backend logs for 'Asset refresh nudge sent'). "
-            "5. 'freshness.assets_received_count' shows how many snapshots we've parsed since "
-            "connect — should keep growing (1 every ~30-60s)."
+            "1. 'tradable_otc_pairs' = pairs the system considers (active + payout ≥ 70%). "
+            "Compare these payouts with what PO shows for the same active pairs "
+            "(should match exactly: '+92%', '+78%', etc.). "
+            "2. Inactive pairs are EXCLUDED entirely (not fetched, not displayed, not used). "
+            "They are counted in 'inactive_otc_count' for transparency only. "
+            "3. Payouts update dynamically — the refresh loop nudges PO every 30s. "
+            "4. Check 'freshness.last_assets_update_age_seconds' — should always be <60s. "
+            "5. 'freshness.assets_received_count' grows by ~1 every 30-60s (each PO push)."
         )
     }
 

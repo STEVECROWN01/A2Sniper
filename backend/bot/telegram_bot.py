@@ -447,79 +447,55 @@ Pour un signal complet avec scoring IA, utilisez le dashboard Web.
         return f"✅ Timeframe changé à {tf}\nLes signaux seront analysés sur {tf}."
 
     async def cmd_paires(self, user_id: str, args: list = None) -> dict:
-        """8. /paires — Sélectionner les paires à surveiller (REAL payouts from market).
+        """8. /paires — Show only ACTIVE OTC pairs with payout >= 70%.
 
-        Display rules (matching PO UI):
-          - Active pairs: show payout in PO format with + sign, e.g. "💰+92%"
-          - Inactive pairs (greyed-out on PO): show "N/A" — DO NOT show a payout
-          - Max payout is +92% (PO cap — verified)
-          - Payouts update every 30-60s when PO sends a new updateAssets snapshot
+        Rules (matching PO's real behaviour):
+          - ONLY pairs that are currently ACTIVE on PO (is_active=True)
+            AND have payout >= 70% are listed.
+          - Inactive (greyed-out) pairs are EXCLUDED entirely — they are not
+            fetched, not displayed, and not used for signal generation.
+            They may reappear automatically when PO marks them active again
+            (the asset refresh loop detects the change within ~30s).
+          - Payouts are shown in PO's display format: "+92%", "+78%", etc.
+          - Payouts update dynamically — the refresh loop polls PO every 30s
+            so the values shown here reflect what PO currently displays.
         """
         if not self.scanner or not self.scanner.is_connected:
             return {
                 "text": "⚠️ Impossible de lister les paires actives. Aucune connexion au marché réel."
             }
 
-        # Get ALL active OTC pairs with payout >= 50% (PO minimum threshold for profitability).
-        # active_only=True ensures we don't show greyed-out/N/A pairs (matches PO UI behaviour).
+        # Fetch ONLY active OTC pairs with payout >= 70%.
+        # active_only=True excludes greyed-out pairs (we never want them).
+        # min_payout=70 enforces the profitability threshold.
         real_pairs = self.scanner.find_pairs_above_payout(
-            min_payout=50.0, pair_filter="OTC", active_only=True
+            min_payout=70.0, pair_filter="OTC", active_only=True
         )
 
-        # Also fetch the status of the 8 default pairs (so user can see "N/A" for inactive ones)
-        default_pairs = [
-            'EUR/USD OTC', 'GBP/USD OTC', 'USD/JPY OTC', 'AUD/USD OTC',
-            'USD/CHF OTC', 'EUR/GBP OTC', 'USD/CAD OTC', 'NZD/USD OTC'
-        ]
-        default_status = {}
-        for p in default_pairs:
-            status = self.scanner.get_pair_status(p)
-            if status:
-                default_status[p] = status
-            else:
-                default_status[p] = {"payout": None, "is_active": False}
-
-        # Build a combined display list: real_pairs first (sorted by payout desc),
-        # then any default pairs not already shown (with N/A if inactive).
-        # Convert real_pairs dict to list of (pair, payout, is_active=True) tuples
-        display_list = [(pair, payout, True) for pair, payout in real_pairs.items()]
-
-        # Add default pairs not already in display_list (so user sees N/A for inactive defaults)
-        shown_pairs = set(real_pairs.keys())
-        for pair in default_pairs:
-            if pair not in shown_pairs:
-                status = default_status[pair]
-                payout = status.get("payout")
-                is_active = status.get("is_active", False)
-                # Only add inactive defaults OR active defaults with payout >= 50 (already shown)
-                if not is_active or (payout is not None and payout >= 50):
-                    display_list.append((pair, payout, is_active))
-
-        # Sort: active first (by payout desc), then inactive at the bottom
-        display_list.sort(
-            key=lambda x: (
-                0 if x[2] else 1,         # Active pairs first
-                -(x[1] or 0)              # Then by payout descending
-            )
-        )
+        # Sort by payout descending (highest payout first)
+        sorted_pairs = sorted(real_pairs.items(), key=lambda x: -x[1])
 
         # Limit to top 20 to avoid Telegram inline keyboard overflow
-        display_list = display_list[:20]
+        sorted_pairs = sorted_pairs[:20]
+
+        if not sorted_pairs:
+            return {
+                "text": (
+                    "🎯 <b>Paires actives du marché (Live PO)</b>\n"
+                    "━━━━━━━━━━━━━━━━━━━━━\n"
+                    "⏳ Aucune paire OTC active avec payout ≥ 70% pour le moment.\n\n"
+                    "Les paires deviennent disponibles lorsque Pocket Option les active. "
+                    "Revenez dans quelques minutes — la liste s'actualise automatiquement."
+                )
+            }
 
         inline_keyboard = []
         # Build rows of 2 buttons each
-        for i in range(0, len(display_list), 2):
+        for i in range(0, len(sorted_pairs), 2):
             row = []
-            for pair_name, payout, is_active in display_list[i:i+2]:
-                if is_active and payout is not None and payout >= 50:
-                    # Active pair — show payout in PO format: "+92%"
-                    btn_text = f"{pair_name}  💰+{payout:.0f}%"
-                elif is_active and payout is not None:
-                    # Active but payout < 50% — show with warning
-                    btn_text = f"{pair_name}  ⚠️+{payout:.0f}%"
-                else:
-                    # Inactive pair — show N/A (matches PO's greyed-out UI)
-                    btn_text = f"{pair_name}  🚫N/A"
+            for pair_name, payout in sorted_pairs[i:i+2]:
+                # Active pair with payout ≥ 70% — show in PO format: "+92%"
+                btn_text = f"{pair_name}  💰+{payout:.0f}%"
                 row.append({
                     "text": btn_text,
                     "callback_data": f"signal_{pair_name}"
@@ -530,10 +506,11 @@ Pour un signal complet avec scoring IA, utilisez le dashboard Web.
             "text": (
                 "🎯 <b>Paires actives du marché (Live PO)</b>\n"
                 "━━━━━━━━━━━━━━━━━━━━━\n"
-                "💰 Payouts extraits en direct de Pocket Option.\n"
-                "🚫 N/A = paire actuellement grisée sur PO (non tradable).\n"
-                "Cliquez sur une paire active pour générer un signal immédiat.\n\n"
-                "<i>Les payouts affichés sont vérifiables sur l'interface Pocket Option.</i>"
+                "💰 Payouts extraits en direct de Pocket Option (≥ 70%).\n"
+                "Seules les paires actuellement actives sont affichées.\n"
+                "Cliquez sur une paire pour générer un signal immédiat.\n\n"
+                f"<i>{len(sorted_pairs)} paires éligibles détectées. "
+                "Actualisation toutes les 30 secondes.</i>"
             ),
             "reply_markup": {
                 "inline_keyboard": inline_keyboard

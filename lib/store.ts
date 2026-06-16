@@ -77,10 +77,11 @@ interface AppState {
   liveStatus: 'LIVE' | 'DISCONNECTED';
   marketInfo: {
     isConnected: boolean;
-    payouts: Record<string, number | null>;
-    // pair_status maps each pair name -> {payout, is_active, display}
-    // is_active=false means the pair is currently greyed-out/N/A on PO's UI
-    pair_status?: Record<string, { payout: number | null; is_active: boolean; display: string }>;
+    // Only includes pairs that are ACTIVE on PO AND have payout ≥ 70%.
+    // Inactive pairs and pairs below the threshold are EXCLUDED entirely
+    // (backend filters them out — frontend never sees them).
+    payouts: Record<string, number>;
+    pair_status?: Record<string, { payout: number; is_active: boolean; display: string }>;
     all_otc_pairs?: Record<string, number>;
   } | null;
   isInitialized: boolean;
@@ -392,17 +393,19 @@ export const useAppStore = create<AppState>((set, get) => ({
         const wasLive = get().liveStatus === 'LIVE';
         const isNowLive = data.is_connected;
 
-        // Merge the default payouts (8 hardcoded OTC pairs) with ALL OTC pairs
-        // received live from PO. The all_otc_pairs field contains every OTC pair
-        // PO is currently offering, with its real payout.
-        const defaultPayouts: Record<string, number | null> = data.payouts || {};
+        // Backend now only returns ACTIVE pairs with payout ≥ 70%.
+        // - data.payouts: default OTC pairs that meet the criteria
+        // - data.all_otc_pairs: ALL OTC pairs that meet the criteria (active + ≥70%)
+        // - data.pair_status: per-default-pair info (only active + ≥70% pairs included)
+        // Inactive pairs and pairs with payout < 70% are EXCLUDED entirely —
+        // the frontend never sees them.
+        const defaultPayouts: Record<string, number> = data.payouts || {};
         const allOtcPairs: Record<string, number> = data.all_otc_pairs || {};
-        const pairStatus: Record<string, { payout: number | null; is_active: boolean; display: string }> =
+        const pairStatus: Record<string, { payout: number; is_active: boolean; display: string }> =
           data.pair_status || {};
 
-        // Merge — all_otc_pairs values take priority (they are the live values)
-        // Pairs in pair_status with is_active=false will have payout=null in defaultPayouts
-        const mergedPayouts: Record<string, number | null> = { ...defaultPayouts };
+        // Merge — all_otc_pairs values take priority (they include all live pairs)
+        const mergedPayouts: Record<string, number> = { ...defaultPayouts };
         for (const [pair, payout] of Object.entries(allOtcPairs)) {
           mergedPayouts[pair] = payout;
         }
