@@ -447,27 +447,27 @@ Pour un signal complet avec scoring IA, utilisez le dashboard Web.
         return f"✅ Timeframe changé à {tf}\nLes signaux seront analysés sur {tf}."
 
     async def cmd_paires(self, user_id: str, args: list = None) -> dict:
-        """8. /paires — Show only ACTIVE OTC pairs with payout >= 70%.
+        """8. /paires — Show ONLY eligible pairs (active AND payout >= 70%).
 
-        Rules (matching PO's real behaviour):
+        Rules (matching PO's real behaviour and user requirement):
           - ONLY pairs that are currently ACTIVE on PO (is_active=True)
-            AND have payout >= 70% are listed.
-          - Inactive (greyed-out) pairs are EXCLUDED entirely — they are not
-            fetched, not displayed, and not used for signal generation.
-            They may reappear automatically when PO marks them active again
-            (the asset refresh loop detects the change within ~30s).
+            AND have payout >= +70% are listed.
+          - All other pairs (inactive OR payout < 70%) are EXCLUDED entirely —
+            they are not fetched, not displayed, not used for signal generation.
+            They reappear automatically when PO marks them active AND their
+            payout rises to >= +70% (the refresh loop detects the change within ~5s).
           - Payouts are shown in PO's display format: "+92%", "+78%", etc.
-          - Payouts update dynamically — the refresh loop polls PO every 30s
-            so the values shown here reflect what PO currently displays.
+          - Payout update timing is UNPREDICTABLE (PO's internal logic decides).
+            Our refresh loop polls PO every 5s so values shown reflect PO's UI.
         """
         if not self.scanner or not self.scanner.is_connected:
             return {
                 "text": "⚠️ Impossible de lister les paires actives. Aucune connexion au marché réel."
             }
 
-        # Fetch ONLY active OTC pairs with payout >= 70%.
-        # active_only=True excludes greyed-out pairs (we never want them).
-        # min_payout=70 enforces the profitability threshold.
+        # Fetch ONLY eligible pairs: active AND payout >= 70%.
+        # active_only=True excludes inactive pairs (we never want them).
+        # min_payout=70 enforces the minimum +70% profitability threshold.
         real_pairs = self.scanner.find_pairs_above_payout(
             min_payout=70.0, pair_filter="OTC", active_only=True
         )
@@ -481,11 +481,12 @@ Pour un signal complet avec scoring IA, utilisez le dashboard Web.
         if not sorted_pairs:
             return {
                 "text": (
-                    "🎯 <b>Paires actives du marché (Live PO)</b>\n"
+                    "🎯 <b>Paires éligibles du marché (Live PO)</b>\n"
                     "━━━━━━━━━━━━━━━━━━━━━\n"
-                    "⏳ Aucune paire OTC active avec payout ≥ 70% pour le moment.\n\n"
-                    "Les paires deviennent disponibles lorsque Pocket Option les active. "
-                    "Revenez dans quelques minutes — la liste s'actualise automatiquement."
+                    "⏳ Aucune paire OTC éligible pour le moment (active ET payout ≥ +70%).\n\n"
+                    "Les paires deviennent disponibles lorsque Pocket Option les active "
+                    "ET leur payout atteint +70%. Revenez dans quelques minutes — "
+                    "la liste s'actualise automatiquement toutes les 5 secondes."
                 )
             }
 
@@ -494,7 +495,7 @@ Pour un signal complet avec scoring IA, utilisez le dashboard Web.
         for i in range(0, len(sorted_pairs), 2):
             row = []
             for pair_name, payout in sorted_pairs[i:i+2]:
-                # Active pair with payout ≥ 70% — show in PO format: "+92%"
+                # Eligible pair — show in PO format: "+92%"
                 btn_text = f"{pair_name}  💰+{payout:.0f}%"
                 row.append({
                     "text": btn_text,
@@ -504,13 +505,13 @@ Pour un signal complet avec scoring IA, utilisez le dashboard Web.
 
         return {
             "text": (
-                "🎯 <b>Paires actives du marché (Live PO)</b>\n"
+                "🎯 <b>Paires éligibles du marché (Live PO)</b>\n"
                 "━━━━━━━━━━━━━━━━━━━━━\n"
-                "💰 Payouts extraits en direct de Pocket Option (≥ 70%).\n"
-                "Seules les paires actuellement actives sont affichées.\n"
+                "💰 Payouts extraits en direct de Pocket Option (≥ +70%).\n"
+                "Seules les paires actives avec payout ≥ +70% sont affichées.\n"
                 "Cliquez sur une paire pour générer un signal immédiat.\n\n"
                 f"<i>{len(sorted_pairs)} paires éligibles détectées. "
-                "Actualisation toutes les 30 secondes.</i>"
+                "Actualisation toutes les 5 secondes.</i>"
             ),
             "reply_markup": {
                 "inline_keyboard": inline_keyboard
@@ -893,31 +894,30 @@ Le trading sur options binaires et Forex comporte un niveau de risque très éle
         if not pair or len(pair) < 3:
             return "❌ Paire invalide."
 
-        # Get real payout — None means the pair is INACTIVE on PO right now (greyed out / N/A)
+        # Get real payout. None means: pair is inactive OR not found on PO right now.
+        # Inactive pairs are NEVER displayed by /paires — so reaching this branch
+        # means either the user typed a pair manually, or the pair became inactive
+        # in the ~5s since they tapped the button. In either case we don't expose
+        # "inactive" state — we just tell them the pair isn't available.
         payout = self.scanner.get_payout(pair)
         if payout is None:
-            # Check if pair exists but is inactive
-            status = self.scanner.get_pair_status(pair)
-            if status and not status.get("is_active", True):
-                return (
-                    f"🚫 <b>{pair} est actuellement INACTIVE sur Pocket Option.</b>\n"
-                    f"━━━━━━━━━━━━━━━━━━━━━\n"
-                    f"Cette paire est grisée (affiche 'N/A') dans l'interface PO.\n"
-                    f"Impossible de générer un signal pour une paire non tradable.\n\n"
-                    f"⏳ Réessayez plus tard — les paires PO s'activent/désactivent en continu "
-                    f"selon les sessions de marché."
-                )
             return (
-                f"⚠️ Impossible de trouver le payout pour {pair}.\n"
-                f"Causes possibles : la paire n'existe pas sur Pocket Option, "
-                f"ou la table des actifs n'a pas encore été reçue. Réessayez dans 10 secondes."
+                f"⏳ <b>{pair} n'est plus disponible sur Pocket Option.</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━━\n"
+                f"Cette paire n'est actuellement pas tradable (inactive ou payout insuffisant).\n\n"
+                f"👉 Relancez /paires pour voir la liste à jour des paires éligibles\n"
+                f"    (actives avec payout ≥ +70%)."
             )
 
-        if payout < 50:
+        # Enforce minimum +70% payout — system rule.
+        # Pairs below this threshold are not eligible for signal generation.
+        if payout < 70:
             return (
-                f"⚠️ Payout trop bas pour {pair} ({self.scanner.format_payout(payout)}).\n"
-                f"Le système ne génère pas de signaux pour des payouts inférieurs à +50% — "
-                f"le ratio risque/rendement est défavorable."
+                f"⏳ <b>{pair} n'est plus éligible.</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━━\n"
+                f"Payout actuel : <b>+{payout:.0f}%</b> (inférieur au seuil de +70%).\n"
+                f"Le système ne génère des signaux que pour les paires avec payout ≥ +70%.\n\n"
+                f"👉 Relancez /paires pour voir les paires éligibles actuelles."
             )
 
         # Try to import the force_analyze_pair from main (the bot runs in same process)
@@ -938,7 +938,7 @@ Le trading sur options binaires et Forex comporte un niveau de risque très éle
                         f"💰 Payout : <b>{payout_display}</b>\n"
                         f"🎯 Score : <b>{signal['score']}/10</b> | Winrate : <b>{signal['winrate']}%</b>\n"
                         f"📈 Prix d'entrée : <code>{signal['entry_price']}</code>\n"
-                        f"🏗️ Structure : <i>{signal.get('smc_structure', 'N/A')}</i>\n\n"
+                        f"🏗️ Structure : <i>{signal.get('smc_structure', '—')}</i>\n\n"
                         f"<i>Données 100% live — vérifiables sur Pocket Option.</i>\n"
                         f"⏰ Valable jusqu'à l'expiration indiquée. Agissez vite."
                     )

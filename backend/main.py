@@ -2627,16 +2627,17 @@ async def get_market_status(credentials: HTTPAuthorizationCredentials = Security
         raise HTTPException(status_code=401, detail="Token has been revoked")
 
     try:
-        # ONLY fetch active OTC pairs with payout >= 70% — inactive pairs are
-        # EXCLUDED entirely (not displayed, not used for signals). The asset
-        # refresh loop polls PO every 30s so this list reflects what PO
-        # currently offers as tradable.
+        # ONLY fetch eligible pairs: active AND payout >= +70%.
+        # All other pairs (inactive OR payout < 70%) are EXCLUDED entirely —
+        # not displayed, not used for signals. The asset refresh loop polls PO
+        # every 5s so this list reflects what PO currently offers as tradable,
+        # within ~5 seconds of any change on PO's side.
         all_otc_pairs = po_scanner.find_pairs_above_payout(
             min_payout=70.0, pair_filter="OTC", active_only=True
         ) if po_scanner.is_connected else {}
 
-        # Also expose per-default-pair status (only for active ones with payout ≥ 70%).
-        # Inactive defaults are NOT included — they simply don't appear.
+        # Also expose per-default-pair status (only for eligible ones).
+        # Inactive or below-threshold defaults are NOT included — they simply don't appear.
         default_pair_status = {}
         if po_scanner.is_connected:
             for pair in OTC_PAIRS:
@@ -2686,17 +2687,19 @@ async def get_market_status(credentials: HTTPAuthorizationCredentials = Security
 
 @app.get("/api/market/debug")
 async def debug_market_data(credentials: HTTPAuthorizationCredentials = Security(security)):
-    """Transparency endpoint — shows ONLY active OTC pairs with payout >= 70%.
+    """Transparency endpoint — shows ONLY eligible pairs (active AND payout >= +70%).
 
     Use this to verify that the data shown in the UI matches what PO currently
-    offers as TRADABLE pairs. Inactive pairs are excluded entirely (matching
-    the user requirement: "do not fetch, do not display inactive pairs").
+    offers as TRADABLE pairs. Inactive pairs and below-threshold pairs are
+    excluded entirely from the system (matching user requirement: "only fetch,
+    display, and use pairs that are active AND have payout >= +70%").
 
-    For diagnostic purposes only, we also include:
-      - `freshness`: how stale our data is (should be <60s)
-      - `active_otc_count`: total active OTC pairs PO currently offers
-      - `inactive_otc_count`: how many pairs PO has greyed-out right now
-        (for transparency only — these are NOT used by the system)
+    For diagnostic purposes only, we also include aggregate counts:
+      - `freshness`: how stale our data is (should be <10s with the 5s refresh loop)
+      - `active_otc_count_70_plus`: eligible pairs (active + payout >= +70%)
+      - `active_otc_count_below_70`: active but below threshold (excluded)
+      - `inactive_otc_count`: pairs PO has greyed-out right now (excluded)
+    Individual inactive pairs are NEVER exposed by name — only aggregate counts.
     """
     _payload = decode_access_token(credentials.credentials)
     _jti = _payload.get("jti")
@@ -2773,30 +2776,32 @@ async def debug_market_data(credentials: HTTPAuthorizationCredentials = Security
         "inactive_otc_count": inactive_otc_count,
         "inactive_non_otc_count": inactive_non_otc_count,
         # ─── FRESHNESS DIAGNOSTICS ─────────────────────────────────────
-        # If `last_assets_update_age_seconds` is >60s, our payouts may not
-        # match PO's UI (PO updates second-by-second). The asset refresh loop
-        # nudges PO every 30s to push a fresh snapshot.
+        # If `last_assets_update_age_seconds` is >10s, our payouts may not
+        # match PO's UI. The asset refresh loop nudges PO every 5s to push a
+        # fresh snapshot, so under normal conditions this age stays <10s.
         "freshness": po_scanner.get_freshness_report(),
-        # ─── TRADABLE pairs (active + payout ≥ 70%) ────────────────────
-        # These are what the system actually uses for signal generation.
+        # ─── TRADABLE pairs (active + payout ≥ +70%) ────────────────────
+        # These are the ONLY pairs the system actually uses for signal generation.
         "tradable_otc_pairs": active_otc_70_plus,
         # Active OTC pairs with payout < 70% — shown for diagnostic only.
         # System does NOT use these for signal generation (below threshold).
+        # They are not displayed to end users in Telegram bot / web UI.
         "active_otc_below_70": active_otc_below_70,
-        # Sample of non-OTC active pairs (stocks, crypto, etc.)
+        # Sample of non-OTC active pairs (stocks, crypto, etc.) — diagnostic only
         "active_non_otc_sample": dict(list(active_non_otc.items())[:10]),
-        # Major forex pairs — easy to verify against PO UI (only active + ≥70%)
+        # Major forex pairs — easy to verify against PO UI (only eligible ones)
         "major_pairs_status": major_pairs_status,
         "live_price_eurusd_otc": live_price_eurusd,
         "verification_note": (
-            "1. 'tradable_otc_pairs' = pairs the system considers (active + payout ≥ 70%). "
+            "1. 'tradable_otc_pairs' = pairs the system considers (active + payout >= +70%). "
             "Compare these payouts with what PO shows for the same active pairs "
             "(should match exactly: '+92%', '+78%', etc.). "
             "2. Inactive pairs are EXCLUDED entirely (not fetched, not displayed, not used). "
-            "They are counted in 'inactive_otc_count' for transparency only. "
-            "3. Payouts update dynamically — the refresh loop nudges PO every 30s. "
-            "4. Check 'freshness.last_assets_update_age_seconds' — should always be <60s. "
-            "5. 'freshness.assets_received_count' grows by ~1 every 30-60s (each PO push)."
+            "They are counted in 'inactive_otc_count' for transparency only — never by name. "
+            "3. Payout update timing is UNPREDICTABLE (PO's internal logic decides). "
+            "The refresh loop nudges PO every 5s so our view stays within ~5s of PO's UI. "
+            "4. Check 'freshness.last_assets_update_age_seconds' — should always be <10s. "
+            "5. 'freshness.refresh_interval_seconds' = 5 (the nudge interval)."
         )
     }
 

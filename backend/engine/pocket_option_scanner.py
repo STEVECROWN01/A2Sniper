@@ -79,8 +79,9 @@ class PocketOptionScanner:
         self._uid = None
         # Payout store: maps symbol -> {"payout": float, "is_active": bool, "updated_at": iso}
         # PO sends the FULL asset list (including greyed-out / inactive pairs) on every
-        # updateAssets event. We MUST track is_active separately so we can show "N/A"
-        # for inactive pairs (matching PO's UI behaviour) instead of stale payouts.
+        # updateAssets event. We track is_active so we can FILTER OUT inactive pairs
+        # entirely — they are never displayed, never used for signals, never sent to
+        # the user. The system only considers pairs where is_active=True AND payout>=70.
         self._payouts = {}  # symbol -> {"payout": float, "is_active": bool, "updated_at": str}
         self._candles_cache = {}  # asset -> DataFrame
         self._receive_task = None
@@ -93,9 +94,11 @@ class PocketOptionScanner:
         self._auth_event = asyncio.Event()
         # ─── Freshness tracking ───────────────────────────────────────────
         # PO pushes the full asset list (updateAssets) once at auth, then again
-        # whenever it decides (typically every 30-60s OR when payouts change).
-        # We also actively nudge PO every 30s with `42["ps"]` to trigger a fresh
-        # push. These counters let the debug endpoint expose how stale our data is.
+        # at unpredictable intervals — could be seconds, minutes, or longer.
+        # The timing is NOT predictable; PO's internal logic decides based on
+        # market sessions, liquidity, and trader volume.
+        # We actively nudge PO every 5s with `42["ps"]` to trigger a fresh push,
+        # so our view stays within 5s of what PO's UI shows.
         self._last_assets_update = None  # datetime of last updateAssets received
         self._assets_received_count = 0  # how many updateAssets snapshots we've parsed
         self._last_payout_change = None  # datetime of last individual payout change event
@@ -554,7 +557,7 @@ class PocketOptionScanner:
            11   → leverage (int)
            12   → extra_data (list)
            13   → expire_time (int, unix timestamp — session expiry)
-           14   → is_active (bool) ← FALSE = greyed out / "N/A" in PO UI
+           14   → is_active (bool) ← FALSE = greyed out / inactive in PO UI
            15   → timeframes (list of dicts)
            16   → start_time (int, unix timestamp; -1 = N/A)
            17   → default_timeframe (int, seconds)
@@ -562,13 +565,13 @@ class PocketOptionScanner:
 
         CRITICAL: PO keeps stale payout values in the payload for greyed-out
         (inactive) pairs. We MUST read is_active at index [14] and only treat
-        a payout as "live" when is_active=True. Otherwise our payouts won't
-        match what PO shows in the UI (PO hides inactive pairs / shows "N/A").
+        a pair as ELIGIBLE when is_active=True AND payout >= 70. Inactive pairs
+        are NEVER displayed — they are filtered out entirely from all outputs.
 
-        FRESHNESS: PO pushes this payload once at auth, then again every ~30-60s
-        (or when payouts change). We also nudge PO every 30s via _asset_refresh_loop
-        to maximize update frequency. Each call updates self._payouts in-place so
-        callers always see the latest snapshot.
+        FRESHNESS: PO pushes this payload once at auth, then again at
+        unpredictable intervals (timing decided by PO's internal logic).
+        We nudge PO every 5s via _asset_refresh_loop so our view stays within
+        ~5s of what PO's UI shows. Each call updates self._payouts in-place.
         """
         count = 0
         active_count = 0
@@ -661,8 +664,9 @@ class PocketOptionScanner:
                 if changes_detected > 0:
                     self._last_payout_change = datetime.now(timezone.utc)
 
-                # Log OTC forex samples split by active/inactive so user can verify
-                # against PO's UI (active pairs show payout, inactive show N/A).
+                # Log OTC forex samples so user can verify against PO's UI.
+                # Only ACTIVE pairs are ever used by the system; inactive pairs
+                # are tracked internally for refresh detection but never displayed.
                 # For snapshot #1 (initial) we always log; for later snapshots we
                 # only log if changes were detected (to avoid log spam).
                 should_log = (snapshot_num <= 3) or (changes_detected > 0)
@@ -671,16 +675,12 @@ class PocketOptionScanner:
                         (k, v["payout"]) for k, v in self._payouts.items()
                         if "_otc" in k.lower() and v["is_active"]
                     ][:8]
-                    inactive_otc_items = [
-                        (k, v["payout"]) for k, v in self._payouts.items()
-                        if "_otc" in k.lower() and not v["is_active"]
-                    ][:8]
                     logger.info(
                         f"[SCANNER] updateAssets #{snapshot_num} parsed: {count} total "
                         f"({active_count} active, {inactive_count} inactive, "
                         f"{changes_detected} changes since last). "
                         f"Active OTC samples: {dict(active_otc_items)}. "
-                        f"Inactive OTC samples (N/A on PO): {dict(inactive_otc_items)}"
+                        f"({inactive_count} inactive pairs hidden — not displayed)"
                     )
         except Exception as e:
             logger.error(f"[SCANNER] Asset list parse error: {e}", exc_info=True)
@@ -828,18 +828,19 @@ class PocketOptionScanner:
         """Periodic health check to verify the connection is still alive."""
         while True:
             try:
-                await asyncio.sleep(30)
+                await asyncio.sleep(15)
                 if not self._is_authenticated:
                     logger.warning("[SCANNER] Health check: not authenticated")
                 elif self._ws and not self._ws_is_open():
                     logger.warning("[SCANNER] Health check: WebSocket closed")
                     self._is_authenticated = False
                 else:
-                    # Check if asset data is fresh — if last update was >5 min ago,
-                    # something is wrong (PO should push every 30-60s, or we nudge)
+                    # Check if asset data is fresh — if last update was >60s ago,
+                    # something is wrong (we nudge PO every 5s, so data should be
+                    # at most ~10s old under normal conditions)
                     if self._last_assets_update:
                         age = (datetime.now(timezone.utc) - self._last_assets_update).total_seconds()
-                        if age > 300:  # 5 minutes
+                        if age > 60:  # 1 minute — refresh loop may have stalled
                             logger.warning(
                                 f"[SCANNER] Health check: asset data is STALE ({age:.0f}s old). "
                                 f"Last updateAssets was {self._last_assets_update.isoformat()}. "
@@ -858,21 +859,22 @@ class PocketOptionScanner:
         """Periodically nudge PO to push a fresh `updateAssets` snapshot.
 
         PROBLEM: PO pushes the full asset list (with payouts) once at auth time.
-        After that, PO only pushes a new snapshot when significant changes occur
-        OR when explicitly requested. Without active nudging, our payouts become
-        stale within minutes while PO's UI keeps updating second-by-second.
+        After that, PO only pushes new snapshots at unpredictable intervals —
+        could be seconds, minutes, or longer. The timing is decided by PO's
+        internal logic (market sessions, liquidity, trader volume) and is NOT
+        predictable from our side.
 
-        SOLUTION: Every 30 seconds, send `42["ps"]` (PO's keep-alive/state
-        request) and `42["updateAssets"]` (explicit asset table request). PO
-        responds by pushing a fresh `[[5, ...], ...]` payload, which our
-        receive loop picks up and routes to `_parse_assets_list`.
+        SOLUTION: Every 5 seconds, send `42["ps"]` (PO's keep-alive/state
+        request). PO responds by pushing a fresh `[[5, ...], ...]` payload,
+        which our receive loop picks up and routes to `_parse_assets_list`.
 
-        This keeps our payouts within ~30s of what PO's UI shows. Combined with
-        PO's own push frequency (30-60s), we should always be reasonably fresh.
+        This keeps our payouts within ~5s of what PO's UI shows. When a pair
+        becomes inactive (or active) on PO, our system reflects that change
+        within at most 5 seconds — so users never see stale pair lists.
         """
         try:
-            # Wait 10s after auth before first nudge (let initial data arrive first)
-            await asyncio.sleep(10)
+            # Wait 3s after auth before first nudge (let initial data arrive first)
+            await asyncio.sleep(3)
             while self._ws and self._ws_is_open() and self._is_authenticated:
                 try:
                     # Send a state request — PO typically responds with a fresh asset snapshot
@@ -881,8 +883,9 @@ class PocketOptionScanner:
                 except Exception as e:
                     logger.warning(f"[SCANNER] Asset refresh nudge failed: {e}")
                     break
-                # Wait 30s before next nudge (PO updates payouts every ~30-60s)
-                await asyncio.sleep(30)
+                # Wait 5s before next nudge — keeps our view of PO's state
+                # within ~5s of what PO's UI actually shows.
+                await asyncio.sleep(5)
         except asyncio.CancelledError:
             pass
         except Exception as e:
@@ -1040,8 +1043,10 @@ class PocketOptionScanner:
 
         entry = self._payouts[match_symbol]
         if active_only and not entry.get("is_active", True):
-            # Pair is currently greyed out / N/A on PO — return None to signal that
-            logger.info(f"[SCANNER] '{pair}' (symbol='{match_symbol}') is INACTIVE on PO — returning None (N/A)")
+            # Pair is currently inactive on PO — return None so callers can drop it.
+            # Inactive pairs are NEVER displayed or used for signals; callers should
+            # treat None as "this pair is not currently available on PO".
+            logger.debug(f"[SCANNER] '{pair}' (symbol='{match_symbol}') is INACTIVE on PO — skipping")
             return None
         return entry.get("payout")
 
@@ -1071,15 +1076,16 @@ class PocketOptionScanner:
                 return {"symbol": symbol, **entry}
         return None
 
-    def get_all_payouts(self, active_only: bool = False) -> dict:
-        """Return ALL parsed payouts directly from PO.
+    def get_all_payouts(self, active_only: bool = True) -> dict:
+        """Return parsed payouts directly from PO.
 
         Args:
-            active_only: If True, only return payouts for pairs where is_active=True
-                         (i.e. pairs that are NOT greyed-out on PO UI). Default False
-                         for transparency/debug.
+            active_only: If True (DEFAULT), only return payouts for pairs where
+                         is_active=True. Inactive pairs are EXCLUDED entirely —
+                         they are never displayed or used by the system.
+                         Set False only for low-level debug inspection.
         Returns:
-            dict mapping symbol -> payout (float)  [backward-compatible with old API]
+            dict mapping symbol -> payout (float)
         """
         if active_only:
             return {k: v["payout"] for k, v in self._payouts.items() if v.get("is_active", True)}
@@ -1137,26 +1143,34 @@ class PocketOptionScanner:
             "last_payout_change_age_seconds": round(last_change_age, 1) if last_change_age is not None else None,
             "assets_received_count": self._assets_received_count,
             "payouts_seen_count": len(self._payouts),
-            "is_data_fresh": (last_age is not None and last_age < 90.0),
-            "refresh_interval_seconds": 30,
+            "is_data_fresh": (last_age is not None and last_age < 15.0),
+            "refresh_interval_seconds": 5,
         }
 
     def find_pairs_above_payout(self, min_payout: float = 70.0, pair_filter: str = "OTC",
                                  active_only: bool = True) -> dict:
-        """Find all pairs with payout >= min_payout.
+        """Find all ELIGIBLE pairs — the only pairs the system should ever use.
+
+        A pair is ELIGIBLE if and only if BOTH conditions are met:
+          1. is_active=True  (pair is currently tradable on PO — not greyed out)
+          2. payout >= min_payout  (default 70.0 — minimum +70% profitability)
+
+        All other pairs (inactive OR payout below threshold) are EXCLUDED entirely.
+        They are never displayed, never used for signals, never sent to the user.
+        When PO reactivates them (within ~5s, thanks to the refresh loop), they
+        automatically reappear in this list.
 
         Args:
-            min_payout: Minimum payout threshold (e.g. 70.0)
-            pair_filter: Filter symbols by this substring (e.g. "OTC")
-            active_only: If True (default), exclude inactive/greyed-out pairs.
-                         This matches PO's UI behaviour where N/A pairs aren't tradable.
+            min_payout: Minimum payout threshold. Default 70.0 per system requirement.
+            pair_filter: Filter symbols by this substring (e.g. "OTC"). Empty = all.
+            active_only: If True (default), exclude inactive pairs.
         """
         result = {}
         for symbol, entry in self._payouts.items():
             payout = entry.get("payout", 0)
             is_active = entry.get("is_active", True)
             if active_only and not is_active:
-                continue  # Skip greyed-out pairs (matches PO UI)
+                continue  # Inactive pair — DROP entirely, never display
             if payout >= min_payout:
                 if pair_filter and pair_filter.upper() in symbol.upper():
                     display = self._symbol_to_display(symbol)
@@ -1166,13 +1180,18 @@ class PocketOptionScanner:
     @staticmethod
     def format_payout(payout: Optional[float]) -> str:
         """Format a payout value for display — matches PO's UI format.
-        PO shows payouts as '+92%' (with the plus sign).
-        Returns 'N/A' if payout is None (pair is inactive/greyed-out).
+
+        PO shows payouts as '+92%' (with the plus sign, max ~92%).
+
+        IMPORTANT: This function should only ever be called with a VALID payout
+        for an ACTIVE pair. Inactive pairs are filtered out upstream and never
+        reach this function. The None/invalid fallback is defensive only —
+        callers should never rely on it for display logic.
         """
-        if payout is None:
-            return "N/A"
-        if not isinstance(payout, (int, float)):
-            return "N/A"
+        if payout is None or not isinstance(payout, (int, float)):
+            # Defensive fallback — should not happen in normal flow since
+            # inactive pairs are filtered out before format_payout is called.
+            return "—"
         return f"+{payout:.0f}%"
 
     @staticmethod
