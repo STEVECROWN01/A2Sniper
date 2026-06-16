@@ -2641,6 +2641,9 @@ async def get_market_status(credentials: HTTPAuthorizationCredentials = Security
             "pair_status": default_pair_status,
             "all_otc_pairs": all_otc_pairs,
             "total_assets_parsed": len(po_scanner.get_all_payouts()) if po_scanner.is_connected else 0,
+            # Freshness report — exposes last_assets_update timestamp + age
+            # so the frontend can show "Updated 5s ago" and re-fetch when stale.
+            "freshness": po_scanner.get_freshness_report() if po_scanner.is_connected else None,
         }
     except Exception as e:
         logger.error(f"[MARKET STATUS] Error: {e}")
@@ -2653,6 +2656,7 @@ async def get_market_status(credentials: HTTPAuthorizationCredentials = Security
             "pair_status": {pair: {"payout": None, "is_active": False, "display": "N/A"} for pair in OTC_PAIRS},
             "all_otc_pairs": {},
             "total_assets_parsed": 0,
+            "freshness": None,
             "error": "Connection error. Please try again."
         }
 
@@ -2737,6 +2741,11 @@ async def debug_market_data(credentials: HTTPAuthorizationCredentials = Security
         "otc_pairs_count": len(active_otc) + len(inactive_otc),
         "active_otc_count": len(active_otc),
         "inactive_otc_count": len(inactive_otc),
+        # ─── FRESHNESS DIAGNOSTICS ─────────────────────────────────────────
+        # Use these to verify our payouts aren't stale. If `last_assets_update_age_seconds`
+        # is > 60s, our payouts may not match PO's UI (PO updates second-by-second).
+        # The asset refresh loop nudges PO every 30s to push a fresh snapshot.
+        "freshness": po_scanner.get_freshness_report(),
         # Active OTC pairs — these are TRADABLE right now (compare with PO UI)
         "active_otc_payouts": active_otc,
         # Inactive OTC pairs — these show "N/A" on PO UI (DO NOT trade these)
@@ -2752,7 +2761,11 @@ async def debug_market_data(credentials: HTTPAuthorizationCredentials = Security
             "(should match exactly: '+92%', '+47%', etc.). "
             "2. Pairs where is_active=false are GREYED OUT on PO UI (show 'N/A') — "
             "we should not display a payout for them either. "
-            "3. Payouts update every 30-60s when PO sends a new updateAssets snapshot."
+            "3. Payouts update every 30-60s when PO sends a new updateAssets snapshot. "
+            "4. Check 'freshness.last_assets_update_age_seconds' — if >60s, data is stale "
+            "(refresh loop may have stalled; check backend logs for 'Asset refresh nudge sent'). "
+            "5. 'freshness.assets_received_count' shows how many snapshots we've parsed since "
+            "connect — should keep growing (1 every ~30-60s)."
         )
     }
 

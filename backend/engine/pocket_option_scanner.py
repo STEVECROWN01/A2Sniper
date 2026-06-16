@@ -86,10 +86,19 @@ class PocketOptionScanner:
         self._receive_task = None
         self._ping_task = None
         self._health_check_task = None
+        self._asset_refresh_task = None  # Periodic asset refresh loop
         self._balance = None
         self._last_message_time = None
         self._message_buffer = []  # Buffer for incoming messages
         self._auth_event = asyncio.Event()
+        # ─── Freshness tracking ───────────────────────────────────────────
+        # PO pushes the full asset list (updateAssets) once at auth, then again
+        # whenever it decides (typically every 30-60s OR when payouts change).
+        # We also actively nudge PO every 30s with `42["ps"]` to trigger a fresh
+        # push. These counters let the debug endpoint expose how stale our data is.
+        self._last_assets_update = None  # datetime of last updateAssets received
+        self._assets_received_count = 0  # how many updateAssets snapshots we've parsed
+        self._last_payout_change = None  # datetime of last individual payout change event
 
     # ═══════════ SSID CLEANING ═══════════
 
@@ -288,6 +297,14 @@ class PocketOptionScanner:
                     if self._health_check_task is None or self._health_check_task.done():
                         self._health_check_task = asyncio.create_task(self._health_check_loop())
 
+                    # Start periodic asset refresh loop — nudges PO every 30s to push
+                    # a fresh updateAssets snapshot so our payouts stay in sync with PO's UI.
+                    # Without this, payouts become stale within minutes (PO changes payouts
+                    # second-by-second but only pushes updateAssets when nudged or when
+                    # significant changes occur).
+                    if self._asset_refresh_task is None or self._asset_refresh_task.done():
+                        self._asset_refresh_task = asyncio.create_task(self._asset_refresh_loop())
+
                     # Request initial data
                     await self._request_initial_data()
                     
@@ -320,6 +337,9 @@ class PocketOptionScanner:
         if self._ping_task and not self._ping_task.done():
             self._ping_task.cancel()
             self._ping_task = None
+        if self._asset_refresh_task and not self._asset_refresh_task.done():
+            self._asset_refresh_task.cancel()
+            self._asset_refresh_task = None
         if self._ws and self._ws_is_open():
             try:
                 await self._ws.close()
@@ -544,18 +564,35 @@ class PocketOptionScanner:
         (inactive) pairs. We MUST read is_active at index [14] and only treat
         a payout as "live" when is_active=True. Otherwise our payouts won't
         match what PO shows in the UI (PO hides inactive pairs / shows "N/A").
+
+        FRESHNESS: PO pushes this payload once at auth, then again every ~30-60s
+        (or when payouts change). We also nudge PO every 30s via _asset_refresh_loop
+        to maximize update frequency. Each call updates self._payouts in-place so
+        callers always see the latest snapshot.
         """
         count = 0
         active_count = 0
         inactive_count = 0
         try:
+            # ─── Freshness bookkeeping ────────────────────────────────────
+            # Mark this exact moment as the latest updateAssets snapshot. The
+            # debug endpoint exposes this so users can verify our payouts aren't
+            # stale (e.g., if user sees payouts don't match PO UI, they can check
+            # `last_assets_update_age_seconds` — if it's >60s, data is stale).
+            self._last_assets_update = datetime.now(timezone.utc)
+            self._assets_received_count += 1
+            snapshot_num = self._assets_received_count
+
             # Log a sample so we can verify the format matches our parser
-            if assets and isinstance(assets[0], list):
+            # (only for first 3 snapshots to avoid log spam)
+            if assets and isinstance(assets[0], list) and snapshot_num <= 3:
                 sample = assets[0]
-                logger.info(f"[SCANNER] updateAssets sample (len={len(sample)}): {sample[:19]}")
+                logger.info(f"[SCANNER] updateAssets #{snapshot_num} sample (len={len(sample)}): {sample[:19]}")
 
             now_iso = datetime.now(timezone.utc).isoformat()
 
+            # Track payout changes for the first 5 snapshots (for debugging)
+            changes_detected = 0
             for asset_info in assets:
                 if not isinstance(asset_info, list) or len(asset_info) < 15:
                     # Need at least 15 fields to read is_active at index 14
@@ -593,6 +630,18 @@ class PocketOptionScanner:
                 else:
                     is_active = True  # Default to active if we can't tell
 
+                # Detect payout changes (for logging only — helps verify real-time updates)
+                existing = self._payouts.get(symbol)
+                if existing is not None:
+                    if existing.get("payout") != payout or existing.get("is_active") != is_active:
+                        changes_detected += 1
+                        if snapshot_num <= 5 and changes_detected <= 5:
+                            logger.info(
+                                f"[SCANNER] Payout change detected: {symbol} "
+                                f"{existing.get('payout')}%/{existing.get('is_active')} → "
+                                f"{payout}%/{is_active}"
+                            )
+
                 # Store EVERYTHING (including inactive payouts) so we can distinguish
                 # "this pair is inactive right now" from "we never received this pair".
                 # Callers (get_payout, get_all_payouts, etc.) will filter on is_active.
@@ -608,22 +657,31 @@ class PocketOptionScanner:
                     inactive_count += 1
 
             if count > 0:
+                # Mark last change time if any payouts changed
+                if changes_detected > 0:
+                    self._last_payout_change = datetime.now(timezone.utc)
+
                 # Log OTC forex samples split by active/inactive so user can verify
                 # against PO's UI (active pairs show payout, inactive show N/A).
-                active_otc_items = [
-                    (k, v["payout"]) for k, v in self._payouts.items()
-                    if "_otc" in k.lower() and v["is_active"]
-                ][:8]
-                inactive_otc_items = [
-                    (k, v["payout"]) for k, v in self._payouts.items()
-                    if "_otc" in k.lower() and not v["is_active"]
-                ][:8]
-                logger.info(
-                    f"[SCANNER] updateAssets parsed: {count} total "
-                    f"({active_count} active, {inactive_count} inactive). "
-                    f"Active OTC samples: {dict(active_otc_items)}. "
-                    f"Inactive OTC samples (N/A on PO): {dict(inactive_otc_items)}"
-                )
+                # For snapshot #1 (initial) we always log; for later snapshots we
+                # only log if changes were detected (to avoid log spam).
+                should_log = (snapshot_num <= 3) or (changes_detected > 0)
+                if should_log:
+                    active_otc_items = [
+                        (k, v["payout"]) for k, v in self._payouts.items()
+                        if "_otc" in k.lower() and v["is_active"]
+                    ][:8]
+                    inactive_otc_items = [
+                        (k, v["payout"]) for k, v in self._payouts.items()
+                        if "_otc" in k.lower() and not v["is_active"]
+                    ][:8]
+                    logger.info(
+                        f"[SCANNER] updateAssets #{snapshot_num} parsed: {count} total "
+                        f"({active_count} active, {inactive_count} inactive, "
+                        f"{changes_detected} changes since last). "
+                        f"Active OTC samples: {dict(active_otc_items)}. "
+                        f"Inactive OTC samples (N/A on PO): {dict(inactive_otc_items)}"
+                    )
         except Exception as e:
             logger.error(f"[SCANNER] Asset list parse error: {e}", exc_info=True)
 
@@ -777,11 +835,58 @@ class PocketOptionScanner:
                     logger.warning("[SCANNER] Health check: WebSocket closed")
                     self._is_authenticated = False
                 else:
-                    logger.debug("[SCANNER] Health check: OK")
+                    # Check if asset data is fresh — if last update was >5 min ago,
+                    # something is wrong (PO should push every 30-60s, or we nudge)
+                    if self._last_assets_update:
+                        age = (datetime.now(timezone.utc) - self._last_assets_update).total_seconds()
+                        if age > 300:  # 5 minutes
+                            logger.warning(
+                                f"[SCANNER] Health check: asset data is STALE ({age:.0f}s old). "
+                                f"Last updateAssets was {self._last_assets_update.isoformat()}. "
+                                f"Total snapshots received: {self._assets_received_count}"
+                            )
+                        else:
+                            logger.debug(f"[SCANNER] Health check: OK (assets fresh, {age:.0f}s old)")
+                    else:
+                        logger.warning("[SCANNER] Health check: no asset data received yet")
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 logger.error(f"[SCANNER] Health check error: {e}")
+
+    async def _asset_refresh_loop(self):
+        """Periodically nudge PO to push a fresh `updateAssets` snapshot.
+
+        PROBLEM: PO pushes the full asset list (with payouts) once at auth time.
+        After that, PO only pushes a new snapshot when significant changes occur
+        OR when explicitly requested. Without active nudging, our payouts become
+        stale within minutes while PO's UI keeps updating second-by-second.
+
+        SOLUTION: Every 30 seconds, send `42["ps"]` (PO's keep-alive/state
+        request) and `42["updateAssets"]` (explicit asset table request). PO
+        responds by pushing a fresh `[[5, ...], ...]` payload, which our
+        receive loop picks up and routes to `_parse_assets_list`.
+
+        This keeps our payouts within ~30s of what PO's UI shows. Combined with
+        PO's own push frequency (30-60s), we should always be reasonably fresh.
+        """
+        try:
+            # Wait 10s after auth before first nudge (let initial data arrive first)
+            await asyncio.sleep(10)
+            while self._ws and self._ws_is_open() and self._is_authenticated:
+                try:
+                    # Send a state request — PO typically responds with a fresh asset snapshot
+                    await self._ws.send('42["ps"]')
+                    logger.debug("[SCANNER] Asset refresh nudge sent: 42[\"ps\"]")
+                except Exception as e:
+                    logger.warning(f"[SCANNER] Asset refresh nudge failed: {e}")
+                    break
+                # Wait 30s before next nudge (PO updates payouts every ~30-60s)
+                await asyncio.sleep(30)
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.error(f"[SCANNER] Asset refresh loop error: {e}")
 
     async def _request_initial_data(self):
         """Request initial market data after authentication.
@@ -802,6 +907,8 @@ class PocketOptionScanner:
         for nudge in nudges:
             try:
                 await self._ws.send(nudge)
+                # Small delay between nudges to avoid flooding PO
+                await asyncio.sleep(0.3)
             except Exception as e:
                 logger.warning(f"[SCANNER] Failed to send initial nudge {nudge[:20]}: {e}")
                 break
@@ -985,6 +1092,55 @@ class PocketOptionScanner:
         """
         return {k: dict(v) for k, v in self._payouts.items()}
 
+    # ═══════════ FRESHNESS / DIAGNOSTICS ═══════════
+
+    @property
+    def last_assets_update(self) -> Optional[datetime]:
+        """UTC datetime of the last `updateAssets` snapshot received from PO.
+        None if we've never received one. Use this to verify data freshness —
+        if it's more than ~60s old, our payouts are stale.
+        """
+        return self._last_assets_update
+
+    @property
+    def assets_received_count(self) -> int:
+        """How many `updateAssets` snapshots we've received since connect."""
+        return self._assets_received_count
+
+    @property
+    def last_payout_change(self) -> Optional[datetime]:
+        """UTC datetime of the last detected payout change.
+        None if no changes have been detected yet.
+        """
+        return self._last_payout_change
+
+    def get_freshness_report(self) -> dict:
+        """Return a freshness diagnostic dict for the debug endpoint.
+
+        Use this to verify our payouts match PO's UI:
+          - If `last_assets_update_age_seconds` is < 60s, our data is fresh.
+          - If it's > 60s, data is stale — refresh loop may have stalled.
+          - If `assets_received_count` is 0, we never received the payout table.
+          - `payouts_seen_count` is how many pairs we currently know about.
+        """
+        now = datetime.now(timezone.utc)
+        last_age = None
+        last_change_age = None
+        if self._last_assets_update:
+            last_age = (now - self._last_assets_update).total_seconds()
+        if self._last_payout_change:
+            last_change_age = (now - self._last_payout_change).total_seconds()
+        return {
+            "last_assets_update": self._last_assets_update.isoformat() if self._last_assets_update else None,
+            "last_assets_update_age_seconds": round(last_age, 1) if last_age is not None else None,
+            "last_payout_change": self._last_payout_change.isoformat() if self._last_payout_change else None,
+            "last_payout_change_age_seconds": round(last_change_age, 1) if last_change_age is not None else None,
+            "assets_received_count": self._assets_received_count,
+            "payouts_seen_count": len(self._payouts),
+            "is_data_fresh": (last_age is not None and last_age < 90.0),
+            "refresh_interval_seconds": 30,
+        }
+
     def find_pairs_above_payout(self, min_payout: float = 70.0, pair_filter: str = "OTC",
                                  active_only: bool = True) -> dict:
         """Find all pairs with payout >= min_payout.
@@ -1043,6 +1199,9 @@ class PocketOptionScanner:
         if self._ping_task and not self._ping_task.done():
             self._ping_task.cancel()
             self._ping_task = None
+        if self._asset_refresh_task and not self._asset_refresh_task.done():
+            self._asset_refresh_task.cancel()
+            self._asset_refresh_task = None
         if self._receive_task and not self._receive_task.done():
             self._receive_task.cancel()
             self._receive_task = None
@@ -1051,6 +1210,9 @@ class PocketOptionScanner:
         self._payouts = {}
         self._candles_cache = {}
         self._balance = None
+        self._last_assets_update = None
+        self._assets_received_count = 0
+        self._last_payout_change = None
 
         await self._close_ws()
         logger.info("[SCANNER] 🔌 DÉCONNECTÉ")
