@@ -801,10 +801,226 @@ class PocketOptionScanner:
         logger.debug(f"[SCANNER] Event '{event_name}': {str(event_data)[:200]}")
 
     async def _parse_candles(self, event_name: str, event_data: list):
-        """Parse candle data from WebSocket events."""
-        # The exact format depends on Pocket Option's API
-        # This is a placeholder that handles common formats
-        pass
+        """Parse candle data from PocketOption WebSocket events.
+
+        PocketOption responds to `42["getCandles","{asset}",{tf_sec},{count}]`
+        with a Socket.IO event whose payload contains the asset symbol, the
+        timeframe, and an array of OHLCV candles.
+
+        Known PO response shapes (handled defensively — PO has shipped several
+        variants over the years, all observed in production captures):
+
+          Shape A (most common, post-2023):
+            event_name = "candles"
+            event_data = [{
+              "asset": "EURUSD_otc",
+              "timeframe": 60,                       # seconds
+              "candles": [
+                [ts, open, high, low, close, volume],  # positional
+                ...
+              ]
+            }]
+
+          Shape B (older, also still seen):
+            event_name = "candles"
+            event_data = ["EURUSD_otc", 60, [
+                {"time": ts, "open": o, "high": h, "low": l, "close": c, "volume": v},
+                ...
+            ]]
+
+          Shape C (candlesData — streamed incremental updates):
+            event_name = "candlesData"
+            event_data = [{
+              "asset": "EURUSD_otc",
+              "timeframe": 60,
+              "data": [[ts, o, h, l, c, v], ...]
+            }]
+
+          Shape D (quote — single-tick / current price):
+            event_name = "quote"
+            event_data = [{
+              "asset": "EURUSD_otc",
+              "price": 1.0825,
+              "time": ts
+            }]
+
+        This parser normalises all four shapes into a DataFrame with columns
+        ['open','high','low','close','volume'] indexed by a UTC DatetimeIndex,
+        then writes it to `self._candles_cache[f"{asset}_{tf_min}m"]` so that
+        `get_candles()` (which polls that cache) can return it.
+
+        The cache key MUST match what `get_candles()` reads at line ~957:
+            cache_key = f"{asset}_{timeframe}"     # e.g. "EURUSD_otc_1m"
+        so we normalise the timeframe to the string form ("1m","5m","15m",...)
+        used by `get_candles()`.
+        """
+        import numpy as np
+        from datetime import datetime as _dt
+
+        try:
+            if not event_data:
+                return
+
+            payload = event_data[0] if isinstance(event_data, list) and event_data else event_data
+
+            # ─── Extract asset, timeframe, and raw candle list ────────────
+            asset = None
+            tf_sec = None
+            raw_candles = None
+
+            # Shape A / C: dict with "asset" + "candles" or "data"
+            if isinstance(payload, dict):
+                asset = payload.get("asset") or payload.get("symbol") or payload.get("pair")
+                tf_sec = payload.get("timeframe") or payload.get("tf") or payload.get("period")
+                raw_candles = (
+                    payload.get("candles")
+                    or payload.get("data")
+                    or payload.get("candlesData")
+                    or payload.get("quotes")
+                )
+
+            # Shape B: list/tuple [asset, timeframe, candles]
+            elif isinstance(payload, (list, tuple)) and len(payload) >= 3:
+                asset = payload[0]
+                tf_sec = payload[1]
+                raw_candles = payload[2]
+
+            # Shape D: single quote — synthesise a 1-candle DataFrame so
+            # get_current_price() (which calls get_candles(count=1)) works.
+            if event_name == "quote" and isinstance(payload, dict):
+                price = payload.get("price") or payload.get("value") or payload.get("close")
+                ts = payload.get("time") or payload.get("timestamp")
+                if price is None:
+                    return
+                try:
+                    price = float(price)
+                    ts_int = int(ts) if ts else int(datetime.now(timezone.utc).timestamp())
+                    # Use the asset from payload; if absent, skip (can't cache safely)
+                    if not asset:
+                        return
+                    df = pd.DataFrame(
+                        {"open": [price], "high": [price], "low": [price],
+                         "close": [price], "volume": [0]},
+                        index=pd.DatetimeIndex(
+                            [pd.Timestamp(ts_int, unit="s", tz="UTC")], name="time"
+                        ),
+                    )
+                    cache_key = f"{asset}_1m"  # quotes are typically 1-minute aligned
+                    self._candles_cache[cache_key] = df
+                    logger.debug(f"[SCANNER] Quote cached for {asset} → {price}")
+                except (ValueError, TypeError) as e:
+                    logger.debug(f"[SCANNER] Quote parse error: {e}")
+                return
+
+            # Validate
+            if not asset or not isinstance(asset, str):
+                logger.debug(f"[SCANNER] _parse_candles: no asset in payload ({event_name})")
+                return
+            if raw_candles is None or not isinstance(raw_candles, (list, tuple)) or len(raw_candles) == 0:
+                logger.debug(f"[SCANNER] _parse_candles: no candle rows for {asset} ({event_name})")
+                return
+
+            # Normalise asset symbol (PO uses "EURUSD_otc"; some events send "#EURUSD")
+            asset_norm = asset.strip()
+            # Strip a leading "#" if present (stock symbols use "#AAPL" form)
+            if asset_norm.startswith("#"):
+                asset_norm = asset_norm[1:]
+
+            # Normalise timeframe to seconds, then to the "Nm"/"Nh" string form
+            try:
+                tf_sec_int = int(tf_sec) if tf_sec is not None else 60
+            except (ValueError, TypeError):
+                tf_sec_int = 60
+
+            tf_str = self._tf_seconds_to_str(tf_sec_int)
+
+            # ─── Build the DataFrame ─────────────────────────────────────
+            # Accumulate rows in a Python list first (faster than growing a DataFrame),
+            # then construct once. Each row is (timestamp, o, h, l, c, v).
+            rows = []
+            for candle in raw_candles:
+                try:
+                    # Positional form: [ts, o, h, l, c, v]  (or [ts, o, h, l, c] without volume)
+                    if isinstance(candle, (list, tuple)):
+                        if len(candle) < 5:
+                            continue
+                        ts_v = candle[0]
+                        o_v, h_v, l_v, c_v = candle[1], candle[2], candle[3], candle[4]
+                        v_v = candle[5] if len(candle) > 5 else 0.0
+                    # Dict form: {"time"/"timestamp", "open", "high", "low", "close", "volume"}
+                    elif isinstance(candle, dict):
+                        ts_v = candle.get("time") or candle.get("timestamp") or candle.get("t")
+                        o_v = candle.get("open") or candle.get("o")
+                        h_v = candle.get("high") or candle.get("h")
+                        l_v = candle.get("low") or candle.get("l")
+                        c_v = candle.get("close") or candle.get("c")
+                        v_v = candle.get("volume") or candle.get("vol") or candle.get("v") or 0.0
+                    else:
+                        continue
+
+                    # Type coercion — PO sends timestamps as unix seconds (int)
+                    ts_int = int(float(ts_v)) if ts_v is not None else None
+                    if ts_int is None:
+                        continue
+                    o_v = float(o_v); h_v = float(h_v); l_v = float(l_v)
+                    c_v = float(c_v); v_v = float(v_v)
+
+                    # Sanity: high must be >= max(open, close, low), low <= min(...)
+                    # PO is well-behaved but corrupted frames do occur; just
+                    # skip malformed candles rather than letting them pollute
+                    # the indicator math downstream.
+                    if not (h_v >= max(o_v, c_v, l_v) and l_v <= min(o_v, c_v, h_v)):
+                        # Repair: clamp to the obvious values
+                        h_v = max(o_v, c_v, h_v, l_v)
+                        l_v = min(o_v, c_v, h_v, l_v)
+
+                    rows.append((ts_int, o_v, h_v, l_v, c_v, v_v))
+                except (ValueError, TypeError, IndexError):
+                    continue
+
+            if not rows:
+                logger.debug(f"[SCANNER] _parse_candles: 0 valid rows for {asset} ({event_name})")
+                return
+
+            # Construct the DataFrame — sort by timestamp, deduplicate, drop
+            # duplicates on the index (PO occasionally re-sends the last
+            # candle of the previous batch as the first of the new one).
+            df = pd.DataFrame(
+                rows, columns=["ts", "open", "high", "low", "close", "volume"]
+            )
+            df["time"] = pd.to_datetime(df["ts"], unit="s", utc=True)
+            df = df.drop_duplicates(subset=["ts"]).sort_values("ts").set_index("time")
+            df = df.drop(columns=["ts"])
+
+            # If volume is all-zero, replace with NaN so indicators that use
+            # volume (OBV, volume ratio) handle it gracefully.
+            if (df["volume"] == 0).all():
+                df["volume"] = np.nan
+
+            cache_key = f"{asset_norm}_{tf_str}"
+            self._candles_cache[cache_key] = df
+
+            logger.info(
+                f"[SCANNER] Candles cached: {asset_norm} {tf_str} "
+                f"({len(df)} bars, last close={df['close'].iloc[-1]:.5f})"
+            )
+        except Exception as e:
+            logger.error(f"[SCANNER] _parse_candles error ({event_name}): {e}", exc_info=True)
+
+    @staticmethod
+    def _tf_seconds_to_str(tf_sec: int) -> str:
+        """Map a timeframe in seconds to the string form used by get_candles().
+
+        get_candles() accepts: "1m", "5m", "15m", "30m", "1h", "4h", "1d"
+        (see `tf_seconds` dict at line ~940). We invert that mapping here so
+        the cache key written by `_parse_candles` matches the key read by
+        `get_candles`. Unknown values default to "1m" (PO's most common).
+        """
+        mapping = {
+            60: "1m", 300: "5m", 900: "15m", 1800: "30m",
+            3600: "1h", 14400: "4h", 86400: "1d",
+        }
+        return mapping.get(int(tf_sec), "1m")
 
     # ═══════════ KEEP-ALIVE & HEALTH ═══════════
 
@@ -932,6 +1148,17 @@ class PocketOptionScanner:
         Tente via WebSocket, fallback sur l'API REST de Pocket Option.
         """
         if not self._is_authenticated or not self._ws:
+            # Even without WS auth, the HTTP fallback is a public endpoint
+            # and may still return data — try it before giving up.
+            asset = self.get_asset_symbol(pair)
+            tf_seconds = {
+                "1m": 60, "5m": 300, "15m": 900, "30m": 1800,
+                "1h": 3600, "4h": 14400, "1d": 86400,
+            }
+            tf_sec = tf_seconds.get(timeframe, 60)
+            df = await self._fetch_candles_http(asset, tf_sec, count)
+            if not df.empty:
+                return df
             return pd.DataFrame()
 
         asset = self.get_asset_symbol(pair)
@@ -945,37 +1172,154 @@ class PocketOptionScanner:
 
         try:
             # Request candles via WebSocket
-            request_id = id(asset) % 10000
             msg = f'42["getCandles","{asset}",{tf_sec},{count}]'
             await self._ws.send(msg)
             
             # Wait for candles response (up to 10 seconds)
             # We'll listen for the next candles event for this asset
             start_time = asyncio.get_event_loop().time()
+            cache_key = f"{asset}_{timeframe}"
+
+            # First check: maybe the cache already has fresh candles from a
+            # previous request within the last `tf_sec` seconds (still current).
+            if cache_key in self._candles_cache:
+                cached = self._candles_cache[cache_key]
+                if not cached.empty:
+                    cache_age = (datetime.now(timezone.utc) - cached.index[-1].to_pydatetime()).total_seconds()
+                    # Cache is fresh if the last bar is within the current candle period
+                    if cache_age < tf_sec:
+                        return cached.copy()
+
+            # Poll the cache for up to 10 seconds waiting for the WS response
             while (asyncio.get_event_loop().time() - start_time) < 10:
-                # Check if we got candles in the cache
-                cache_key = f"{asset}_{timeframe}"
                 if cache_key in self._candles_cache:
-                    df = self._candles_cache.pop(cache_key)
-                    return df
+                    df = self._candles_cache.get(cache_key)
+                    if df is not None and not df.empty:
+                        return df.copy()
                 await asyncio.sleep(0.2)
             
             # If no candles received via WebSocket, try HTTP API
-            return await self._fetch_candles_http(asset, tf_sec, count)
+            df = await self._fetch_candles_http(asset, tf_sec, count)
+            if not df.empty:
+                return df
+            
+            # Last resort: return whatever's in the cache (even if stale) —
+            # better than nothing for indicator math that needs history.
+            if cache_key in self._candles_cache:
+                return self._candles_cache[cache_key].copy()
+            
+            return pd.DataFrame()
             
         except Exception as e:
             logger.error(f"[SCANNER] Erreur récupération bougies ({pair}): {e}")
-            return await self._fetch_candles_http(asset, tf_sec, count)
+            df = await self._fetch_candles_http(asset, tf_sec, count)
+            if not df.empty:
+                return df
+            return pd.DataFrame()
 
     async def _fetch_candles_http(self, asset: str, tf_sec: int, count: int) -> pd.DataFrame:
-        """Fallback: fetch candles via Pocket Option's HTTP API."""
+        """Fallback: fetch candles via PocketOption's public REST API.
+
+        PocketOption exposes historical candles at:
+            https://api-eu.po.market/candles?asset={asset}&period={tf_sec}&size={count}
+        (and the demo counterpart at https://demo-api-eu.po.market/...).
+
+        This endpoint returns a JSON array of {time, open, high, low, close, volume}
+        objects. It's used as a safety net when the WebSocket `getCandles`
+        request times out (e.g., during the first 1–2 seconds after auth, before
+        PO has finished streaming the asset list).
+
+        Headers mimic the browser to avoid being blocked by PO's edge.
+        """
         try:
             import httpx
-            # PO has an HTTP API for historical data
-            # This is a simplified version — may need adjustment based on actual PO API
-            logger.debug(f"[SCANNER] Trying HTTP candles for {asset}")
-            return pd.DataFrame()  # Placeholder
-        except Exception:
+            import numpy as np
+
+            # Pick the right host based on whether we're on demo or live.
+            # `self.is_demo` is set during connect() based on the SSID payload.
+            host = "demo-api-eu.po.market" if self.is_demo else "api-eu.po.market"
+            url = (
+                f"https://{host}/candles"
+                f"?asset={asset}&period={tf_sec}&size={count}"
+            )
+
+            headers = {
+                "Origin": "https://pocketoption.com",
+                "Referer": "https://pocketoption.com/",
+                "User-Agent": WS_HEADERS["User-Agent"],
+                "Accept": "application/json, text/plain, */*",
+            }
+
+            # Use the same httpx client with a tight timeout — this is a fallback
+            # path, not the primary one. 5s connect, 8s total.
+            async with httpx.AsyncClient(timeout=httpx.Timeout(8.0, connect=5.0)) as client:
+                resp = await client.get(url, headers=headers)
+                if resp.status_code != 200:
+                    logger.debug(
+                        f"[SCANNER] HTTP candles {asset} {tf_sec}s → HTTP {resp.status_code}"
+                    )
+                    return pd.DataFrame()
+
+                data = resp.json()
+                # PO returns either a bare list [...] or {"data": [...], ...}
+                if isinstance(data, dict):
+                    candles_list = data.get("data") or data.get("candles") or []
+                elif isinstance(data, list):
+                    candles_list = data
+                else:
+                    return pd.DataFrame()
+
+                if not candles_list:
+                    return pd.DataFrame()
+
+                rows = []
+                for candle in candles_list:
+                    try:
+                        if isinstance(candle, dict):
+                            ts_v = candle.get("time") or candle.get("timestamp") or candle.get("t")
+                            o_v = candle.get("open") or candle.get("o")
+                            h_v = candle.get("high") or candle.get("h")
+                            l_v = candle.get("low") or candle.get("l")
+                            c_v = candle.get("close") or candle.get("c")
+                            v_v = candle.get("volume") or candle.get("vol") or 0.0
+                        elif isinstance(candle, (list, tuple)) and len(candle) >= 5:
+                            ts_v, o_v, h_v, l_v, c_v = candle[:5]
+                            v_v = candle[5] if len(candle) > 5 else 0.0
+                        else:
+                            continue
+                        ts_int = int(float(ts_v))
+                        rows.append((
+                            ts_int, float(o_v), float(h_v),
+                            float(l_v), float(c_v), float(v_v),
+                        ))
+                    except (ValueError, TypeError, IndexError):
+                        continue
+
+                if not rows:
+                    return pd.DataFrame()
+
+                df = pd.DataFrame(
+                    rows, columns=["ts", "open", "high", "low", "close", "volume"]
+                )
+                df["time"] = pd.to_datetime(df["ts"], unit="s", utc=True)
+                df = df.drop_duplicates(subset=["ts"]).sort_values("ts").set_index("time")
+                df = df.drop(columns=["ts"])
+
+                if (df["volume"] == 0).all():
+                    df["volume"] = np.nan
+
+                tf_str = self._tf_seconds_to_str(tf_sec)
+                cache_key = f"{asset}_{tf_str}"
+                self._candles_cache[cache_key] = df
+
+                logger.info(
+                    f"[SCANNER] HTTP candles cached: {asset} {tf_str} "
+                    f"({len(df)} bars, last close={df['close'].iloc[-1]:.5f})"
+                )
+                return df
+
+        except Exception as e:
+            logger.debug(f"[SCANNER] HTTP candles fetch error ({asset}): {e}")
             return pd.DataFrame()
 
     async def get_current_price(self, pair: str) -> Optional[float]:

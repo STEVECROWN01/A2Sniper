@@ -546,7 +546,19 @@ async def analyze_pair_internal(pair: str, force: bool = False) -> dict:
             return None
 
     # AI Voting Classifier (sauf si forcé)
-    if not force:
+    # NOTE: The voting classifier is permanently in simulation_mode because
+    # `torch` is not in requirements.txt and no trained weights exist at
+    # backend/models/weights/. Running it in simulation mode means it makes
+    # heuristic NO_TRADE decisions that block legitimate signals — so by
+    # default we SKIP the voting gate entirely. The CDC 10-factor scoring
+    # above (smc_structure + MTF alignment + order block + FVG + chart
+    # pattern + candle pattern + fibonacci + RSI/MACD + volume + session)
+    # is more than strong enough to gate signals on its own.
+    #
+    # To re-enable the voting gate (after training real models and adding
+    # `torch` to requirements.txt), set ENABLE_AI_VOTING_GATE=True below.
+    ENABLE_AI_VOTING_GATE = False
+    if ENABLE_AI_VOTING_GATE and not force:
         features = _build_ai_features(df_m1, smc_result, fibo, active_patterns, divs)
         ai_result = voting_model.predict(features)
         if not ai_result.get('approved', False):
