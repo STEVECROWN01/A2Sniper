@@ -102,6 +102,13 @@ class PocketOptionScanner:
         self._last_assets_update = None  # datetime of last updateAssets received
         self._assets_received_count = 0  # how many updateAssets snapshots we've parsed
         self._last_payout_change = None  # datetime of last individual payout change event
+        # ─── DEBUG: raw message capture (first 100 messages after auth) ──
+        # This is a temporary diagnostic to discover PO's actual WS protocol.
+        # Once we fix the candle parser, this can be removed.
+        self._debug_message_count = 0
+        self._debug_max_messages = 100  # capture first 100 messages after auth
+        self._debug_candle_requests_sent = set()  # track which assets we've requested candles for
+        self._debug_candle_responses_received = []  # log of candle-related events
 
     # ═══════════ SSID CLEANING ═══════════
 
@@ -364,7 +371,31 @@ class PocketOptionScanner:
                     if self._ws and self._ws_is_open():
                         continue
                     break
-                
+
+                # ─── DEBUG: log first N raw messages after auth ──────────
+                # This captures PO's actual WS protocol so we can fix the
+                # candle parser. Remove this block once the parser is fixed.
+                if self._is_authenticated and self._debug_message_count < self._debug_max_messages:
+                    self._debug_message_count += 1
+                    msg_preview = message if isinstance(message, str) else f"<bytes len={len(message)}>"
+                    # Truncate very long messages (updateAssets can be 50KB+)
+                    if len(msg_preview) > 500:
+                        msg_preview = msg_preview[:500] + f"...<truncated, total {len(message)} chars>"
+                    logger.info(
+                        f"[DEBUG-WS #{self._debug_message_count:03d}] "
+                        f"raw_msg={msg_preview}"
+                    )
+                    # Also tag any message containing "candle" or "Candle" (case-insensitive)
+                    # so we can find them quickly in the logs
+                    if isinstance(message, str):
+                        for keyword in ("candle", "Candle", "quote", "Quote", "tick", "Tick"):
+                            if keyword in message:
+                                logger.info(
+                                    f"[DEBUG-CANDLE #{self._debug_message_count:03d}] "
+                                    f"FOUND '{keyword}' in message: {message[:1000]}"
+                                )
+                                break
+
                 # Handle binary messages (Socket.IO binary attachments)
                 # After a "451-" text frame, binary data arrives as bytes
                 if isinstance(message, bytes):
@@ -372,7 +403,7 @@ class PocketOptionScanner:
                         # Try to decode as UTF-8 (some binary frames are actually text)
                         decoded = message.decode('utf-8')
                         self._last_message_time = datetime.now(timezone.utc)
-                        
+
                         # Binary attachment data — typically JSON array of assets
                         # This arrives after a "451-[\"updateAssets\",...]" frame
                         if decoded.startswith('[') or decoded.startswith('{'):
@@ -394,14 +425,14 @@ class PocketOptionScanner:
                         self._last_message_time = datetime.now(timezone.utc)
                         await self._handle_binary_data(message)
                     continue
-                
+
                 self._last_message_time = datetime.now(timezone.utc)
-                
+
                 try:
                     await self._handle_message(message)
                 except Exception as e:
                     logger.error(f"[SCANNER] Error handling message: {e}")
-                    
+
         except websockets.exceptions.ConnectionClosed as e:
             code = getattr(e, 'code', 'unknown')
             reason = getattr(e, 'reason', '')
@@ -714,6 +745,19 @@ class PocketOptionScanner:
 
     async def _handle_event(self, event_name: str, event_data: list):
         """Handle Socket.IO named events."""
+
+        # ─── DEBUG: log EVERY event name we receive (first 200 events) ──
+        # This tells us what event names PO actually uses, so we can fix
+        # the candle parser. Remove once fixed.
+        if not hasattr(self, '_debug_event_count'):
+            self._debug_event_count = 0
+        self._debug_event_count += 1
+        if self._debug_event_count <= 200:
+            data_preview = str(event_data)[:300]
+            logger.info(
+                f"[DEBUG-EVENT #{self._debug_event_count:03d}] "
+                f"name='{event_name}' data={data_preview}"
+            )
 
         # Auth success event
         if event_name == "successauth":
@@ -1074,28 +1118,36 @@ class PocketOptionScanner:
         """Periodic health check to verify the connection is still alive."""
         while True:
             try:
-                await asyncio.sleep(15)
+                await asyncio.sleep(60)  # every 60s (was 15s — too noisy)
                 if not self._is_authenticated:
                     logger.warning("[SCANNER] Health check: not authenticated")
                 elif self._ws and not self._ws_is_open():
                     logger.warning("[SCANNER] Health check: WebSocket closed")
                     self._is_authenticated = False
                 else:
-                    # Check if asset data is fresh — if last update was >60s ago,
-                    # something is wrong (we nudge PO every 5s, so data should be
-                    # at most ~10s old under normal conditions)
-                    if self._last_assets_update:
-                        age = (datetime.now(timezone.utc) - self._last_assets_update).total_seconds()
-                        if age > 60:  # 1 minute — refresh loop may have stalled
-                            logger.warning(
-                                f"[SCANNER] Health check: asset data is STALE ({age:.0f}s old). "
-                                f"Last updateAssets was {self._last_assets_update.isoformat()}. "
-                                f"Total snapshots received: {self._assets_received_count}"
-                            )
-                        else:
-                            logger.debug(f"[SCANNER] Health check: OK (assets fresh, {age:.0f}s old)")
+                    # NOTE: PO pushes the full asset list (updateAssets) once at
+                    # auth, then only sends incremental `payout` events as values
+                    # change. The "stale" check below was a false alarm — data
+                    # is NOT stale just because updateAssets hasn't been re-pushed.
+                    # The real freshness signal is `last_payout_change` (incremental
+                    # updates) or simply whether we have ANY payouts in store.
+                    if self._payouts:
+                        active_count = sum(1 for v in self._payouts.values() if v.get("is_active"))
+                        last_change_age = (
+                            (datetime.now(timezone.utc) - self._last_payout_change).total_seconds()
+                            if self._last_payout_change else None
+                        )
+                        logger.debug(
+                            f"[SCANNER] Health check: OK "
+                            f"({len(self._payouts)} pairs total, {active_count} active, "
+                            f"last payout change: "
+                            f"{f'{last_change_age:.0f}s ago' if last_change_age else 'never'})"
+                        )
                     else:
-                        logger.warning("[SCANNER] Health check: no asset data received yet")
+                        logger.warning(
+                            "[SCANNER] Health check: no asset data received yet — "
+                            "scanner may not be properly subscribed"
+                        )
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -1204,7 +1256,13 @@ class PocketOptionScanner:
             # Request candles via WebSocket
             msg = f'42["getCandles","{asset}",{tf_sec},{count}]'
             await self._ws.send(msg)
-            
+            # ─── DEBUG: log the getCandles request so we can correlate with responses
+            self._debug_candle_requests_sent.add(asset)
+            logger.info(
+                f"[DEBUG-GETCANDLES] Sent WS request for {asset} tf={timeframe}({tf_sec}s) count={count} "
+                f"— total unique assets requested so far: {len(self._debug_candle_requests_sent)}"
+            )
+
             # Wait for candles response (up to 10 seconds)
             # We'll listen for the next candles event for this asset
             start_time = asyncio.get_event_loop().time()
@@ -1218,6 +1276,7 @@ class PocketOptionScanner:
                     cache_age = (datetime.now(timezone.utc) - cached.index[-1].to_pydatetime()).total_seconds()
                     # Cache is fresh if the last bar is within the current candle period
                     if cache_age < tf_sec:
+                        logger.info(f"[DEBUG-GETCANDLES] Cache hit for {asset} (age={cache_age:.0f}s)")
                         return cached.copy()
 
             # Poll the cache for up to 10 seconds waiting for the WS response
@@ -1225,21 +1284,32 @@ class PocketOptionScanner:
                 if cache_key in self._candles_cache:
                     df = self._candles_cache.get(cache_key)
                     if df is not None and not df.empty:
+                        logger.info(
+                            f"[DEBUG-GETCANDLES] WS response received for {asset} "
+                            f"({len(df)} bars) after {asyncio.get_event_loop().time() - start_time:.1f}s"
+                        )
                         return df.copy()
                 await asyncio.sleep(0.2)
-            
+
+            # ─── DEBUG: log that we timed out waiting for the WS response
+            logger.warning(
+                f"[DEBUG-GETCANDLES] TIMEOUT waiting for {asset} {timeframe} "
+                f"— WS request sent but no response in 10s. "
+                f"Check [DEBUG-EVENT] and [DEBUG-CANDLE] logs above for what PO actually sent."
+            )
+
             # If no candles received via WebSocket, try HTTP API
             df = await self._fetch_candles_http(asset, tf_sec, count)
             if not df.empty:
                 return df
-            
+
             # Last resort: return whatever's in the cache (even if stale) —
             # better than nothing for indicator math that needs history.
             if cache_key in self._candles_cache:
                 return self._candles_cache[cache_key].copy()
-            
+
             return pd.DataFrame()
-            
+
         except Exception as e:
             logger.error(f"[SCANNER] Erreur récupération bougies ({pair}): {e}")
             df = await self._fetch_candles_http(asset, tf_sec, count)
