@@ -2,7 +2,7 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system dependencies needed for numpy, scipy, xgboost
+# Install system dependencies needed for numpy, scipy, xgboost, torch
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     g++ \
@@ -12,8 +12,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy requirements first for better Docker layer caching
 COPY requirements.txt .
 
-# Install Python dependencies
+# Install Python dependencies.
+# PyTorch is installed from the CPU-only wheel index to keep the image small
+# (~200 MB torch vs 2+ GB CUDA torch). Railway standard plans have no GPU.
 RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu && \
     pip install --no-cache-dir -r requirements.txt
 
 # Copy the entire backend code

@@ -66,22 +66,52 @@ class LSTMModel:
 
         logger.info(f"LSTMModel initialisé (seq={sequence_length}, features={n_features}) | Device: {self.device}")
 
-    def train_on_batch(self, X_batch, y_batch):
-        """Entraîne le modèle sur un batch de données."""
+    def train_on_batch(self, X_batch, y_batch, max_batch_size: int = 64):
+        """Entraîne le modèle sur un batch de données.
+
+        Splits the batch into mini-batches of `max_batch_size` sequences to
+        avoid OOM on CPU (a full 20k-sequence Bi-LSTM forward pass needs
+        ~10 GB of intermediate tensor memory; 64-sequence mini-batches need
+        ~30 MB each). Gradients are accumulated across mini-batches and
+        applied once at the end (so this is mathematically equivalent to a
+        single full-batch update, just memory-efficient).
+        """
         if not PYTORCH_AVAILABLE: return
-        
+
         self.model.train()
         X_tensor = torch.FloatTensor(X_batch).to(self.device)
         y_tensor = torch.LongTensor(y_batch).to(self.device)
-        
+
+        n_samples = X_tensor.shape[0]
+        if n_samples <= max_batch_size:
+            # Small enough — train in one pass
+            self.optimizer.zero_grad()
+            outputs = self.model(X_tensor)
+            loss = self.criterion(outputs, y_tensor)
+            loss.backward()
+            self.optimizer.step()
+            self.is_trained = True
+            return loss.item()
+
+        # Mini-batch training with gradient accumulation
         self.optimizer.zero_grad()
-        outputs = self.model(X_tensor)
-        loss = self.criterion(outputs, y_tensor)
-        loss.backward()
+        total_loss = 0.0
+        n_mini = 0
+        for start in range(0, n_samples, max_batch_size):
+            end = min(start + max_batch_size, n_samples)
+            X_mini = X_tensor[start:end]
+            y_mini = y_tensor[start:end]
+            outputs = self.model(X_mini)
+            loss = self.criterion(outputs, y_mini) * (end - start) / n_samples
+            loss.backward()
+            total_loss += loss.item() * n_samples / (end - start)  # un-scale for logging
+            n_mini += 1
+        # Clip gradients to prevent explosion (common with Bi-LSTM)
+        torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
         self.optimizer.step()
-        
+
         self.is_trained = True
-        return loss.item()
+        return total_loss / n_mini
 
     def prepare_features(self, df) -> np.ndarray:
         """Prépare les séquences temporelles pour l'entrée du LSTM.

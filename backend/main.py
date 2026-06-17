@@ -97,6 +97,37 @@ voting_model = VotingClassifierModel()
 po_scanner = PocketOptionScanner()
 telegram_bot = TelegramSignalBot(scanner=po_scanner)
 
+# Load pre-trained model weights at startup (don't wait for the 72h retraining_loop).
+# The weights are at backend/models/weights/{lstm_v3.pt, transformer_v3.pt, xgboost_v3.json}.
+# If no weights exist, models stay in simulation mode and the AI gate is skipped.
+# Train via: python3 /home/z/my-project/scripts/run_fast_training.py
+try:
+    import os as _os
+    _WEIGHTS_DIR = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), 'models', 'weights')
+    _lstm_path = _os.path.join(_WEIGHTS_DIR, 'lstm_v3.pt')
+    _trans_path = _os.path.join(_WEIGHTS_DIR, 'transformer_v3.pt')
+    _xgb_path = _os.path.join(_WEIGHTS_DIR, 'xgboost_v3.json')
+
+    if _os.path.exists(_xgb_path):
+        if voting_model.xgboost.load(_xgb_path):
+            logger.info(f"✅ XGBoost weights loaded from {_xgb_path}")
+    else:
+        logger.info("ℹ️ No XGBoost weights found — train via run_fast_training.py")
+
+    if _os.path.exists(_lstm_path):
+        if voting_model.lstm.load(_lstm_path):
+            logger.info(f"✅ LSTM weights loaded from {_lstm_path}")
+    else:
+        logger.info("ℹ️ No LSTM weights found — LSTM in simulation mode")
+
+    if _os.path.exists(_trans_path):
+        if voting_model.transformer.load(_trans_path):
+            logger.info(f"✅ Transformer weights loaded from {_trans_path}")
+    else:
+        logger.info("ℹ️ No Transformer weights found — Transformer in simulation mode")
+except Exception as _e:
+    logger.warning(f"Model weight loading failed at startup: {_e}")
+
 # Rate limiting config
 RATE_LIMIT_REQUESTS = 2000 # Augmenté pour permettre le polling du dashboard
 RATE_LIMIT_WINDOW = 3600 # 1 hour
@@ -546,24 +577,44 @@ async def analyze_pair_internal(pair: str, force: bool = False) -> dict:
             return None
 
     # AI Voting Classifier (sauf si forcé)
-    # NOTE: The voting classifier is permanently in simulation_mode because
-    # `torch` is not in requirements.txt and no trained weights exist at
-    # backend/models/weights/. Running it in simulation mode means it makes
-    # heuristic NO_TRADE decisions that block legitimate signals — so by
-    # default we SKIP the voting gate entirely. The CDC 10-factor scoring
-    # above (smc_structure + MTF alignment + order block + FVG + chart
-    # pattern + candle pattern + fibonacci + RSI/MACD + volume + session)
-    # is more than strong enough to gate signals on its own.
+    # Three modes based on which models are trained:
+    #   - All 3 trained (LSTM + Transformer + XGBoost): full voting classifier
+    #   - Only XGBoost trained: use XGBoost as sole AI gate (skip voting)
+    #   - None trained: skip AI gate entirely (CDC 10-factor scoring suffices)
     #
-    # To re-enable the voting gate (after training real models and adding
-    # `torch` to requirements.txt), set ENABLE_AI_VOTING_GATE=True below.
-    ENABLE_AI_VOTING_GATE = False
-    if ENABLE_AI_VOTING_GATE and not force:
+    # The XGBoost model is trained via /home/z/my-project/scripts/run_fast_training.py
+    # and saved to backend/models/weights/xgboost_v3.json. The backend loads it
+    # on startup via TrainingPipeline._load_models(). When the LSTM/Transformer
+    # are also trained (requires `torch` + GPU), the full voting classifier kicks in.
+    ENABLE_AI_GATE = True  # Set False to disable AI gating entirely
+    if ENABLE_AI_GATE and not force:
         features = _build_ai_features(df_m1, smc_result, fibo, active_patterns, divs)
-        ai_result = voting_model.predict(features)
-        if not ai_result.get('approved', False):
-            logger.info(f"[{pair}] Rejeté par Voting Classifier")
-            return None
+
+        # Check which sub-models are actually trained
+        xgb_trained = getattr(voting_model.xgboost, 'is_trained', False)
+        lstm_trained = getattr(voting_model.lstm, 'is_trained', False)
+        transformer_trained = getattr(voting_model.transformer, 'is_trained', False)
+
+        if xgb_trained and lstm_trained and transformer_trained:
+            # Full voting classifier — all 3 models real
+            ai_result = voting_model.predict(features)
+            if not ai_result.get('approved', False):
+                logger.info(f"[{pair}] Rejeté par Voting Classifier (full 3-model)")
+                return None
+        elif xgb_trained:
+            # Only XGBoost is trained — use it as the sole AI gate
+            # (LSTM/Transformer would just produce heuristic NO_TRADE noise)
+            ai_result = voting_model.xgboost.predict(features)
+            ai_direction = ai_result.get('direction', 'NO_TRADE')
+            ai_prob = ai_result.get('probability', 0)
+            if ai_direction == 'NO_TRADE':
+                logger.info(f"[{pair}] Rejeté par XGBoost (NO_TRADE, prob={ai_prob:.1f}%)")
+                return None
+            # If XGBoost says CALL or PUT, log it for transparency but don't block
+            logger.info(f"[{pair}] XGBoost approval: {ai_direction} ({ai_prob:.1f}%)")
+        else:
+            # No models trained — skip AI gate (CDC 10-factor scoring suffices)
+            pass
 
     # Construire le signal
     global signal_counter

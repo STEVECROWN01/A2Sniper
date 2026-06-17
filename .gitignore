@@ -42,3 +42,24 @@ next-env.d.ts
 *.log
 backend/backend.log
 __pycache__/
+
+# A2Sniper ML training data — too large for git (167MB), regeneratable via
+# scripts/generate_training_data.py
+backend/data/training_multi_pair_6m.csv
+backend/data/live_candles.csv
+backend/data/live_candles_*.csv
+
+# Large PyTorch weights (regeneratable via scripts/run_training.py)
+backend/models/weights/lstm_v3.pt
+backend/models/weights/transformer_v3.pt
+
+# Python
+*.pyc
+__pycache__/
+*.egg-info/
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/

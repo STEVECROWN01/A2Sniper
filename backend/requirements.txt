@@ -17,3 +17,9 @@ pocketoptionapi-async>=2.0.1
 PyJWT>=2.8.0
 passlib[bcrypt]>=1.7.4
 bcrypt>=4.1.2
+# PyTorch CPU-only — for LSTM + Transformer neural models (Phase 6).
+# Using the CPU wheel index keeps the Docker image ~200 MB instead of 2+ GB
+# (CUDA wheels). Railway standard plans have no GPU; CPU inference is
+# fast enough for the 15-30 s signal-generation cycle.
+# --index-url https://download.pytorch.org/whl/cpu
+torch>=2.2.0
