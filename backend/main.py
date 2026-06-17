@@ -877,17 +877,71 @@ async def daily_report_loop():
 
 
 async def retraining_loop():
-    """CDC Section 9.2: Ré-entraînement automatique toutes les 72h."""
-    RETRAIN_INTERVAL_HOURS = 72
+    """CDC Section 9.2: Ré-entraînement automatique.
+
+    Runs every 24h (reduced from 72h to be more responsive to accumulated
+    live data). Uses the TrainingPipeline which automatically prefers
+    backend/data/live_candles.csv (real PO market data accumulated via
+    CandleAccumulator) over the synthetic multi-pair dataset.
+
+    After retraining completes, the freshly-trained weights are hot-loaded
+    into the live voting_model so the new model takes effect immediately
+    without requiring a backend restart.
+    """
+    RETRAIN_INTERVAL_HOURS = 24
     while True:
         await asyncio.sleep(RETRAIN_INTERVAL_HOURS * 3600)
         try:
+            logger.info("[RETRAINING] Starting scheduled retraining...")
             from neural_models.training_pipeline import TrainingPipeline
+            from engine.candle_accumulator import get_accumulator
+
+            # Log accumulator status before retraining
+            try:
+                accumulator = await get_accumulator()
+                status = accumulator.get_status()
+                logger.info(
+                    f"[RETRAINING] Accumulator status: "
+                    f"{status['total_rows']:,} rows, {status['pairs_count']} pairs, "
+                    f"{status['file_size_mb']:.1f}MB, "
+                    f"ready_for_training={status['ready_for_training']}"
+                )
+            except Exception as e:
+                logger.warning(f"[RETRAINING] Could not get accumulator status: {e}")
+
             pipeline = TrainingPipeline()
+            logger.info(f"[RETRAINING] Data source: {getattr(pipeline, 'data_source', 'unknown')}")
             pipeline.run_training()
-            logger.info("[RETRAINING] Model retraining completed successfully")
+
+            # Hot-reload the freshly-trained weights into the live voting_model
+            # so the new model takes effect immediately without a restart.
+            try:
+                xgb_trained = pipeline.xgb_model.is_trained
+                lstm_trained = pipeline.lstm_model.is_trained
+                transformer_trained = pipeline.transformer_model.is_trained
+
+                if xgb_trained:
+                    voting_model.xgboost = pipeline.xgb_model
+                    logger.info("[RETRAINING] Hot-reloaded XGBoost into voting_model")
+                if lstm_trained:
+                    voting_model.lstm = pipeline.lstm_model
+                    logger.info("[RETRAINING] Hot-reloaded LSTM into voting_model")
+                if transformer_trained:
+                    voting_model.transformer = pipeline.transformer_model
+                    logger.info("[RETRAINING] Hot-reloaded Transformer into voting_model")
+
+                logger.info(
+                    f"[RETRAINING] Voting model status after reload: "
+                    f"XGBoost={voting_model.xgboost.is_trained}, "
+                    f"LSTM={voting_model.lstm.is_trained}, "
+                    f"Transformer={voting_model.transformer.is_trained}"
+                )
+            except Exception as reload_err:
+                logger.warning(f"[RETRAINING] Hot-reload failed: {reload_err}")
+
+            logger.info("[RETRAINING] Scheduled retraining completed successfully")
         except Exception as e:
-            logger.error(f"[RETRAINING] Retraining failed: {e}")
+            logger.error(f"[RETRAINING] Retraining failed: {e}", exc_info=True)
 
 
 # ═══════════ LIFESPAN (replaces deprecated on_event) ═══════════
@@ -2504,6 +2558,116 @@ async def admin_update_weights(request: Request, admin_payload = Depends(require
     voting_model.weights['XGBoost'] = xgboost_w
     voting_model.threshold = threshold
     return {"status": "success"}
+
+
+# ═══════════ ACCUMULATOR & RETRAINING ENDPOINTS (Phase 3) ═══════════
+
+@app.get("/api/admin/accumulator/status")
+async def admin_accumulator_status(admin_payload = Depends(require_admin)):
+    """Check the status of live candle accumulation.
+
+    Returns total rows, pairs seen, file size, date range, and whether
+    enough data has accumulated to retrain on real market data.
+    """
+    try:
+        from engine.candle_accumulator import get_accumulator
+        accumulator = await get_accumulator()
+        return accumulator.get_status()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get accumulator status: {e}")
+
+
+@app.post("/api/admin/retrain")
+async def admin_trigger_retrain(request: Request, admin_payload = Depends(require_admin)):
+    """Manually trigger model retraining (does not wait for the 24h loop).
+
+    Uses whatever data source TrainingPipeline prefers (live_candles.csv
+    if enough data, else synthetic multi-pair). Returns immediately with
+    a job ID — retraining runs in the background. Check logs for progress.
+    """
+    import uuid as _uuid
+    job_id = f"retrain-{_uuid.uuid4().hex[:8]}"
+
+    async def _run_retrain():
+        try:
+            logger.info(f"[RETRAIN {job_id}] Manual retraining triggered by admin...")
+            from neural_models.training_pipeline import TrainingPipeline
+            from engine.candle_accumulator import get_accumulator
+
+            try:
+                accumulator = await get_accumulator()
+                status = accumulator.get_status()
+                logger.info(
+                    f"[RETRAIN {job_id}] Accumulator: "
+                    f"{status['total_rows']:,} rows, {status['pairs_count']} pairs, "
+                    f"ready={status['ready_for_training']}"
+                )
+            except Exception:
+                pass
+
+            pipeline = TrainingPipeline()
+            logger.info(f"[RETRAIN {job_id}] Data source: {getattr(pipeline, 'data_source', 'unknown')}")
+            pipeline.run_training()
+
+            # Hot-reload into live voting_model
+            if pipeline.xgb_model.is_trained:
+                voting_model.xgboost = pipeline.xgb_model
+                logger.info(f"[RETRAIN {job_id}] Hot-reloaded XGBoost")
+            if pipeline.lstm_model.is_trained:
+                voting_model.lstm = pipeline.lstm_model
+                logger.info(f"[RETRAIN {job_id}] Hot-reloaded LSTM")
+            if pipeline.transformer_model.is_trained:
+                voting_model.transformer = pipeline.transformer_model
+                logger.info(f"[RETRAIN {job_id}] Hot-reloaded Transformer")
+
+            logger.info(f"[RETRAIN {job_id}] Manual retraining completed successfully")
+        except Exception as e:
+            logger.error(f"[RETRAIN {job_id}] Manual retraining failed: {e}", exc_info=True)
+
+    asyncio.create_task(_run_retrain())
+    return {
+        "status": "started",
+        "job_id": job_id,
+        "message": "Retraining started in background. Check backend logs for progress.",
+        "note": "Use GET /api/admin/engine/status to check model status after retraining completes."
+    }
+
+
+@app.get("/api/admin/engine/status")
+async def admin_engine_status(admin_payload = Depends(require_admin)):
+    """Get the current status of all AI models in the voting classifier."""
+    try:
+        from engine.candle_accumulator import get_accumulator
+        accumulator = await get_accumulator()
+        acc_status = accumulator.get_status()
+    except Exception:
+        acc_status = None
+
+    return {
+        "models": {
+            "xgboost": {
+                "is_trained": getattr(voting_model.xgboost, 'is_trained', False),
+                "model_loaded": voting_model.xgboost.model is not None,
+            },
+            "lstm": {
+                "is_trained": getattr(voting_model.lstm, 'is_trained', False),
+            },
+            "transformer": {
+                "is_trained": getattr(voting_model.transformer, 'is_trained', False),
+            },
+        },
+        "voting_weights": voting_model.weights,
+        "voting_threshold": voting_model.threshold,
+        "accumulator": acc_status,
+        "ai_gate_mode": (
+            "full_voting" if (
+                getattr(voting_model.xgboost, 'is_trained', False)
+                and getattr(voting_model.lstm, 'is_trained', False)
+                and getattr(voting_model.transformer, 'is_trained', False)
+            ) else "xgboost_only" if getattr(voting_model.xgboost, 'is_trained', False)
+            else "disabled"
+        ),
+    }
 
 
 # ═══════════ MARKET CONNECTION ENDPOINTS ═══════════

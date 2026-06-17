@@ -1004,6 +1004,36 @@ class PocketOptionScanner:
                 f"[SCANNER] Candles cached: {asset_norm} {tf_str} "
                 f"({len(df)} bars, last close={df['close'].iloc[-1]:.5f})"
             )
+
+            # ─── Persist to CandleAccumulator for future retraining ────
+            # The accumulator deduplicates by (symbol, timestamp) and appends
+            # to backend/data/live_candles.csv. Once enough data accumulates
+            # (~50k rows across 3+ pairs, typically 1-2 days of live trading),
+            # the retraining_loop will use this REAL market data instead of
+            # the synthetic GBM dataset the model was originally trained on.
+            try:
+                from .candle_accumulator import get_accumulator
+                accumulator = await get_accumulator()
+                # Convert DataFrame rows back to list of dicts for the accumulator
+                candle_rows = []
+                for ts, row in df.iterrows():
+                    candle_rows.append({
+                        "timestamp": int(ts.timestamp()),
+                        "open": float(row["open"]),
+                        "high": float(row["high"]),
+                        "low": float(row["low"]),
+                        "close": float(row["close"]),
+                        "volume": float(row["volume"]) if not pd.isna(row["volume"]) else 0.0,
+                    })
+                appended = await accumulator.append(asset_norm, candle_rows)
+                if appended > 0:
+                    logger.debug(
+                        f"[SCANNER] Accumulated {appended} new candles for {asset_norm} "
+                        f"(total in file: {accumulator._total_rows_appended:,})"
+                    )
+            except Exception as accum_err:
+                # Accumulator failure must NOT break signal generation
+                logger.debug(f"[SCANNER] Accumulator skipped: {accum_err}")
         except Exception as e:
             logger.error(f"[SCANNER] _parse_candles error ({event_name}): {e}", exc_info=True)
 

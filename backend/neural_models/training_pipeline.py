@@ -39,19 +39,59 @@ MIN_DEPLOYMENT_ACCURACY = 0.55   # realistic for 3-class FX prediction
 
 class TrainingPipeline:
     def __init__(self, data_path=None):
-        # Default to the new multi-pair dataset; fall back to the old
-        # single-pair CSV if the new one doesn't exist (backward compat).
-        if data_path is None:
-            multi_pair_path = os.path.join(
-                os.path.dirname(os.path.dirname(__file__)),
-                'data', 'training_multi_pair_6m.csv'
-            )
-            if os.path.exists(multi_pair_path):
-                self.data_path = multi_pair_path
-            else:
-                self.data_path = 'backend/data/eurusd_otc_30d.csv'
-        else:
+        # Data source priority:
+        #   1. Explicit data_path passed by caller (highest priority)
+        #   2. backend/data/live_candles.csv — REAL accumulated PO market data
+        #      (only if it has >= 50k rows across 3+ pairs, i.e. ~1-2 days
+        #      of live trading accumulated via CandleAccumulator)
+        #   3. backend/data/training_multi_pair_6m.csv — synthetic 6-month
+        #      multi-pair dataset (regeneratable via generate_training_data.py)
+        #   4. backend/data/eurusd_otc_30d.csv — legacy single-pair 30-day CSV
+        if data_path is not None:
             self.data_path = data_path
+        else:
+            backend_dir = os.path.dirname(os.path.dirname(__file__))
+            live_csv = os.path.join(backend_dir, "data", "live_candles.csv")
+            multi_pair_csv = os.path.join(backend_dir, "data", "training_multi_pair_6m.csv")
+            legacy_csv = "backend/data/eurusd_otc_30d.csv"
+
+            chosen = None
+            chosen_source = None
+
+            # Check live candles first (real data preferred)
+            if os.path.exists(live_csv):
+                try:
+                    # Quick row count + pair count check
+                    df_peek = pd.read_csv(live_csv, usecols=["symbol"], engine="c")
+                    if len(df_peek) >= 50000 and df_peek["symbol"].nunique() >= 3:
+                        chosen = live_csv
+                        chosen_source = "live (real PO market data)"
+                        logger.info(
+                            f"TrainingPipeline: using LIVE candle data "
+                            f"({len(df_peek):,} rows, {df_peek['symbol'].nunique()} pairs) "
+                            f"— model will be trained on real market data"
+                        )
+                except Exception as e:
+                    logger.warning(f"Live CSV check failed: {e}")
+
+            # Fall back to synthetic multi-pair
+            if chosen is None and os.path.exists(multi_pair_csv):
+                chosen = multi_pair_csv
+                chosen_source = "synthetic multi-pair (6 months, 6 pairs)"
+                logger.info(
+                    f"TrainingPipeline: using synthetic multi-pair data "
+                    f"({os.path.getsize(multi_pair_csv)/1e6:.1f}MB) — "
+                    f"real live_candles.csv has < 50k rows or < 3 pairs"
+                )
+
+            # Last resort: legacy single-pair
+            if chosen is None:
+                chosen = legacy_csv
+                chosen_source = "legacy single-pair (30 days EURUSD)"
+                logger.warning(f"TrainingPipeline: falling back to legacy CSV at {legacy_csv}")
+
+            self.data_path = chosen
+            self.data_source = chosen_source
 
         self.scaler = StandardScaler()
         self.weights_dir = WEIGHTS_DIR
