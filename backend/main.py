@@ -79,10 +79,12 @@ logger.addHandler(_db_log_handler)
 
 # ═══════════ INSTANCES GLOBALES ═══════════
 # 8 paires OTC obligatoires CDC
-OTC_PAIRS = [
-    'EUR/USD OTC', 'GBP/USD OTC', 'USD/JPY OTC', 'AUD/USD OTC',
-    'USD/CHF OTC', 'EUR/GBP OTC', 'USD/CAD OTC', 'NZD/USD OTC'
-]
+# NOTE: A2Sniper uses LIVE forex pairs from PocketOption only.
+# No hardcoded pair list — the system dynamically picks up whatever
+# forex pairs PO is currently offering with payout >= 70% and is_active=True.
+# Pairs go inactive → automatically excluded. Pairs reactivate → automatically
+# re-included. Payouts change → automatically reflected. All driven by PO's
+# live updateAssets events (refreshed every 5s via _asset_refresh_loop).
 
 smc_engine = SMCEngine()
 indicators = TechnicalIndicators()
@@ -96,6 +98,57 @@ monitor = MonitoringEngine()
 voting_model = VotingClassifierModel()
 po_scanner = PocketOptionScanner()
 telegram_bot = TelegramSignalBot(scanner=po_scanner)
+
+# ═══ PERSISTENT SSID — auto-reconnect scanner on backend restart ═══════
+# When Railway redeploys, the entire Python process restarts and the
+# scanner loses its connection. To avoid requiring the user to manually
+# reconnect after every deploy, we persist the SSID to a file and
+# auto-reconnect on startup.
+# The SSID is written to backend/data/last_ssid.txt by /api/market/connect
+# and read here during lifespan startup.
+SSID_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'last_ssid.txt')
+
+async def auto_reconnect_scanner():
+    """On backend startup, try to reconnect the scanner using the last SSID.
+
+    This survives Railway redeploys — the user doesn't need to manually
+    reconnect after every code push.
+    """
+    try:
+        if not os.path.exists(SSID_FILE):
+            logger.info("[AUTO-RECONNECT] No saved SSID found — waiting for manual connect")
+            return
+
+        with open(SSID_FILE, 'r') as f:
+            ssid = f.read().strip()
+
+        if not ssid or not ssid.startswith('42["auth"'):
+            logger.info("[AUTO-RECONNECT] Saved SSID is invalid or empty — waiting for manual connect")
+            return
+
+        logger.info("[AUTO-RECONNECT] Found saved SSID — attempting auto-reconnect...")
+        success = await po_scanner.connect(ssid)
+        if success:
+            logger.info(f"[AUTO-RECONNECT] ✅ Scanner reconnected automatically (demo={po_scanner.is_demo})")
+            # Kick off initial analysis
+            async def _kick():
+                await asyncio.sleep(5)
+                logger.info("[AUTO-RECONNECT] Starting initial analysis pass")
+                live_pairs = list(po_scanner.find_pairs_above_payout(
+                    min_payout=70.0, pair_filter="OTC", active_only=True, forex_only=True
+                ).keys())
+                for pair in live_pairs[:3]:
+                    payout = po_scanner.get_payout(pair)
+                    if payout and payout >= 70:
+                        sig = await force_analyze_pair(pair)
+                        if sig:
+                            logger.info(f"[AUTO-RECONNECT] Initial signal generated for {pair}")
+                            break
+            asyncio.create_task(_kick())
+        else:
+            logger.warning("[AUTO-RECONNECT] ❌ Auto-reconnect failed — SSID may be expired. User needs to reconnect manually.")
+    except Exception as e:
+        logger.warning(f"[AUTO-RECONNECT] Error: {e}")
 
 # Load pre-trained model weights at startup (don't wait for the 72h retraining_loop).
 # The weights are at backend/models/weights/{lstm_v3.pt, transformer_v3.pt, xgboost_v3.json}.
@@ -382,8 +435,17 @@ async def analyze_pair_internal(pair: str, force: bool = False) -> dict:
     # spot forex, not for OTC binary options which trade round the clock.
 
     df_m1 = await po_scanner.get_candles(pair, timeframe="1m", count=100)
-    if df_m1.empty or len(df_m1) < 52:
-        logger.warning(f"[{pair}] Pas assez de données réelles ({len(df_m1)} bougies)")
+    # Lowered from 52 to 20 bars — PO's modern API sends live ticks (not
+    # historical candles), so we build candles from ticks in real-time.
+    # 20 bars is enough for RSI(14), EMA(9/21), Bollinger(20), Stochastic(14).
+    # EMA_50/EMA_200 will be NaN until enough bars accumulate, but the other
+    # indicators + SMC + scoring can still produce signals.
+    MIN_BARS_FOR_ANALYSIS = 20
+    if df_m1.empty or len(df_m1) < MIN_BARS_FOR_ANALYSIS:
+        logger.info(
+            f"[WARMING-UP] pair={pair} candles={len(df_m1)}/{MIN_BARS_FOR_ANALYSIS} "
+            f"min_remaining={max(0, MIN_BARS_FOR_ANALYSIS - len(df_m1))}"
+        )
         return None
 
     # Calcul des indicateurs
@@ -486,7 +548,9 @@ async def analyze_pair_internal(pair: str, force: bool = False) -> dict:
     
     # Si non forcé et bloqué par filtre, on rejette
     if not force and filter_result['is_blocked']:
-        logger.info(f"[{pair}] Bloqué par filtres: {filter_result['reasons']}")
+        logger.info(
+            f"[FILTER-REJECTED] pair={pair} reasons={filter_result['reasons']}"
+        )
         return None
 
     # Scoring SES
@@ -558,22 +622,29 @@ async def analyze_pair_internal(pair: str, force: bool = False) -> dict:
     score = score_result['score']
     # Force mode: use the real calculated score (no fabrication)
     if force and score < ses.MIN_SCORE_THRESHOLD:
-        logger.warning(f"[{pair}] Force mode: score {score}/10 is low but using real value (no fabrication)")
+        logger.warning(f"[FORCED-LOW-SCORE] pair={pair} score={score}/10 threshold={ses.MIN_SCORE_THRESHOLD}/10")
 
     if not force and score < ses.MIN_SCORE_THRESHOLD:
-        logger.info(f"[{pair}] Score {score}/10 < seuil {ses.MIN_SCORE_THRESHOLD}/10")
+        logger.info(f"[SCORE-BELOW-THRESHOLD] pair={pair} score={score}/10 threshold={ses.MIN_SCORE_THRESHOLD}/10")
         return None
+
+    # Single-token log for every analysis that passes the score threshold
+    # (this is the line you want to filter on to see signal candidates)
+    logger.info(
+        f"[ANALYSIS-PASS] pair={pair} direction={direction} score={score}/10 "
+        f"winrate={score_result['winrate']}% payout={payout}%"
+    )
 
     # Risk Check (sauf si forcé)
     if not force:
         risk_check = risk_mgr.check_can_trade()
         if not risk_check['can_trade']:
-            logger.warning(f"[{pair}] Bloqué par risk manager")
+            logger.warning(f"[RISK-REJECTED] pair={pair} reasons={risk_check.get('reasons', 'unknown')}")
             return None
 
         cb = monitor.check_circuit_breaker()
         if cb['is_active']:
-            logger.warning(f"[{pair}] Circuit Breaker actif")
+            logger.warning(f"[CIRCUIT-BREAKER-REJECTED] pair={pair} reason={cb.get('reason', 'unknown')}")
             return None
 
     # AI Voting Classifier (sauf si forcé)
@@ -586,7 +657,11 @@ async def analyze_pair_internal(pair: str, force: bool = False) -> dict:
     # and saved to backend/models/weights/xgboost_v3.json. The backend loads it
     # on startup via TrainingPipeline._load_models(). When the LSTM/Transformer
     # are also trained (requires `torch` + GPU), the full voting classifier kicks in.
-    ENABLE_AI_GATE = True  # Set False to disable AI gating entirely
+    #
+    # TEMPORARY: AI gate disabled — the XGBoost model was trained on synthetic
+    # GBM data and produces NO_TRADE for most real PO market conditions.
+    # Re-enable after retraining on accumulated live_candles.csv data.
+    ENABLE_AI_GATE = False  # Set True to re-enable AI gating
     if ENABLE_AI_GATE and not force:
         features = _build_ai_features(df_m1, smc_result, fibo, active_patterns, divs)
 
@@ -599,7 +674,7 @@ async def analyze_pair_internal(pair: str, force: bool = False) -> dict:
             # Full voting classifier — all 3 models real
             ai_result = voting_model.predict(features)
             if not ai_result.get('approved', False):
-                logger.info(f"[{pair}] Rejeté par Voting Classifier (full 3-model)")
+                logger.info(f"[AI-VOTING-REJECTED] pair={pair} mode=full_voting result={ai_result}")
                 return None
         elif xgb_trained:
             # Only XGBoost is trained — use it as the sole AI gate
@@ -608,81 +683,101 @@ async def analyze_pair_internal(pair: str, force: bool = False) -> dict:
             ai_direction = ai_result.get('direction', 'NO_TRADE')
             ai_prob = ai_result.get('probability', 0)
             if ai_direction == 'NO_TRADE':
-                logger.info(f"[{pair}] Rejeté par XGBoost (NO_TRADE, prob={ai_prob:.1f}%)")
+                logger.info(f"[AI-XGBOOST-REJECTED] pair={pair} direction=NO_TRADE prob={ai_prob:.1f}%")
                 return None
             # If XGBoost says CALL or PUT, log it for transparency but don't block
-            logger.info(f"[{pair}] XGBoost approval: {ai_direction} ({ai_prob:.1f}%)")
+            logger.info(f"[AI-XGBOOST-APPROVED] pair={pair} direction={ai_direction} prob={ai_prob:.1f}%")
         else:
             # No models trained — skip AI gate (CDC 10-factor scoring suffices)
             pass
 
-    # Construire le signal
-    global signal_counter
-    async with signal_counter_lock:
-        signal_counter += 1
-        sig_count = signal_counter
-    now = datetime.now(timezone.utc)
-    current_price = float(df_m1['close'].iloc[-1])
+    # ═══ SIGNAL BUILDING + EMISSION (wrapped in try/except so errors
+    # are visible instead of silently swallowed by the trading loop) ═══
+    try:
+        # Construire le signal
+        global signal_counter
+        async with signal_counter_lock:
+            signal_counter += 1
+            sig_count = signal_counter
+        now = datetime.now(timezone.utc)
+        current_price = float(df_m1['close'].iloc[-1])
 
-    # CDC: 1min or 5min based on structure (ATR-based)
-    if atr > 0:
-        atr_ratio = atr / current_price if current_price > 0 else 0
-        if atr_ratio > 0.001:  # High volatility → 5 min
-            expiration = 5
-        else:  # Low volatility → 1 min
-            expiration = 1
-    else:
-        expiration = 5  # Default to 5min (safer)
+        # CDC: 1min or 5min based on structure (ATR-based)
+        if atr > 0:
+            atr_ratio = atr / current_price if current_price > 0 else 0
+            if atr_ratio > 0.001:  # High volatility → 5 min
+                expiration = 5
+            else:  # Low volatility → 1 min
+                expiration = 1
+        else:
+            expiration = 5  # Default to 5min (safer)
 
-    signal = {
-        'id': f'SIG-{now.strftime("%Y%m%d")}-{uuid.uuid4().hex[:6].upper()}',
-        'pair': pair,
-        'direction': direction,
-        'time': now.strftime('%H:%M:%S'),
-        'timestamp': now.isoformat(),
-        'entry_price': current_price,
-        'expiration': expiration,
-        'winrate': score_result['winrate'],
-        'score': score_result['score'],
-        'raw_points': score_result['raw_points'],
-        'payout': payout,
-        'classification': score_result['classification'],
-        'smc_structure': score_result['details'].get('smc_structure', trend),
-        'smc_zone': score_result['details'].get('smc_zone', 'N/A'),
-        'chart_pattern': score_result['details'].get('chart_pattern', chart_pattern_name or 'N/A'),
-        'fibonacci': score_result['details'].get('fibonacci', f"Zone {fibo.get('closest_level', 'N/A')}%"),
-        'rsi_status': 'Survendu' if (direction == 'CALL' and last_row.get('RSI_14', 50) < 40) else 'Suracheté' if (direction == 'PUT' and last_row.get('RSI_14', 50) > 60) else 'Neutre',
-        'recommended_stake': score_result['recommended_stake'],
-        'mtf_aligned': mtf['aligned'],
-        'wyckoff': wyckoff,
-        'divergences': [d['type'] for d in divs.get('divergences', [])],
-    }
+        signal = {
+            'id': f'SIG-{now.strftime("%Y%m%d")}-{uuid.uuid4().hex[:6].upper()}',
+            'pair': pair,
+            'direction': direction,
+            'time': now.strftime('%H:%M:%S'),
+            'timestamp': now.isoformat(),
+            'entry_price': current_price,
+            'expiration': expiration,
+            'winrate': score_result['winrate'],
+            'score': score_result['score'],
+            'raw_points': score_result['raw_points'],
+            'payout': payout,
+            'classification': score_result['classification'],
+            'smc_structure': score_result['details'].get('smc_structure', trend),
+            'smc_zone': score_result['details'].get('smc_zone', 'N/A'),
+            'chart_pattern': score_result['details'].get('chart_pattern', chart_pattern_name or 'N/A'),
+            'fibonacci': score_result['details'].get('fibonacci', f"Zone {fibo.get('closest_level', 'N/A')}%"),
+            'rsi_status': 'Survendu' if (direction == 'CALL' and last_row.get('RSI_14', 50) < 40) else 'Suracheté' if (direction == 'PUT' and last_row.get('RSI_14', 50) > 60) else 'Neutre',
+            'recommended_stake': score_result['recommended_stake'],
+            'mtf_aligned': mtf['aligned'],
+            'wyckoff': wyckoff,
+            'divergences': [d['type'] for d in divs.get('divergences', [])],
+        }
 
-    signal['hash_signature'] = compliance.generate_immutable_log(signal)
+        # Compliance hash — this was the likely crash point
+        try:
+            signal['hash_signature'] = compliance.generate_immutable_log(signal)
+        except Exception as hash_err:
+            logger.warning(f"[SIGNAL-HASH-ERROR] pair={pair} err={hash_err}")
+            signal['hash_signature'] = 'ERROR'
 
-    async with AsyncSessionLocal() as session:
-        db_signal = SignalRecord(
-            id=signal['id'],
-            pair=signal['pair'],
-            direction=signal['direction'],
-            entry_price=signal['entry_price'],
-            expiration=signal['expiration'],
-            winrate=signal['winrate'],
-            score=signal['score'],
-            payout=signal['payout'],
-            classification=signal['classification'],
-            timestamp=now,
-            analysis_details=scoring_context,
-            hash_signature=signal['hash_signature']
+        # Save to DB (non-blocking)
+        try:
+            async with AsyncSessionLocal() as session:
+                db_signal = SignalRecord(
+                    id=signal['id'],
+                    pair=signal['pair'],
+                    direction=signal['direction'],
+                    entry_price=signal['entry_price'],
+                    expiration=signal['expiration'],
+                    winrate=signal['winrate'],
+                    score=signal['score'],
+                    payout=signal['payout'],
+                    classification=signal['classification'],
+                    timestamp=now,
+                    analysis_details=scoring_context,
+                    hash_signature=signal['hash_signature']
+                )
+                session.add(db_signal)
+                await session.commit()
+        except Exception as db_err:
+            logger.warning(f"[SIGNAL-DB-SAVE-ERROR] pair={pair} err={db_err}")
+
+        generated_signals.append(signal)
+        monitor.record_signal(signal['id'], pair, direction, score_result['winrate'])
+
+        # Single-token log tag so it's easy to filter in Railway (no spaces)
+        logger.info(
+            f"[SIGNAL-EMITTED] id={signal['id']} pair={signal['pair']} "
+            f"direction={signal['direction']} score={signal['score']}/10 "
+            f"winrate={signal['winrate']}% payout={signal['payout']}% "
+            f"expiration={signal['expiration']}m entry_price={signal['entry_price']}"
         )
-        session.add(db_signal)
-        await session.commit()
 
-    generated_signals.append(signal)
-    monitor.record_signal(signal['id'], pair, direction, score_result['winrate'])
-
-    # Envoi Telegram
-    signal_msg = f"""🎯 <b>A2SNIPER SIGNAL {"LIVE" if not force else "SUR DEMANDE"}</b>
+        # Envoi Telegram
+        signal_msg = f"""🎯 <b>A2SNIPER SIGNAL {"LIVE" if not force else "SUR DEMANDE"}</b>
 ━━━━━━━━━━━━━━━━━━━━━
 📊 Paire : <b>{signal['pair']}</b>
 🟢 Direction : <b>{signal['direction']}</b>
@@ -695,8 +790,21 @@ async def analyze_pair_internal(pair: str, force: bool = False) -> dict:
 
 Zéro Simulation. 100% Real-Market."""
 
-    await telegram_bot.send_signal(signal_msg)
-    return signal
+        try:
+            await telegram_bot.send_signal(signal_msg)
+        except Exception as tg_err:
+            logger.warning(f"[SIGNAL-TELEGRAM-ERROR] pair={pair} err={tg_err}")
+
+        return signal
+
+    except Exception as build_err:
+        # This catches ANY error between ANALYSIS-PASS and SIGNAL-EMITTED
+        # that was previously silently swallowed by the trading loop.
+        logger.error(
+            f"[SIGNAL-BUILD-ERROR] pair={pair} err={build_err}",
+            exc_info=True
+        )
+        return None
 
 
 
@@ -744,7 +852,7 @@ async def trading_loop():
     have been received yet.
     """
     logger.info("═══════════ A2Sniper 3.0 — DÉMARRAGE ═══════════")
-    logger.info(f"Paires par défaut surveillées: {', '.join(OTC_PAIRS)}")
+    logger.info("Using LIVE forex pairs from PocketOption (no hardcoded list). Active + payout>=70% + forex only.")
 
     # Wait briefly for scanner to receive asset data on first run
     initial_wait = 0
@@ -769,16 +877,28 @@ async def trading_loop():
                 continue
 
             # Determine which pairs to analyze this cycle:
-            # Only REAL OTC pairs from PO that are ACTIVE with payout >= 70%.
-            # Pairs below this threshold are excluded entirely (user requirement).
-            real_otc = po_scanner.find_pairs_above_payout(min_payout=70.0, pair_filter="OTC", active_only=True)
+            # ONLY live forex pairs from PO that are ACTIVE with payout >= 70%.
+            # This is re-evaluated every cycle (15s) so when PO marks a pair
+            # inactive (greyed out / N/A) it's automatically excluded, and
+            # when it reactivates it's automatically re-included. Payout
+            # changes are also automatically reflected.
+            # No hardcoded fallback — if no pairs meet criteria, just wait.
+            real_otc = po_scanner.find_pairs_above_payout(
+                min_payout=70.0, pair_filter="OTC", active_only=True, forex_only=True
+            )
             if real_otc:
                 pairs_to_scan = list(real_otc.keys())
-                logger.debug(f"[LOOP] Scanning {len(pairs_to_scan)} live OTC pairs from PO")
+                logger.info(
+                    f"[LOOP] Scanning {len(pairs_to_scan)} live FOREX pairs "
+                    f"(active + payout>=70%): {pairs_to_scan[:5]}"
+                    f"{' ...' if len(pairs_to_scan) > 5 else ''}"
+                )
             else:
-                # Use defaults — scanner may still be receiving payout data
-                pairs_to_scan = list(OTC_PAIRS)
-                logger.debug(f"[LOOP] No live payouts yet — scanning {len(pairs_to_scan)} default pairs")
+                # No pairs meet criteria right now — wait for PO to push
+                # updated asset data (could be all pairs inactive, or all
+                # payouts below 70%). Don't fall back to hardcoded pairs.
+                logger.info("[LOOP] No live FOREX pairs meet criteria (active + payout>=70%) — waiting for PO update")
+                pairs_to_scan = []
 
             # Analyse séquentielle des paires
             for pair in pairs_to_scan:
@@ -790,9 +910,16 @@ async def trading_loop():
                     continue
 
                 await analyze_pair(pair)
-                await asyncio.sleep(1) # Délai pour éviter de saturer le processeur
+                # Small delay between pairs to avoid saturating the CPU.
+                # 0.3s keeps a 10-pair cycle under 5s total so we can hit
+                # the 5s cycle interval below.
+                await asyncio.sleep(0.3)
 
-            await asyncio.sleep(15) # Pause entre les cycles d'analyse complète
+            # 5s cycle interval (was 15s) — user requirement: "every 5s so
+            # it doesn't miss". This means we re-evaluate the eligible pair
+            # list and run analysis 3x more often, catching pair state
+            # changes (active↔inactive, payout fluctuations) much faster.
+            await asyncio.sleep(5)
 
         except Exception as e:
             logger.error("Erreur boucle principale", exc_info=True)
@@ -1018,6 +1145,12 @@ async def lifespan(app):
     except Exception as e:
         logger.warning(f"[STARTUP] Background task creation issue: {e}")
 
+    # Auto-reconnect scanner using saved SSID (survives Railway redeploys)
+    try:
+        asyncio.create_task(auto_reconnect_scanner())
+    except Exception as e:
+        logger.warning(f"[STARTUP] Auto-reconnect task issue: {e}")
+
     yield  # Application runs here
 
     # Shutdown cleanup could go here
@@ -1145,35 +1278,87 @@ async def get_signals(pair: str = None, limit: int = 100, credentials: HTTPAutho
 
     # Validate and clamp limit to prevent memory exhaustion
     limit = max(1, min(limit, 500))
-    async with AsyncSessionLocal() as session:
-        # On récupère les signaux (triés par plus récent)
-        # On garde une limite raisonnable pour les filtres d'historique
-        query = select(SignalRecord).order_by(SignalRecord.timestamp.desc()).limit(limit)
-        if pair:
-            query = query.where(SignalRecord.pair == pair)
-        
-        result = await session.execute(query)
-        signals = result.scalars().all()
-        
-        # Sérialisation explicite pour éviter les erreurs de type (datetime, etc.)
-        output = []
-        for s in signals:
+
+    # Build the output list — try DB first, fall back to in-memory deque
+    output = []
+    now = datetime.now(timezone.utc)
+
+    try:
+        async with AsyncSessionLocal() as session:
+            query = select(SignalRecord).order_by(SignalRecord.timestamp.desc()).limit(limit)
+            if pair:
+                query = query.where(SignalRecord.pair == pair)
+            result = await session.execute(query)
+            signals = result.scalars().all()
+
+            for s in signals:
+                # Calculate signal status (ACTIVE / EXPIRED / WON / LOST)
+                sig_time = s.timestamp
+                if sig_time and sig_time.tzinfo is None:
+                    sig_time = sig_time.replace(tzinfo=timezone.utc)
+                expiration_seconds = (s.expiration or 5) * 60
+                age_seconds = (now - sig_time).total_seconds() if sig_time else 999
+
+                if s.is_win is True:
+                    status = "WON"
+                elif s.is_win is False:
+                    status = "LOST"
+                elif age_seconds < expiration_seconds:
+                    status = "ACTIVE"
+                else:
+                    status = "EXPIRED"
+
+                d = {
+                    "id": s.id,
+                    "pair": s.pair,
+                    "direction": s.direction,
+                    "entry_price": s.entry_price,
+                    "expiration": s.expiration,
+                    "winrate": s.winrate,
+                    "score": getattr(s, 'score', None),
+                    "payout": s.payout,
+                    "classification": s.classification,
+                    "timestamp": s.timestamp.isoformat() if s.timestamp else None,
+                    "is_win": s.is_win,
+                    "status": status,
+                    "hash_signature": s.hash_signature
+                }
+                output.append(d)
+    except Exception as db_err:
+        logger.warning(f"[SIGNALS-API] DB query failed, falling back to in-memory: {db_err}")
+        # Fall back to in-memory deque
+        for s in reversed(generated_signals):  # most recent first
+            if pair and s['pair'] != pair:
+                continue
+            sig_time = datetime.fromisoformat(s['timestamp']) if isinstance(s.get('timestamp'), str) else s.get('timestamp')
+            if sig_time and sig_time.tzinfo is None:
+                sig_time = sig_time.replace(tzinfo=timezone.utc)
+            expiration_seconds = (s.get('expiration', 5)) * 60
+            age_seconds = (now - sig_time).total_seconds() if sig_time else 999
+
+            if age_seconds < expiration_seconds:
+                status = "ACTIVE"
+            else:
+                status = "EXPIRED"
+
             d = {
-                "id": s.id,
-                "pair": s.pair,
-                "direction": s.direction,
-                "entry_price": s.entry_price,
-                "expiration": s.expiration,
-                "winrate": s.winrate,
-                "score": getattr(s, 'score', None),
-                "payout": s.payout,
-                "classification": s.classification,
-                "timestamp": s.timestamp.isoformat() if s.timestamp else None,
-                "is_win": s.is_win,
-                "hash_signature": s.hash_signature
+                "id": s['id'],
+                "pair": s['pair'],
+                "direction": s['direction'],
+                "entry_price": s['entry_price'],
+                "expiration": s['expiration'],
+                "winrate": s['winrate'],
+                "score": s['score'],
+                "payout": s['payout'],
+                "classification": s.get('classification', 'N/A'),
+                "timestamp": s['timestamp'],
+                "is_win": None,
+                "status": status,
+                "hash_signature": s.get('hash_signature', '')
             }
-            # Don't merge full analysis_details to avoid leaking proprietary strategy logic
             output.append(d)
+            if len(output) >= limit:
+                break
             
         return {
             "signals": output, 
@@ -2378,11 +2563,18 @@ async def get_status():
     # Calculate average latency from recent samples
     avg_latency = sum(_latency_samples) / len(_latency_samples) if _latency_samples else 0.0
     
+    # Get LIVE forex pairs from PO (no hardcoded list)
+    live_pairs = []
+    if po_scanner.is_connected:
+        live_pairs = list(po_scanner.find_pairs_above_payout(
+            min_payout=70.0, pair_filter="OTC", active_only=True, forex_only=True
+        ).keys())
+
     return {
         "status": "active" if not monitor.is_suspended else "suspended",
         "circuit_breaker": monitor.check_circuit_breaker(),
         "risk": risk_mgr.check_can_trade(),
-        "pairs": OTC_PAIRS,
+        "pairs": live_pairs,  # LIVE from PO, not hardcoded
         "total_signals": len(generated_signals),
         "server_start_time": SERVER_START_TIME.isoformat(),
         "uptime_seconds": (datetime.now(timezone.utc) - SERVER_START_TIME).total_seconds(),
@@ -2762,11 +2954,19 @@ async def connect_market(request: Request, credentials: HTTPAuthorizationCredent
         json_end = ssid_clean.rfind("}") + 1
         if json_start != -1 and json_end > json_start:
             payload = json.loads(ssid_clean[json_start:json_end])
-            if "session" not in payload:
+            # Accept BOTH 'session' (main app socket) AND 'sessionToken'
+            # (chart socket). PO maintains two simultaneous WS connections
+            # in the browser: the main socket handles account state + asset
+            # metadata + chart config; the chart socket handles candle data.
+            if "session" not in payload and "sessionToken" not in payload:
                 raise HTTPException(
                     status_code=400,
-                    detail="Format non supporté. La clé \"session\" est manquante. Copiez la trame d'authentification complète."
+                    detail="Format non supporté. La clé \"session\" ou \"sessionToken\" est manquante. Copiez la trame d'authentification complète."
                 )
+            # Log which socket type we're connecting to
+            is_chart = payload.get("isChart") in (1, True)
+            if is_chart:
+                logger.info("[MARKET] Chart socket SSID detected — connecting for candle data")
         else:
             raise HTTPException(status_code=400, detail="Format JSON de la trame invalide. Accolades manquantes.")
     except HTTPException:
@@ -2795,6 +2995,15 @@ async def connect_market(request: Request, credentials: HTTPAuthorizationCredent
         mode = "DÉMO" if is_demo else "RÉEL"
         logger.info(f"[MARKET] Connecté avec succès — Mode: {mode}")
 
+        # Persist SSID for auto-reconnect after Railway redeploy
+        try:
+            os.makedirs(os.path.dirname(SSID_FILE), exist_ok=True)
+            with open(SSID_FILE, 'w') as f:
+                f.write(ssid_clean)
+            logger.info("[MARKET] SSID saved for auto-reconnect on backend restart")
+        except Exception as save_err:
+            logger.warning(f"[MARKET] Could not save SSID for auto-reconnect: {save_err}")
+
         # Kick off an immediate analysis pass in the background so signals
         # start appearing in the UI within seconds (not waiting for the next
         # trading_loop cycle). Fire-and-forget.
@@ -2803,9 +3012,16 @@ async def connect_market(request: Request, credentials: HTTPAuthorizationCredent
                 # Give PO 5 seconds to push updateAssets (payouts) after auth
                 await asyncio.sleep(5)
                 logger.info("[KICK] Starting initial analysis pass after connection")
-                # Try to generate at least one forced signal for EUR/USD OTC
+                # Use LIVE forex pairs from PO (no hardcoded list)
+                live_pairs = list(po_scanner.find_pairs_above_payout(
+                    min_payout=70.0, pair_filter="OTC", active_only=True, forex_only=True
+                ).keys())
+                if not live_pairs:
+                    logger.info("[KICK] No live FOREX pairs meet criteria yet — skipping initial kick")
+                    return
+                # Try to generate at least one forced signal for the first 3 live pairs
                 # so the user sees something immediately
-                for pair in OTC_PAIRS[:3]:  # Try the first 3 pairs
+                for pair in live_pairs[:3]:
                     payout = po_scanner.get_payout(pair)
                     if payout and payout >= 70:
                         sig = await force_analyze_pair(pair)
@@ -2813,7 +3029,7 @@ async def connect_market(request: Request, credentials: HTTPAuthorizationCredent
                             logger.info(f"[KICK] Initial signal generated for {pair}")
                             break
                         else:
-                            logger.info(f"[KICK] No signal for {pair} (score too low)")
+                            logger.info(f"[KICK] No signal for {pair} (score too low or insufficient candles)")
                     else:
                         logger.info(f"[KICK] {pair} payout too low or missing: {payout}")
             except Exception as e:
@@ -2860,14 +3076,15 @@ async def get_market_status(credentials: HTTPAuthorizationCredentials = Security
         # every 5s so this list reflects what PO currently offers as tradable,
         # within ~5 seconds of any change on PO's side.
         all_otc_pairs = po_scanner.find_pairs_above_payout(
-            min_payout=70.0, pair_filter="OTC", active_only=True
+            min_payout=70.0, pair_filter="OTC", active_only=True, forex_only=True
         ) if po_scanner.is_connected else {}
 
-        # Also expose per-default-pair status (only for eligible ones).
-        # Inactive or below-threshold defaults are NOT included — they simply don't appear.
+        # Build per-pair status from LIVE data (no hardcoded list).
+        # Only includes pairs that meet the criteria (active + payout >= 70% + forex).
+        # Inactive or below-threshold pairs are NOT included — they simply don't appear.
         default_pair_status = {}
         if po_scanner.is_connected:
-            for pair in OTC_PAIRS:
+            for pair in all_otc_pairs.keys():
                 status = po_scanner.get_pair_status(pair)
                 if status and status["is_active"] and status["payout"] is not None and status["payout"] >= 70.0:
                     default_pair_status[pair] = {

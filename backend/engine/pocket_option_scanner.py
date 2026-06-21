@@ -33,6 +33,15 @@ try:
 except ImportError:
     _WS_AVAILABLE = False
 
+# FOREX filter — imported ONCE at module level (not inside functions)
+# to avoid crashing every 5 seconds if the module is missing
+try:
+    from .forex_filter import is_forex_pair as _is_forex_pair
+    _FOREX_FILTER_AVAILABLE = True
+except ImportError:
+    _FOREX_FILTER_AVAILABLE = False
+    logger.warning("forex_filter module not available — ALL assets will be processed")
+
 # websockets v16+ uses ClientConnection with .state attribute (no .closed)
 # We detect the open state value at runtime after first connection
 _WS_OPEN_STATE = None  # Will be set after first successful connect
@@ -109,6 +118,20 @@ class PocketOptionScanner:
         self._debug_max_messages = 100  # capture first 100 messages after auth
         self._debug_candle_requests_sent = set()  # track which assets we've requested candles for
         self._debug_candle_responses_received = []  # log of candle-related events
+        # ─── Socket.IO v4 binary attachment reassembly ──────────────────
+        self._pending_binary_events = []  # list of {"event_name", "data", "placeholders_needed", "binaries_received"}
+        # ─── Live tick buffer for updateStream aggregation ─────────────
+        # PO's modern API sends live price ticks via 'updateStream' events.
+        # Each tick: [asset, timestamp_unix_float, price]
+        # We aggregate these into 1-minute OHLC candles and store in
+        # _candles_cache so the indicator engine can consume them.
+        # This is the ONLY way to get candle data from PO's modern API —
+        # historical candle requests (changeSymbol, getCandles, etc.) are
+        # silently ignored on the main app socket.
+        self._tick_buffer = {}  # asset -> list of (timestamp_float, price_float)
+        self._tick_aggregation_task = None
+        self._tick_status_task = None  # Periodic tick buffer status logger
+        self._last_aggregation_time = 0
 
     # ═══════════ SSID CLEANING ═══════════
 
@@ -148,6 +171,7 @@ class PocketOptionScanner:
         is_demo = True
         uid = 0
         session = ""
+        is_chart = False
 
         if ssid.startswith('42["auth",'):
             try:
@@ -160,7 +184,13 @@ class PocketOptionScanner:
                     elif "currentUrl" in data:
                         is_demo = "demo-" in data["currentUrl"]
                     uid = data.get("uid", 0)
-                    session = data.get("session", "")
+                    # PO main socket uses "session", chart socket uses "sessionToken".
+                    # The SSID is sent to PO verbatim, so we just track which one
+                    # for logging purposes.
+                    session = data.get("session", "") or data.get("sessionToken", "")
+                    is_chart = bool(data.get("isChart", 0))
+                    if is_chart:
+                        logger.info("[SCANNER] Chart socket SSID detected (isChart:1)")
             except Exception as e:
                 logger.warning(f"Erreur lors du parsing du SSID: {e}")
 
@@ -315,6 +345,11 @@ class PocketOptionScanner:
                     if self._asset_refresh_task is None or self._asset_refresh_task.done():
                         self._asset_refresh_task = asyncio.create_task(self._asset_refresh_loop())
 
+                    # Start tick status logger — logs tick buffer + candle count
+                    # every 30s so we can see the system warming up
+                    if self._tick_status_task is None or self._tick_status_task.done():
+                        self._tick_status_task = asyncio.create_task(self._tick_status_logger_loop())
+
                     # Request initial data
                     await self._request_initial_data()
                     
@@ -350,6 +385,9 @@ class PocketOptionScanner:
         if self._asset_refresh_task and not self._asset_refresh_task.done():
             self._asset_refresh_task.cancel()
             self._asset_refresh_task = None
+        if self._tick_status_task and not self._tick_status_task.done():
+            self._tick_status_task.cancel()
+            self._tick_status_task = None
         if self._ws and self._ws_is_open():
             try:
                 await self._ws.close()
@@ -372,58 +410,15 @@ class PocketOptionScanner:
                         continue
                     break
 
-                # ─── DEBUG: log first N raw messages after auth ──────────
-                # This captures PO's actual WS protocol so we can fix the
-                # candle parser. Remove this block once the parser is fixed.
-                if self._is_authenticated and self._debug_message_count < self._debug_max_messages:
-                    self._debug_message_count += 1
-                    msg_preview = message if isinstance(message, str) else f"<bytes len={len(message)}>"
-                    # Truncate very long messages (updateAssets can be 50KB+)
-                    if len(msg_preview) > 500:
-                        msg_preview = msg_preview[:500] + f"...<truncated, total {len(message)} chars>"
-                    logger.info(
-                        f"[DEBUG-WS #{self._debug_message_count:03d}] "
-                        f"raw_msg={msg_preview}"
-                    )
-                    # Also tag any message containing "candle" or "Candle" (case-insensitive)
-                    # so we can find them quickly in the logs
-                    if isinstance(message, str):
-                        for keyword in ("candle", "Candle", "quote", "Quote", "tick", "Tick"):
-                            if keyword in message:
-                                logger.info(
-                                    f"[DEBUG-CANDLE #{self._debug_message_count:03d}] "
-                                    f"FOUND '{keyword}' in message: {message[:1000]}"
-                                )
-                                break
-
                 # Handle binary messages (Socket.IO binary attachments)
                 # After a "451-" text frame, binary data arrives as bytes
                 if isinstance(message, bytes):
+                    self._last_message_time = datetime.now(timezone.utc)
                     try:
-                        # Try to decode as UTF-8 (some binary frames are actually text)
-                        decoded = message.decode('utf-8')
-                        self._last_message_time = datetime.now(timezone.utc)
-
-                        # Binary attachment data — typically JSON array of assets
-                        # This arrives after a "451-[\"updateAssets\",...]" frame
-                        if decoded.startswith('[') or decoded.startswith('{'):
-                            try:
-                                parsed = json.loads(decoded)
-                                if isinstance(parsed, list):
-                                    await self._parse_assets_list(parsed)
-                                elif isinstance(parsed, dict):
-                                    await self._parse_assets_dict(parsed)
-                            except (json.JSONDecodeError, ValueError):
-                                pass
-                        else:
-                            try:
-                                await self._handle_message(decoded)
-                            except Exception as e:
-                                logger.error(f"[SCANNER] Error handling decoded binary: {e}")
-                    except UnicodeDecodeError:
-                        # True binary data — parse as assets/payouts
-                        self._last_message_time = datetime.now(timezone.utc)
-                        await self._handle_binary_data(message)
+                        # Use the new binary attachment reassembly path
+                        await self._process_binary_frame(message)
+                    except Exception as e:
+                        logger.error(f"[SCANNER] Error handling binary frame: {e}")
                     continue
 
                 self._last_message_time = datetime.now(timezone.utc)
@@ -443,6 +438,117 @@ class PocketOptionScanner:
         except Exception as e:
             logger.error(f"[SCANNER] Receive loop error: {e}")
             self._is_authenticated = False
+
+    @staticmethod
+    def _find_placeholders(obj):
+        """Recursively find all Socket.IO v4 binary placeholders in a JSON structure.
+
+        Placeholders look like: {"_placeholder": True, "num": N}
+        Returns a list of (path, num) tuples where path is a list of indices/keys
+        to reach the placeholder in the nested structure.
+        """
+        placeholders = []
+
+        def search(o, path=None):
+            if path is None:
+                path = []
+            if isinstance(o, dict):
+                if o.get("_placeholder") is True and "num" in o:
+                    placeholders.append({"path": path, "num": o["num"]})
+                else:
+                    for k, v in o.items():
+                        search(v, path + [k])
+            elif isinstance(o, list):
+                for i, item in enumerate(o):
+                    search(item, path + [i])
+
+        search(obj)
+        return placeholders
+
+    @staticmethod
+    def _substitute_placeholder(obj, path, value):
+        """Replace the placeholder at the given path with value (in-place)."""
+        target = obj
+        for key in path[:-1]:
+            target = target[key]
+        target[path[-1]] = value
+
+    @staticmethod
+    def _decode_binary_frame(data: bytes):
+        """Decode a Socket.IO v4 binary attachment frame to a Python object.
+
+        Binary frames are typically UTF-8-encoded JSON (PocketOption uses
+        this for the asset list and candle arrays). Sometimes they're raw
+        bytes (binary protobuf etc.) — we return None in that case.
+        """
+        try:
+            text = data.decode('utf-8')
+            return json.loads(text)
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return None
+
+    async def _process_binary_frame(self, data: bytes):
+        """Process an incoming binary frame.
+
+        Socket.IO v4 binary attachment protocol:
+          1. Server sends text frame: 451-["eventName", {"_placeholder": true, "num": 0}]
+          2. Server sends N binary frames, one per placeholder
+          3. Each binary frame replaces its corresponding placeholder by `num` index
+
+        We buffer text frames with placeholders, then substitute binary frames
+        as they arrive. Once all placeholders are filled, the event is dispatched.
+        """
+        if not self._pending_binary_events:
+            # No pending events — fall back to legacy behavior (try as raw assets)
+            try:
+                text = data.decode('utf-8')
+                if text.startswith('[') or text.startswith('{'):
+                    try:
+                        parsed = json.loads(text)
+                        if isinstance(parsed, list):
+                            await self._parse_assets_list(parsed)
+                        elif isinstance(parsed, dict):
+                            await self._parse_assets_dict(parsed)
+                    except (json.JSONDecodeError, ValueError):
+                        pass
+                else:
+                    await self._handle_message(text)
+            except UnicodeDecodeError:
+                await self._handle_binary_data(data)
+            return
+
+        # Take the oldest pending event
+        pending = self._pending_binary_events[0]
+        decoded = self._decode_binary_frame(data)
+
+        if decoded is None:
+            # Couldn't decode as JSON — store raw bytes (rare case)
+            pending["binaries_received"].append({"num": len(pending["binaries_received"]), "raw": data})
+        else:
+            pending["binaries_received"].append({"num": len(pending["binaries_received"]), "data": decoded})
+
+        # Check if we have all binaries
+        if len(pending["binaries_received"]) >= pending["placeholders_needed"]:
+            # Substitute binaries into the event_data
+            event_data = pending["event_data"]
+            placeholders = self._find_placeholders(event_data)
+            binaries_sorted = sorted(pending["binaries_received"], key=lambda b: b["num"])
+
+            for i, ph in enumerate(placeholders):
+                if i < len(binaries_sorted):
+                    binary = binaries_sorted[i]
+                    if "data" in binary:
+                        self._substitute_placeholder(event_data, ph["path"], binary["data"])
+
+            # Dispatch the now-complete event
+            event_name = pending["event_name"]
+            self._pending_binary_events.pop(0)
+
+            logger.info(
+                f"[SCANNER] Binary event reassembled: '{event_name}' "
+                f"({len(placeholders)} placeholder(s) filled)"
+            )
+            await self._handle_event(event_name, event_data)
 
     async def _handle_message(self, message: str):
         """Route incoming Socket.IO messages."""
@@ -510,27 +616,54 @@ class PocketOptionScanner:
                 # Strip the "45<id>-" prefix to get the JSON event
                 dash_idx = message.index("-")
                 json_part = message[dash_idx + 1:]
-                # This may contain _placeholder references, but the event name is parseable
                 data = json.loads(json_part)
                 event_name = data[0] if isinstance(data, list) and data else ""
-                logger.debug(f"[SCANNER] Binary event: {event_name}")
-                
-                # updateAssets after auth = auth succeeded!
-                if event_name in ("updateAssets", "successauth"):
+                event_data = data[1:] if len(data) > 1 else []
+
+                # ─── Socket.IO v4 binary attachment reassembly ────────
+                # Count placeholders in event_data. If any element is a dict
+                # with {"_placeholder": True, "num": N}, the actual data
+                # arrives as binary frames AFTER this text frame.
+                placeholders = self._find_placeholders(event_data)
+                if placeholders:
+                    # Buffer this event — wait for binary frames to arrive
+                    self._pending_binary_events.append({
+                        "event_name": event_name,
+                        "event_data": event_data,
+                        "placeholders_needed": len(placeholders),
+                        "binaries_received": [],
+                    })
+                    logger.debug(
+                        f"[SCANNER] Binary event buffered: '{event_name}' "
+                        f"waiting for {len(placeholders)} binary frame(s)"
+                    )
+                    # Update auth state if applicable
+                    if event_name in ("updateAssets", "successauth", "successAuth", "successUpdateBalance"):
+                        if not self._is_authenticated:
+                            self._is_authenticated = True
+                            self._auth_event.set()
+                            logger.info(f"[SCANNER] ✅ Authentification réussie (via binary event: {event_name})")
+                    elif event_name in ("NotAuthorized", "notAuthorized"):
+                        self._is_authenticated = False
+                        self._auth_event.set()
+                        logger.error("[SCANNER] ❌ Authentification refusée (via binary event)")
+                    return  # Don't dispatch yet — wait for binaries
+
+                # No placeholders — dispatch immediately
+                logger.debug(f"[SCANNER] Binary event (no placeholders): {event_name}")
+
+                # Auth success events
+                if event_name in ("updateAssets", "successauth", "successAuth", "successUpdateBalance"):
                     if not self._is_authenticated:
                         self._is_authenticated = True
                         self._auth_event.set()
                         logger.info(f"[SCANNER] ✅ Authentification réussie (via binary event: {event_name})")
-                    
-                    # Try to parse payout data from the next binary message
-                    # (will arrive as bytes in the next recv)
-                elif event_name == "NotAuthorized":
+                elif event_name in ("NotAuthorized", "notAuthorized"):
                     self._is_authenticated = False
                     self._auth_event.set()
                     logger.error("[SCANNER] ❌ Authentification refusée (via binary event)")
-                else:
-                    event_data = data[1:] if len(data) > 1 else []
-                    await self._handle_event(event_name, event_data)
+
+                await self._handle_event(event_name, event_data)
             except (json.JSONDecodeError, ValueError, IndexError) as e:
                 logger.debug(f"[SCANNER] Failed to parse binary event: {message[:100]}")
             return
@@ -746,19 +879,6 @@ class PocketOptionScanner:
     async def _handle_event(self, event_name: str, event_data: list):
         """Handle Socket.IO named events."""
 
-        # ─── DEBUG: log EVERY event name we receive (first 200 events) ──
-        # This tells us what event names PO actually uses, so we can fix
-        # the candle parser. Remove once fixed.
-        if not hasattr(self, '_debug_event_count'):
-            self._debug_event_count = 0
-        self._debug_event_count += 1
-        if self._debug_event_count <= 200:
-            data_preview = str(event_data)[:300]
-            logger.info(
-                f"[DEBUG-EVENT #{self._debug_event_count:03d}] "
-                f"name='{event_name}' data={data_preview}"
-            )
-
         # Auth success event
         if event_name == "successauth":
             self._is_authenticated = True
@@ -833,16 +953,287 @@ class PocketOptionScanner:
                 pass
             return
 
-        # Candles data
-        if event_name in ("candles", "candlesData", "quote"):
+        # updateStream — PO's LIVE TICK STREAM. This is how PO's modern API
+        # delivers price data. Each event contains [asset, timestamp, price].
+        # We aggregate ticks into 1-minute OHLC candles.
+        # This is the BREAKTHROUGH — PO doesn't send historical candles on
+        # the main socket; it sends live ticks that we must aggregate ourselves.
+        if event_name.lower() == "updatestream":
             try:
-                await self._parse_candles(event_name, event_data)
+                await self._process_tick_stream(event_data)
             except Exception as e:
-                logger.debug(f"[SCANNER] Candles parse error: {e}")
+                logger.debug(f"[SCANNER] updateStream parse error: {e}")
             return
 
-        # Other events — log at debug level
+        # Candles data — PO's modern API uses 'loadHistoryPeriod' for the
+        # initial candle response and 'updateHistoryNew' for incremental
+        # updates. (Discovered by reading the pocketoptionapi-async library
+        # source code — PO's protocol changed; old 'candles' event name
+        # no longer exists in the modern API.)
+        if event_name.lower() in (
+            "candles", "candlesdata", "quote", "quotes",
+            "getcandles", "getcandlesdata", "history",
+            "loadhistory", "loadcandles", "candleslist",
+            "ohlc", "ohlcv", "chartdata", "chartdataupdate",
+            "updatecharts",  # chart configuration event
+            "loadhistoryperiod",  # ← PO's actual candle response event
+            "updatehistorynew",  # ← PO's incremental candle update event
+        ):
+            try:
+                logger.info(
+                    f"[SCANNER] Candle event received: '{event_name}' "
+                    f"data_preview={str(event_data)[:500]}"
+                )
+                await self._parse_candles(event_name, event_data)
+            except Exception as e:
+                logger.warning(f"[SCANNER] Candles parse error for '{event_name}': {e}")
+            return
+
+        # updateAsset (singular) — discovered in production 2026-06-18.
+        # PO sends this for incremental asset updates. Same format as
+        # updateAssets but with a single asset (or small list) instead of
+        # the full 183-asset snapshot.
+        if event_name.lower() in ("updateasset", "updateassets", "assets"):
+            try:
+                if event_data:
+                    assets = event_data[0]
+                    if isinstance(assets, list):
+                        # Could be a single asset or list of assets
+                        if assets and isinstance(assets[0], (list, tuple)):
+                            await self._parse_assets_list(assets)
+                        else:
+                            # Single asset wrapped in a list
+                            await self._parse_assets_list([assets])
+                    elif isinstance(assets, dict):
+                        await self._parse_assets_dict(assets)
+            except Exception as e:
+                logger.debug(f"[SCANNER] updateAsset parse error: {e}")
+            return
+
+        # Other events — log at DEBUG level only (not INFO) to avoid
+        # flooding the logs and blocking the async event loop.
+        # Hundreds of log lines per second (from updateStream ticks) was
+        # blocking the event loop → PONG messages delayed → PO disconnects.
         logger.debug(f"[SCANNER] Event '{event_name}': {str(event_data)[:200]}")
+
+    async def _process_tick_stream(self, event_data):
+        """Process live price ticks from PO's 'updateStream' event.
+
+        PO's modern API sends real-time price updates. The binary attachment
+        reassembly produces a deeply-nested structure:
+            event_data = [[[[asset, ts, price]]]]
+                       or [[[[asset, ts, price], [asset, ts, price], ...]]]
+        We recursively unwrap until we find the actual tick arrays.
+        """
+        if not event_data:
+            return
+
+        try:
+            # Recursively extract all ticks from any nesting depth.
+            # A "tick" is a list where index 0 is a string (asset name).
+            ticks_to_process = []
+
+            def extract_ticks(obj):
+                """Recursively find all [asset, ts, price] ticks in nested lists."""
+                if isinstance(obj, list):
+                    if len(obj) >= 3 and isinstance(obj[0], str):
+                        # This looks like a tick: [asset, ts, price, ...]
+                        ticks_to_process.append(obj)
+                    else:
+                        # Recurse into each element
+                        for item in obj:
+                            extract_ticks(item)
+                # Don't process dicts or scalars
+
+            extract_ticks(event_data)
+
+            if not ticks_to_process:
+                # Log at INFO so we can see the structure when extraction fails
+                logger.info(
+                    f"[SCANNER-TICK-EXTRACT-FAIL] structure={str(event_data)[:500]}"
+                )
+                return
+
+            for tick in ticks_to_process:
+                try:
+                    asset = str(tick[0])
+                    ts = float(tick[1])
+                    price = float(tick[2])
+
+                    if not asset:
+                        continue
+
+                    # ═══ FOREX-ONLY FILTER ════════════════════════════
+                    # A2Sniper is dedicated to FOREX currency pairs ONLY.
+                    # Filter out stocks (AMD, AAPL, GME, MARA), crypto
+                    # (BTC, ETH, AVAX, BITB), commodities, etc.
+                    # This saves resources and ensures we only analyze
+                    # the asset class the system was designed for.
+                    if _FOREX_FILTER_AVAILABLE and not _is_forex_pair(asset):
+                        continue  # silently skip non-forex assets
+
+                    # Buffer the tick
+                    if asset not in self._tick_buffer:
+                        self._tick_buffer[asset] = []
+                        logger.info(
+                            f"[SCANNER-FIRST-TICK] asset={asset} price={price:.5f} "
+                            f"ts={datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()}"
+                        )
+                    self._tick_buffer[asset].append((ts, price))
+                except (ValueError, TypeError, IndexError) as e:
+                    logger.warning(f"[SCANNER-TICK-PARSE-ERROR] err={e} tick={tick}")
+
+            # Aggregate periodically (not on every tick — too expensive)
+            # Only aggregate if last aggregation was >5 seconds ago
+            now = datetime.now(timezone.utc).timestamp()
+            if not hasattr(self, '_last_aggregation_time'):
+                self._last_aggregation_time = 0
+            if now - self._last_aggregation_time > 5.0:
+                self._last_aggregation_time = now
+                self._aggregate_ticks_into_candles()
+
+        except Exception as e:
+            # Log at WARNING level (not DEBUG) so it's visible in Railway
+            logger.warning(f"[SCANNER-TICK-PROCESS-ERROR] err={e}", exc_info=True)
+
+    def _aggregate_ticks_into_candles(self):
+        """Aggregate buffered ticks into 1-minute OHLC candles.
+
+        For each asset in _tick_buffer:
+        1. Group ticks by 1-minute windows (floor to 60s)
+        2. For each minute that is COMPLETE (i.e., the NEXT minute has started,
+           meaning we've seen at least one tick from a later minute — this is
+           a robust way to detect completeness without relying on server clock):
+           open=first, high=max, low=min, close=last, volume=count
+        3. Append new candles to _candles_cache[asset_1m]
+        4. Keep only the last 200 candles (enough for EMA_200)
+        5. Remove processed ticks from the buffer (keep only the latest minute)
+
+        NOTE: We do NOT use server time (datetime.now) to determine which
+        minute is "current" — PO's clock may differ from the server's clock,
+        which would cause every minute to appear "current" and get skipped
+        forever. Instead, we use the LATEST tick timestamp as the reference:
+        any minute strictly older than the latest tick's minute is considered
+        complete.
+        """
+        import numpy as np
+
+        for asset, ticks in list(self._tick_buffer.items()):
+            if not ticks:
+                continue
+
+            # Sort by timestamp
+            ticks.sort(key=lambda t: t[0])
+
+            # Group by 1-minute windows (floor timestamp to 60s)
+            candles_by_minute = {}
+            for ts, price in ticks:
+                minute_key = int(ts // 60) * 60  # floor to minute boundary
+                if minute_key not in candles_by_minute:
+                    candles_by_minute[minute_key] = []
+                candles_by_minute[minute_key].append(price)
+
+            if not candles_by_minute:
+                continue
+
+            # Use the LATEST tick's minute as "current" — any minute strictly
+            # older than this is complete (we've moved past it).
+            # This is robust against server/PO clock drift.
+            latest_minute = max(candles_by_minute.keys())
+
+            cache_key = f"{asset}_1m"
+            existing_df = self._candles_cache.get(cache_key)
+            existing_times = set()
+            if existing_df is not None and not existing_df.empty:
+                existing_times = set(existing_df.index.floor('min').astype('int64') // 10**9)
+
+            new_rows = []
+            for minute_ts, prices in sorted(candles_by_minute.items()):
+                # Skip the latest (still accumulating) minute
+                if minute_ts >= latest_minute:
+                    continue
+                # Skip if we already have this candle
+                if minute_ts in existing_times:
+                    continue
+
+                o = prices[0]
+                h = max(prices)
+                l = min(prices)
+                c = prices[-1]
+                v = float(len(prices))
+                new_rows.append((minute_ts, o, h, l, c, v))
+
+            if not new_rows:
+                continue
+
+            # Build new candle rows
+            new_df = pd.DataFrame(
+                new_rows, columns=["ts", "open", "high", "low", "close", "volume"]
+            )
+            new_df["time"] = pd.to_datetime(new_df["ts"], unit="s", utc=True)
+            new_df = new_df.set_index("time").drop(columns=["ts"])
+
+            # Merge with existing candles
+            if existing_df is not None and not existing_df.empty:
+                combined = pd.concat([existing_df, new_df])
+                combined = combined[~combined.index.duplicated(keep='last')]
+                combined = combined.sort_index()
+                # Keep last 200 candles
+                combined = combined.tail(200)
+            else:
+                combined = new_df.tail(200)
+
+            self._candles_cache[cache_key] = combined
+
+            # Log new candles — but only every 5th candle to reduce log volume
+            # (was logging every candle → hundreds of lines/min with 50+ assets)
+            for i, (_, row) in enumerate(new_df.iterrows()):
+                if i % 5 == 0 or len(new_df) <= 5:  # Log first + every 5th
+                    logger.info(
+                        f"[SCANNER-CANDLE-BUILT] asset={asset} tf=1m "
+                        f"O={row['open']:.5f} H={row['high']:.5f} L={row['low']:.5f} "
+                        f"C={row['close']:.5f} ticks={int(row['volume'])} "
+                        f"total_candles={len(combined)}"
+                    )
+
+            # Clean up processed ticks (keep only the latest minute's ticks)
+            current_minute_ticks = [(ts, p) for ts, p in ticks if int(ts // 60) * 60 >= latest_minute]
+            self._tick_buffer[asset] = current_minute_ticks
+
+    async def _tick_status_logger_loop(self):
+        """Periodically log tick buffer status so we can see the system warming up.
+
+        Runs every 30 seconds, logs:
+        - How many assets are receiving ticks
+        - How many candles have been built per asset
+        - How many ticks are in the current minute buffer
+        """
+        try:
+            while self._ws and self._ws_is_open() and self._is_authenticated:
+                await asyncio.sleep(60)  # every 60s (was 30s — reduce log volume)
+                if not self._tick_buffer:
+                    continue
+
+                status_parts = []
+                total_candles = 0
+                for asset, ticks in sorted(self._tick_buffer.items()):
+                    candle_count = len(self._candles_cache.get(f"{asset}_1m", pd.DataFrame()))
+                    total_candles += candle_count
+                    status_parts.append(f"{asset}: {candle_count} candles, {len(ticks)} ticks")
+
+                logger.info(
+                    f"[SCANNER-TICK-STATUS] assets={len(self._tick_buffer)} "
+                    f"total_candles={total_candles} "
+                    f"details=[{' | '.join(status_parts[:5])}]"
+                    f"{' ...' if len(status_parts) > 5 else ''}"
+                )
+
+                # Also force aggregation in case the tick processor hasn't run it recently
+                self._aggregate_ticks_into_candles()
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.warning(f"[SCANNER] Tick status logger error: {e}")
 
     async def _parse_candles(self, event_name: str, event_data: list):
         """Parse candle data from PocketOption WebSocket events.
@@ -912,7 +1303,9 @@ class PocketOptionScanner:
             tf_sec = None
             raw_candles = None
 
-            # Shape A / C: dict with "asset" + "candles" or "data"
+            # Shape A / C / loadHistoryPeriod: dict with "asset" + "candles" or "data"
+            # PO's modern API (loadHistoryPeriod event) sends:
+            #   {"asset": "EURUSD_otc", "period": 60, "candles": [[ts,o,c,h,l,v], ...]}
             if isinstance(payload, dict):
                 asset = payload.get("asset") or payload.get("symbol") or payload.get("pair")
                 tf_sec = payload.get("timeframe") or payload.get("tf") or payload.get("period")
@@ -921,6 +1314,57 @@ class PocketOptionScanner:
                     or payload.get("data")
                     or payload.get("candlesData")
                     or payload.get("quotes")
+                    or payload.get("history")  # some PO versions use this
+                )
+
+            # Shape E (updateCharts): dict with nested "settings" containing
+            # chart config. PO sends this on the main socket to push chart
+            # configuration. Discovered in production 2026-06-18.
+            # Sample: [{'chart_id': 'chart-1', 'settings': {'symbol': 'AUDUSD',
+            #   'period': 4, 'candlesTimer': true, 'fastTimeframe': 60, ...}}]
+            #
+            # NOTE: 'updateCharts' alone contains only chart CONFIGURATION —
+            # no candle data. The actual candles arrive via a separate event
+            # (probably 'updateChartCandles' or 'chartCandles' — TBD via
+            # debug logs). We still process this so we know which symbol
+            # is currently active on the chart.
+            if event_name.lower() == "updatecharts" and isinstance(payload, dict):
+                settings = payload.get("settings", {})
+                asset = settings.get("symbol") or settings.get("asset") or asset
+                # PO uses 'period' (NOT 'chartPeriod' as I assumed earlier).
+                # 'period' is an INDEX into the timeframe list
+                # [60, 120, 180, 300, 600, 900, 1800, 2700, 3600, 7200, 10800, 14400]
+                period_idx = settings.get("period", settings.get("chartPeriod"))
+                if period_idx is not None:
+                    tf_list = [60, 120, 180, 300, 600, 900, 1800, 2700, 3600, 7200, 10800, 14400]
+                    try:
+                        tf_sec = tf_list[int(period_idx)]
+                    except (IndexError, ValueError, TypeError):
+                        pass
+                # 'fastTimeframe' may also be the actual candle timeframe in seconds
+                if not tf_sec and settings.get("fastTimeframe"):
+                    try:
+                        tf_sec = int(settings["fastTimeframe"])
+                    except (ValueError, TypeError):
+                        pass
+                # Look for candle data in various places — updateCharts
+                # alone usually has no candles, but check just in case PO
+                # bundles them on the initial push.
+                raw_candles = (
+                    settings.get("candles")
+                    or settings.get("data")
+                    or settings.get("history")
+                    or settings.get("quotes")
+                    or settings.get("candlesData")
+                    or payload.get("candles")
+                    or payload.get("data")
+                    or payload.get("history")
+                    or raw_candles
+                )
+                logger.info(
+                    f"[SCANNER] updateCharts: asset={asset}, tf_sec={tf_sec}, "
+                    f"period_idx={period_idx}, fastTimeframe={settings.get('fastTimeframe')}, "
+                    f"candles_found={raw_candles is not None}"
                 )
 
             # Shape B: list/tuple [asset, timeframe, candles]
@@ -958,10 +1402,19 @@ class PocketOptionScanner:
 
             # Validate
             if not asset or not isinstance(asset, str):
-                logger.debug(f"[SCANNER] _parse_candles: no asset in payload ({event_name})")
+                logger.info(
+                    f"[SCANNER] _parse_candles: no asset in payload ({event_name}). "
+                    f"Payload keys: {list(payload.keys()) if isinstance(payload, dict) else type(payload).__name__}, "
+                    f"payload_preview={str(payload)[:500]}"
+                )
                 return
             if raw_candles is None or not isinstance(raw_candles, (list, tuple)) or len(raw_candles) == 0:
-                logger.debug(f"[SCANNER] _parse_candles: no candle rows for {asset} ({event_name})")
+                logger.info(
+                    f"[SCANNER] _parse_candles: no candle rows for {asset} ({event_name}). "
+                    f"Payload keys: {list(payload.keys()) if isinstance(payload, dict) else type(payload).__name__}, "
+                    f"settings_keys: {list(payload.get('settings', {}).keys()) if isinstance(payload, dict) and isinstance(payload.get('settings'), dict) else 'N/A'}, "
+                    f"payload_preview={str(payload)[:800]}"
+                )
                 return
 
             # Normalise asset symbol (PO uses "EURUSD_otc"; some events send "#EURUSD")
@@ -981,16 +1434,40 @@ class PocketOptionScanner:
             # ─── Build the DataFrame ─────────────────────────────────────
             # Accumulate rows in a Python list first (faster than growing a DataFrame),
             # then construct once. Each row is (timestamp, o, h, l, c, v).
+            #
+            # IMPORTANT: PO's loadHistoryPeriod event uses a DIFFERENT array
+            # order than the old 'candles' event:
+            #   Old format:    [ts, open, high, low, close, volume]  (close at idx 4)
+            #   New format:    [ts, open, close, high, low, volume]  (close at idx 2!)
+            # We detect which format by checking if h_v >= max(o, c, l) — if not,
+            # the array is in the new format (close before high/low).
             rows = []
             for candle in raw_candles:
                 try:
-                    # Positional form: [ts, o, h, l, c, v]  (or [ts, o, h, l, c] without volume)
+                    # Positional form
                     if isinstance(candle, (list, tuple)):
                         if len(candle) < 5:
                             continue
                         ts_v = candle[0]
-                        o_v, h_v, l_v, c_v = candle[1], candle[2], candle[3], candle[4]
                         v_v = candle[5] if len(candle) > 5 else 0.0
+
+                        # Try OLD format first: [ts, open, HIGH, LOW, CLOSE, v]
+                        o_try = float(candle[1])
+                        h_try = float(candle[2])
+                        l_try = float(candle[3])
+                        c_try = float(candle[4])
+
+                        if h_try >= max(o_try, c_try, l_try) and l_try <= min(o_try, c_try, h_try):
+                            # Old format is consistent
+                            o_v, h_v, l_v, c_v = o_try, h_try, l_try, c_try
+                        else:
+                            # NEW format (loadHistoryPeriod): [ts, open, CLOSE, HIGH, LOW, v]
+                            # Per pocketoptionapi-async library source: candle_data[2] is close,
+                            # candle_data[3] is high, candle_data[4] is low
+                            o_v = float(candle[1])
+                            c_v = float(candle[2])
+                            h_v = float(candle[3])
+                            l_v = float(candle[4])
                     # Dict form: {"time"/"timestamp", "open", "high", "low", "close", "volume"}
                     elif isinstance(candle, dict):
                         ts_v = candle.get("time") or candle.get("timestamp") or candle.get("t")
@@ -1010,9 +1487,6 @@ class PocketOptionScanner:
                     c_v = float(c_v); v_v = float(v_v)
 
                     # Sanity: high must be >= max(open, close, low), low <= min(...)
-                    # PO is well-behaved but corrupted frames do occur; just
-                    # skip malformed candles rather than letting them pollute
-                    # the indicator math downstream.
                     if not (h_v >= max(o_v, c_v, l_v) and l_v <= min(o_v, c_v, h_v)):
                         # Repair: clamp to the obvious values
                         h_v = max(o_v, c_v, h_v, l_v)
@@ -1253,61 +1727,54 @@ class PocketOptionScanner:
         tf_sec = tf_seconds.get(timeframe, 60)
 
         try:
-            # Request candles via WebSocket
-            msg = f'42["getCandles","{asset}",{tf_sec},{count}]'
-            await self._ws.send(msg)
-            # ─── DEBUG: log the getCandles request so we can correlate with responses
-            self._debug_candle_requests_sent.add(asset)
-            logger.info(
-                f"[DEBUG-GETCANDLES] Sent WS request for {asset} tf={timeframe}({tf_sec}s) count={count} "
-                f"— total unique assets requested so far: {len(self._debug_candle_requests_sent)}"
-            )
-
-            # Wait for candles response (up to 10 seconds)
-            # We'll listen for the next candles event for this asset
-            start_time = asyncio.get_event_loop().time()
             cache_key = f"{asset}_{timeframe}"
 
-            # First check: maybe the cache already has fresh candles from a
-            # previous request within the last `tf_sec` seconds (still current).
+            # ═══ CHECK TICK-AGGREGATED CANDLES FIRST ═══════════════════
+            # PO's modern API sends live ticks via 'updateStream' events.
+            # We aggregate them into 1-minute candles in real-time.
+            # If we already have tick-aggregated candles, return them
+            # immediately — no need to send WS requests that will timeout.
             if cache_key in self._candles_cache:
-                cached = self._candles_cache[cache_key]
-                if not cached.empty:
-                    cache_age = (datetime.now(timezone.utc) - cached.index[-1].to_pydatetime()).total_seconds()
-                    # Cache is fresh if the last bar is within the current candle period
-                    if cache_age < tf_sec:
-                        logger.info(f"[DEBUG-GETCANDLES] Cache hit for {asset} (age={cache_age:.0f}s)")
-                        return cached.copy()
+                df = self._candles_cache.get(cache_key)
+                if df is not None and not df.empty:
+                    logger.info(
+                        f"[SCANNER-CANDLE-HIT] asset={asset} tf={timeframe} "
+                        f"bars={len(df)} last_close={df['close'].iloc[-1]:.5f}"
+                    )
+                    return df.copy()
 
-            # Poll the cache for up to 10 seconds waiting for the WS response
-            while (asyncio.get_event_loop().time() - start_time) < 10:
-                if cache_key in self._candles_cache:
-                    df = self._candles_cache.get(cache_key)
-                    if df is not None and not df.empty:
-                        logger.info(
-                            f"[DEBUG-GETCANDLES] WS response received for {asset} "
-                            f"({len(df)} bars) after {asyncio.get_event_loop().time() - start_time:.1f}s"
-                        )
-                        return df.copy()
-                await asyncio.sleep(0.2)
+            # If we have ticks in the buffer but not enough candles yet,
+            # log the warming-up status
+            if asset in self._tick_buffer and len(self._tick_buffer[asset]) > 0:
+                tick_count = len(self._tick_buffer[asset])
+                existing_candles = len(self._candles_cache.get(cache_key, pd.DataFrame()))
+                logger.info(
+                    f"[SCANNER-WARMING-UP] asset={asset} candles={existing_candles} "
+                    f"ticks={tick_count} min_remaining={max(0, 20 - existing_candles)}"
+                )
+                # Return what we have (even if < 52 bars) — the caller will
+                # decide if it's enough for analysis
+                if df is not None and not df.empty:
+                    return df.copy()
+                return pd.DataFrame()
 
-            # ─── DEBUG: log that we timed out waiting for the WS response
-            logger.warning(
-                f"[DEBUG-GETCANDLES] TIMEOUT waiting for {asset} {timeframe} "
-                f"— WS request sent but no response in 10s. "
-                f"Check [DEBUG-EVENT] and [DEBUG-CANDLE] logs above for what PO actually sent."
+            # No tick data yet — DON'T send WS candle requests!
+            #
+            # Previously we sent 11 different request formats per pair
+            # (changeSymbol, getCandles, loadHistory, etc.). With 34 pairs
+            # in the trading loop, that's 374 WS messages in a burst —
+            # PO sees this as FLOODING and DISCONNECTS US.
+            #
+            # PO's modern API doesn't respond to these requests anyway —
+            # candle data comes via the updateStream tick feed, which is
+            # already flowing. We just need to WAIT for ticks to accumulate
+            # into candles (takes ~60s for the first candle, ~20min for 20).
+            #
+            # Just log and return empty — the caller will skip analysis.
+            logger.info(
+                f"[SCANNER-WARMING-UP] asset={asset} — waiting for ticks "
+                f"(no WS requests sent to avoid PO flooding/disconnect)"
             )
-
-            # If no candles received via WebSocket, try HTTP API
-            df = await self._fetch_candles_http(asset, tf_sec, count)
-            if not df.empty:
-                return df
-
-            # Last resort: return whatever's in the cache (even if stale) —
-            # better than nothing for indicator math that needs history.
-            if cache_key in self._candles_cache:
-                return self._candles_cache[cache_key].copy()
-
             return pd.DataFrame()
 
         except Exception as e:
@@ -1592,22 +2059,26 @@ class PocketOptionScanner:
         }
 
     def find_pairs_above_payout(self, min_payout: float = 70.0, pair_filter: str = "OTC",
-                                 active_only: bool = True) -> dict:
+                                 active_only: bool = True, forex_only: bool = True) -> dict:
         """Find all ELIGIBLE pairs — the only pairs the system should ever use.
 
-        A pair is ELIGIBLE if and only if BOTH conditions are met:
+        A pair is ELIGIBLE if and only if ALL conditions are met:
           1. is_active=True  (pair is currently tradable on PO — not greyed out)
           2. payout >= min_payout  (default 70.0 — minimum +70% profitability)
+          3. (if forex_only=True) the symbol is a FOREX currency pair — NOT a
+             stock, crypto, commodity, or other asset type. A2Sniper is
+             dedicated to FOREX only.
 
-        All other pairs (inactive OR payout below threshold) are EXCLUDED entirely.
+        All other pairs (inactive, low payout, OR non-forex) are EXCLUDED entirely.
         They are never displayed, never used for signals, never sent to the user.
         When PO reactivates them (within ~5s, thanks to the refresh loop), they
-        automatically reappear in this list.
+        automatically reappear in this list IF they meet all criteria.
 
         Args:
             min_payout: Minimum payout threshold. Default 70.0 per system requirement.
             pair_filter: Filter symbols by this substring (e.g. "OTC"). Empty = all.
             active_only: If True (default), exclude inactive pairs.
+            forex_only: If True (default), exclude non-FOREX assets (stocks, crypto, etc.)
         """
         result = {}
         for symbol, entry in self._payouts.items():
@@ -1615,10 +2086,15 @@ class PocketOptionScanner:
             is_active = entry.get("is_active", True)
             if active_only and not is_active:
                 continue  # Inactive pair — DROP entirely, never display
-            if payout >= min_payout:
-                if pair_filter and pair_filter.upper() in symbol.upper():
-                    display = self._symbol_to_display(symbol)
-                    result[display] = payout
+            if payout < min_payout:
+                continue  # Payout too low
+            if pair_filter and pair_filter.upper() not in symbol.upper():
+                continue  # Doesn't match the OTC/etc filter
+            # FOREX-only filter — A2Sniper is dedicated to FOREX currency pairs
+            if forex_only and _FOREX_FILTER_AVAILABLE and not _is_forex_pair(symbol):
+                continue  # Stock, crypto, commodity — DROP
+            display = self._symbol_to_display(symbol)
+            result[display] = payout
         return result
 
     @staticmethod

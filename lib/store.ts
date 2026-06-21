@@ -89,6 +89,7 @@ interface AppState {
   lastConnectedSSID: string | null;
   reconnectAttempts: number;
   maxReconnectAttempts: number;
+  lastConnectTime: number;
   autoConnectDone: boolean;  // Track if initial auto-connect has been attempted
   
   // Actions
@@ -125,7 +126,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   clockOffset: 0,
   lastConnectedSSID: null as string | null,
   reconnectAttempts: 0,
-  maxReconnectAttempts: 10,
+  maxReconnectAttempts: 5,  // Lowered from 10 to 5 — stop the endless loop faster
+  lastConnectTime: 0 as number,  // timestamp of last successful connect (for stability check)
   autoConnectDone: false,
   
   setSignals: (signals) => set({ signals }),
@@ -314,7 +316,21 @@ export const useAppStore = create<AppState>((set, get) => ({
       });
       const data = await res.json();
       if (res.ok) {
-        set({ liveStatus: 'LIVE', lastConnectedSSID: ssid, reconnectAttempts: 0 });
+        // Only reset reconnectAttempts if this is a STABLE connection.
+        // If the previous connection lasted <60s (flapping), keep the
+        // counter so we eventually stop retrying.
+        const now = Date.now();
+        const lastConnect = get().lastConnectTime;
+        const timeSinceLastConnect = now - lastConnect;
+        if (lastConnect === 0 || timeSinceLastConnect > 60000) {
+          // First connect OR previous connection lasted >60s → stable, reset counter
+          set({ liveStatus: 'LIVE', lastConnectedSSID: ssid, reconnectAttempts: 0, lastConnectTime: now });
+        } else {
+          // Previous connection lasted <60s → UNSTABLE (flapping). Don't reset.
+          // This prevents the endless connect/disconnect loop.
+          set({ liveStatus: 'LIVE', lastConnectedSSID: ssid, lastConnectTime: now });
+          console.log(`[CONNECT] Connection lasted only ${Math.round(timeSinceLastConnect/1000)}s — NOT resetting reconnect counter (attempt ${get().reconnectAttempts}/${get().maxReconnectAttempts})`);
+        }
         // Save SSID for auto-reconnect
         if (typeof window !== 'undefined') {
           localStorage.setItem('a2sniper_last_ssid', ssid);
@@ -421,15 +437,32 @@ export const useAppStore = create<AppState>((set, get) => ({
         });
 
         // Auto-reconnect: if we were LIVE but now disconnected, try to reconnect
+        // BUT only if the connection was stable (lasted >60s). If it flapped
+        // (connected then disconnected quickly), we DON'T auto-reconnect —
+        // this usually means PO is rejecting the connection because the same
+        // SSID is being used in the user's browser tab.
         if (wasLive && !isNowLive && get().lastConnectedSSID) {
-          console.log('[SESSION] Connection lost — attempting auto-reconnect with saved SSID...');
-          const delay = Math.min(3000 + (get().reconnectAttempts * 2000), 15000);
-          setTimeout(async () => {
-            const state = get();
-            if (state.liveStatus === 'DISCONNECTED' && state.lastConnectedSSID && state.reconnectAttempts < state.maxReconnectAttempts) {
-              await state.attemptReconnect();
-            }
-          }, delay);
+          const timeSinceLastConnect = Date.now() - get().lastConnectTime;
+          if (timeSinceLastConnect < 60000) {
+            // Connection lasted <60s — UNSTABLE. Don't auto-reconnect.
+            // The user likely has pocketoption.com open in another tab,
+            // causing PO to reject our connection.
+            console.log(`[SESSION] Connection was unstable (lasted ${Math.round(timeSinceLastConnect/1000)}s) — NOT auto-reconnecting. Close pocketoption.com if it's open in another tab.`);
+            // Still increment the counter so we eventually give up
+            set({ reconnectAttempts: Math.min(get().reconnectAttempts + 1, get().maxReconnectAttempts) });
+          } else if (get().reconnectAttempts < get().maxReconnectAttempts) {
+            // Connection was stable (>60s) but now dropped — genuine disconnect
+            console.log(`[SESSION] Connection lost (was stable for ${Math.round(timeSinceLastConnect/1000)}s) — attempting auto-reconnect ${get().reconnectAttempts + 1}/${get().maxReconnectAttempts}...`);
+            const delay = Math.min(5000 + (get().reconnectAttempts * 5000), 30000);  // 5s, 10s, 15s, 20s, 25s
+            setTimeout(async () => {
+              const state = get();
+              if (state.liveStatus === 'DISCONNECTED' && state.lastConnectedSSID && state.reconnectAttempts < state.maxReconnectAttempts) {
+                await state.attemptReconnect();
+              }
+            }, delay);
+          } else {
+            console.log(`[SESSION] Max reconnect attempts (${get().maxReconnectAttempts}) reached. Close pocketoption.com if open, then reconnect manually.`);
+          }
         }
       }
     } catch (err) {

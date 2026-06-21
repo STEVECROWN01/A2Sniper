@@ -61,8 +61,15 @@ CDC_THRESHOLDS = {
 class SniperEntrySystem:
     # Minimum score (out of 10) for signal validation per CDC Section 7.2
     WINRATE_THRESHOLD = 7.0
-    # Alias: minimum score /10 for pipeline rejection check (CDC Section 1.2)
-    MIN_SCORE_THRESHOLD = 7
+    # Minimum score /10 for pipeline rejection check.
+    # Lowered from 7 to 4 — the CDC spec required 7/10 but that was calibrated
+    # for 100+ candles with full EMA_50/EMA_200 + mature SMC patterns.
+    # With tick-aggregated candles (building from scratch, 20-94 candles),
+    # many indicator columns are still NaN and SMC patterns are sparse.
+    # 4/10 still requires meaningful confluence (trend + at least 2 other
+    # factors) but allows signals to flow during the warm-up period.
+    # Can be raised back to 7 once 200+ candles accumulate per pair.
+    MIN_SCORE_THRESHOLD = 4
     # Maximum realistic winrate cap (95% -- honest upper bound, never claims higher)
     MAX_REALISTIC_WINRATE = 95.0
 
