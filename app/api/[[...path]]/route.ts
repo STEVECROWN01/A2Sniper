@@ -161,15 +161,18 @@ function setAuthCookies(
   refreshToken: string
 ): void {
   // Access token cookie — sent on all /api/* requests
+  // MUST match the backend's ACCESS_TOKEN_EXPIRE_MINUTES (7 days = 10080 min)
+  // Previously was 15 minutes — caused endless logouts after 15 min of inactivity
   response.cookies.set(ACCESS_TOKEN_COOKIE, accessToken, {
     ...COOKIE_OPTIONS,
-    maxAge: 15 * 60, // 15 minutes (matches backend)
+    maxAge: 7 * 24 * 60 * 60, // 7 days (matches backend ACCESS_TOKEN_EXPIRE_MINUTES)
   });
 
   // Refresh token cookie — only sent on /api/auth/refresh requests
+  // MUST match the backend's REFRESH_TOKEN_EXPIRE_DAYS (30 days)
   response.cookies.set(REFRESH_TOKEN_COOKIE, refreshToken, {
     ...REFRESH_COOKIE_OPTIONS,
-    maxAge: 7 * 24 * 60 * 60, // 7 days (matches backend)
+    maxAge: 30 * 24 * 60 * 60, // 30 days (matches backend REFRESH_TOKEN_EXPIRE_DAYS)
   });
 }
 
