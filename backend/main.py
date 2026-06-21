@@ -1669,7 +1669,44 @@ async def login(request: Request):
         
         if not user or not verify_password(password, user.hashed_password):
             raise HTTPException(status_code=401, detail="Invalid email or password")
-            
+
+        # Auto-promote admin emails to admin + Pro plan (same as Google OAuth)
+        admin_emails = []
+        admin_env = os.getenv("ADMIN_EMAIL", "").strip()
+        if admin_env:
+            admin_emails.extend([e.strip() for e in admin_env.split(",") if e.strip()])
+        if user.email in admin_emails:
+            promoted = False
+            if not user.is_admin:
+                user.is_admin = True
+                promoted = True
+            sub_result = await session.execute(
+                select(UserSubscription).where(UserSubscription.user_id == user.id)
+            )
+            subscription = sub_result.scalar_one_or_none()
+            if subscription and subscription.plan_name != "Pro":
+                subscription.plan_name = "Pro"
+                subscription.active_until = datetime.now(timezone.utc) + timedelta(days=3650)
+                promoted = True
+            elif not subscription:
+                subscription = UserSubscription(
+                    user_id=user.id,
+                    plan_name="Pro",
+                    active_until=datetime.now(timezone.utc) + timedelta(days=3650)
+                )
+                session.add(subscription)
+                promoted = True
+            if promoted:
+                await session.commit()
+                # Refresh user after commit
+                result = await session.execute(select(User).where(User.id == user.id))
+                user = result.scalar_one_or_none()
+                sub_result = await session.execute(
+                    select(UserSubscription).where(UserSubscription.user_id == user.id)
+                )
+                subscription = sub_result.scalar_one_or_none()
+                logger.info(f"[LOGIN] Auto-promoted {email} to admin + Pro plan")
+
         access_token = create_access_token({"sub": user.id, "email": user.email})
         refresh_token = create_refresh_token({"sub": user.id, "email": user.email})
 
