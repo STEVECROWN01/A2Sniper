@@ -544,10 +544,18 @@ class PocketOptionScanner:
             event_name = pending["event_name"]
             self._pending_binary_events.pop(0)
 
-            logger.info(
-                f"[SCANNER] Binary event reassembled: '{event_name}' "
-                f"({len(placeholders)} placeholder(s) filled)"
-            )
+            # Log at DEBUG level for updateStream (too frequent for INFO —
+            # 5-10 per second × 50+ assets = hundreds of log lines)
+            if event_name.lower() != "updatestream":
+                logger.info(
+                    f"[SCANNER] Binary event reassembled: '{event_name}' "
+                    f"({len(placeholders)} placeholder(s) filled)"
+                )
+            else:
+                logger.debug(
+                    f"[SCANNER] Binary event reassembled: '{event_name}' "
+                    f"({len(placeholders)} placeholder(s) filled)"
+                )
             await self._handle_event(event_name, event_data)
 
     async def _handle_message(self, message: str):
@@ -1690,17 +1698,36 @@ class PocketOptionScanner:
                 break
         logger.info("[SCANNER] Sent initial data requests (getPayout + updateAssets nudge)")
 
-        # ═══ SUBSCRIBE TO TICK STREAM ═════════════════════════════════
-        # PO only sends updateStream (live ticks) when a symbol is "subscribed"
-        # via changeSymbol. This is what PO's browser does when you open a chart.
-        # Without this, PO sends account state + payouts but NO price ticks.
-        # We subscribe to EURUSD_otc (the most liquid pair) — PO will then
-        # push ticks for ALL active pairs, not just EURUSD.
-        try:
-            await self._ws.send('42["changeSymbol",{"asset":"EURUSD_otc","period":60}]')
-            logger.info("[SCANNER] Sent changeSymbol request for EURUSD_otc — should trigger updateStream ticks")
-        except Exception as e:
-            logger.warning(f"[SCANNER] changeSymbol request failed: {e}")
+        # ═══ SUBSCRIBE TO TICK STREAM FOR ALL FOREX PAIRS ════════════
+        # PO only sends updateStream (live ticks) for symbols that have been
+        # "subscribed" via changeSymbol. We need to subscribe to EVERY forex
+        # pair, not just one. But we do it gradually (1 second apart) to
+        # avoid flooding PO.
+        #
+        # This runs in the background so it doesn't block the auth flow.
+        async def _subscribe_all_forex():
+            try:
+                # Wait for updateAssets to arrive (so we know which pairs exist)
+                await asyncio.sleep(3)
+                # Get all forex pairs from our payouts store
+                forex_pairs = [
+                    sym for sym, entry in self._payouts.items()
+                    if entry.get("is_active", True) and _FOREX_FILTER_AVAILABLE and _is_forex_pair(sym)
+                ]
+                logger.info(f"[SCANNER] Subscribing to {len(forex_pairs)} forex pairs via changeSymbol...")
+                for i, symbol in enumerate(forex_pairs):
+                    try:
+                        await self._ws.send(f'42["changeSymbol",{{"asset":"{symbol}","period":60}}]')
+                        if i < 5 or i % 10 == 0:  # Log first 5 + every 10th
+                            logger.info(f"[SCANNER] Subscribed to {symbol} ({i+1}/{len(forex_pairs)})")
+                    except Exception:
+                        pass
+                    await asyncio.sleep(1)  # 1 second between each — no flooding
+                logger.info(f"[SCANNER] ✅ Subscribed to all {len(forex_pairs)} forex pairs")
+            except Exception as e:
+                logger.warning(f"[SCANNER] Forex subscription error: {e}")
+
+        asyncio.create_task(_subscribe_all_forex())
 
     # ═══════════ MARKET DATA ═══════════
 
