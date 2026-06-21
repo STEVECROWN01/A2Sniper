@@ -1017,16 +1017,17 @@ class PocketOptionScanner:
         logger.debug(f"[SCANNER] Event '{event_name}': {str(event_data)[:200]}")
 
     async def _process_tick_stream(self, event_data):
-        """Process live price ticks from PO's 'updateStream' event.
-
-        PO's modern API sends real-time price updates. The binary attachment
-        reassembly produces a deeply-nested structure:
-            event_data = [[[[asset, ts, price]]]]
-                       or [[[[asset, ts, price], [asset, ts, price], ...]]]
-        We recursively unwrap until we find the actual tick arrays.
-        """
+        """Process live price ticks from PO's 'updateStream' event."""
         if not event_data:
             return
+
+        # Log the FIRST updateStream event so we know ticks are flowing
+        if not hasattr(self, '_first_tick_stream_seen'):
+            self._first_tick_stream_seen = True
+            logger.info(
+                f"[SCANNER-FIRST-UPDATESTREAM] First updateStream event received! "
+                f"data_preview={str(event_data)[:300]}"
+            )
 
         try:
             # Recursively extract all ticks from any nesting depth.
