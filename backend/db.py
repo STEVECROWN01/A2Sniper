@@ -22,8 +22,16 @@ _raw_db_url = os.getenv("DATABASE_URL", "")
 _use_pg = bool(_raw_db_url and _raw_db_url.startswith("postgresql"))
 
 if _use_pg:
-    DATABASE_URL = _raw_db_url
-    logger.info(f"[DB] Connexion PostgreSQL/Supabase configurée.")
+    # SQLAlchemy needs the +asyncpg dialect specifier for async PostgreSQL.
+    # Railway provides URLs like "postgresql://user:pass@host:port/db"
+    # but create_async_engine needs "postgresql+asyncpg://user:pass@host:port/db"
+    if _raw_db_url.startswith("postgresql://"):
+        DATABASE_URL = _raw_db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+    elif _raw_db_url.startswith("postgresql+asyncpg://"):
+        DATABASE_URL = _raw_db_url  # Already correct
+    else:
+        DATABASE_URL = _raw_db_url
+    logger.info(f"[DB] Connexion PostgreSQL configurée (asyncpg).")
 else:
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
     db_path = os.path.join(os.path.dirname(BASE_DIR), "a2sniper.db")
