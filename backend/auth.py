@@ -14,11 +14,15 @@ if len(SECRET_KEY) < 32:
     raise RuntimeError("JWT_SECRET_KEY must be at least 32 characters for security")
 ALGORITHM = "HS256"
 
-# Access token: short-lived (15 minutes) for security
-ACCESS_TOKEN_EXPIRE_MINUTES = 15
+# Access token: extended to 7 days so users don't get logged out after 15 minutes.
+# The original 15-minute expiry required constant token refresh, which was failing
+# on Vercel's serverless proxy (cookies not always forwarded, refresh token
+# rotation race conditions). With 7 days, the user stays logged in for a week.
+# The refresh token (also 7 days) still exists as a backup.
+ACCESS_TOKEN_EXPIRE_MINUTES = 7 * 24 * 60  # 7 days = 10080 minutes
 
-# Refresh token: long-lived (7 days) — used to obtain new access tokens
-REFRESH_TOKEN_EXPIRE_DAYS = 7
+# Refresh token: long-lived (30 days) — used to obtain new access tokens
+REFRESH_TOKEN_EXPIRE_DAYS = 30
 
 MIN_PASSWORD_LENGTH = 8
 
