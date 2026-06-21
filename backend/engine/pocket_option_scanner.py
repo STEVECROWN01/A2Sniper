@@ -1690,6 +1690,18 @@ class PocketOptionScanner:
                 break
         logger.info("[SCANNER] Sent initial data requests (getPayout + updateAssets nudge)")
 
+        # ═══ SUBSCRIBE TO TICK STREAM ═════════════════════════════════
+        # PO only sends updateStream (live ticks) when a symbol is "subscribed"
+        # via changeSymbol. This is what PO's browser does when you open a chart.
+        # Without this, PO sends account state + payouts but NO price ticks.
+        # We subscribe to EURUSD_otc (the most liquid pair) — PO will then
+        # push ticks for ALL active pairs, not just EURUSD.
+        try:
+            await self._ws.send('42["changeSymbol",{"asset":"EURUSD_otc","period":60}]')
+            logger.info("[SCANNER] Sent changeSymbol request for EURUSD_otc — should trigger updateStream ticks")
+        except Exception as e:
+            logger.warning(f"[SCANNER] changeSymbol request failed: {e}")
+
     # ═══════════ MARKET DATA ═══════════
 
     def get_asset_symbol(self, pair: str) -> str:
