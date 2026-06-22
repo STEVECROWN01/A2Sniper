@@ -1323,7 +1323,55 @@ async def get_signals(pair: str = None, limit: int = 100, credentials: HTTPAutho
                     "status": status,
                     "hash_signature": s.hash_signature
                 }
+            output.append(d)
+
+        # If DB had signals, return them. If DB was empty, ALSO check the
+        # in-memory deque (signals may not have been saved to DB).
+        if not output:
+            logger.info("[SIGNALS-API] DB returned 0 signals — checking in-memory deque")
+            for s in reversed(generated_signals):
+                if pair and s['pair'] != pair:
+                    continue
+                sig_time = datetime.fromisoformat(s['timestamp']) if isinstance(s.get('timestamp'), str) else s.get('timestamp')
+                if sig_time and sig_time.tzinfo is None:
+                    sig_time = sig_time.replace(tzinfo=timezone.utc)
+                expiration_seconds = (s.get('expiration', 5)) * 60
+                age_seconds = (now - sig_time).total_seconds() if sig_time else 999
+
+                if s.get('is_win') is True:
+                    status = "WON"
+                elif s.get('is_win') is False:
+                    status = "LOST"
+                elif age_seconds < expiration_seconds:
+                    status = "ACTIVE"
+                else:
+                    status = "EXPIRED"
+
+                d = {
+                    "id": s['id'],
+                    "pair": s['pair'],
+                    "direction": s['direction'],
+                    "entry_price": s['entry_price'],
+                    "expiration": s['expiration'],
+                    "winrate": s['winrate'],
+                    "score": s['score'],
+                    "payout": s['payout'],
+                    "classification": s.get('classification', 'N/A'),
+                    "timestamp": s['timestamp'],
+                    "is_win": s.get('is_win'),
+                    "status": status,
+                    "hash_signature": s.get('hash_signature', '')
+                }
                 output.append(d)
+                if len(output) >= limit:
+                    break
+
+        return {
+            "signals": output,
+            "total": len(output),
+            "live_status": "LIVE" if po_scanner.is_connected else "DISCONNECTED"
+        }
+
     except Exception as db_err:
         logger.warning(f"[SIGNALS-API] DB query failed, falling back to in-memory: {db_err}")
         # Fall back to in-memory deque
