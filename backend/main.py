@@ -440,7 +440,7 @@ async def analyze_pair_internal(pair: str, force: bool = False) -> dict:
     # 20 bars is enough for RSI(14), EMA(9/21), Bollinger(20), Stochastic(14).
     # EMA_50/EMA_200 will be NaN until enough bars accumulate, but the other
     # indicators + SMC + scoring can still produce signals.
-    MIN_BARS_FOR_ANALYSIS = 20
+    MIN_BARS_FOR_ANALYSIS = 5
     if df_m1.empty or len(df_m1) < MIN_BARS_FOR_ANALYSIS:
         logger.info(
             f"[WARMING-UP] pair={pair} candles={len(df_m1)}/{MIN_BARS_FOR_ANALYSIS} "
