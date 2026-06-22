@@ -1131,6 +1131,16 @@ class PocketOptionScanner:
             if not ticks:
                 continue
 
+            # Normalize asset name: ensure it has _otc suffix for consistency
+            # PO sends some symbols WITHOUT _otc (e.g., "AUDCAD") and others WITH ("AUDCAD_otc").
+            # The trading loop looks up pairs as "AUDCAD_otc" (via get_asset_symbol).
+            # Without normalization, the cache key "AUDCAD_1m" != "AUDCAD_otc_1m" → 0 candles found.
+            asset_norm = asset
+            if not asset_norm.endswith('_otc') and not asset_norm.endswith('_OTC'):
+                # Check if this looks like an OTC forex pair (6-letter forex without _otc)
+                if _FOREX_FILTER_AVAILABLE and _is_forex_pair(asset_norm):
+                    asset_norm = asset_norm + '_otc'
+
             # Sort by timestamp
             ticks.sort(key=lambda t: t[0])
 
@@ -1150,7 +1160,7 @@ class PocketOptionScanner:
             # This is robust against server/PO clock drift.
             latest_minute = max(candles_by_minute.keys())
 
-            cache_key = f"{asset}_1m"
+            cache_key = f"{asset_norm}_1m"
             existing_df = self._candles_cache.get(cache_key)
             existing_times = set()
             if existing_df is not None and not existing_df.empty:
@@ -1195,11 +1205,10 @@ class PocketOptionScanner:
             self._candles_cache[cache_key] = combined
 
             # Log new candles — but only every 5th candle to reduce log volume
-            # (was logging every candle → hundreds of lines/min with 50+ assets)
             for i, (_, row) in enumerate(new_df.iterrows()):
-                if i % 5 == 0 or len(new_df) <= 5:  # Log first + every 5th
+                if i % 5 == 0 or len(new_df) <= 5:
                     logger.info(
-                        f"[SCANNER-CANDLE-BUILT] asset={asset} tf=1m "
+                        f"[SCANNER-CANDLE-BUILT] asset={asset_norm} tf=1m "
                         f"O={row['open']:.5f} H={row['high']:.5f} L={row['low']:.5f} "
                         f"C={row['close']:.5f} ticks={int(row['volume'])} "
                         f"total_candles={len(combined)}"
@@ -1208,6 +1217,17 @@ class PocketOptionScanner:
             # Clean up processed ticks (keep only the latest minute's ticks)
             current_minute_ticks = [(ts, p) for ts, p in ticks if int(ts // 60) * 60 >= latest_minute]
             self._tick_buffer[asset] = current_minute_ticks
+
+            # Also store under the normalized name so get_candles can find it
+            if asset_norm != asset:
+                # Merge normalized cache with any existing
+                existing_norm = self._candles_cache.get(f"{asset_norm}_1m")
+                if existing_norm is not None and not existing_norm.empty:
+                    merged = pd.concat([existing_norm, combined])
+                    merged = merged[~merged.index.duplicated(keep='last')]
+                    self._candles_cache[f"{asset_norm}_1m"] = merged.tail(200)
+                else:
+                    self._candles_cache[f"{asset_norm}_1m"] = combined
 
     async def _tick_status_logger_loop(self):
         """Periodically log tick buffer status so we can see the system warming up.
@@ -1402,7 +1422,7 @@ class PocketOptionScanner:
                             [pd.Timestamp(ts_int, unit="s", tz="UTC")], name="time"
                         ),
                     )
-                    cache_key = f"{asset}_1m"  # quotes are typically 1-minute aligned
+                    cache_key = f"{asset_norm}_1m"  # quotes are typically 1-minute aligned
                     self._candles_cache[cache_key] = df
                     logger.debug(f"[SCANNER] Quote cached for {asset} → {price}")
                 except (ValueError, TypeError) as e:
