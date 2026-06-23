@@ -399,23 +399,23 @@ class PocketOptionScanner:
     # ═══════════ MESSAGE RECEIVING ═══════════
 
     async def _receive_loop(self):
-        """Main loop for receiving WebSocket messages."""
+        """Main loop for receiving WebSocket messages.
+
+        NEVER breaks on timeout — only breaks if PO actually closes the
+        connection (ConnectionClosed exception). The SSID stays connected
+        until the user manually disconnects or PO expires the session.
+        """
         try:
             while self._ws and self._ws_is_open():
                 try:
-                    message = await asyncio.wait_for(self._ws.recv(), timeout=120)
+                    # No timeout — wait forever for the next message.
+                    # PO sends Engine.IO PINGs ("2") every ~25s to keep
+                    # the connection alive. If PO closes the connection,
+                    # recv() raises ConnectionClosed (caught below).
+                    message = await self._ws.recv()
                 except asyncio.TimeoutError:
-                    # No message for 120s — send a keep-alive nudge.
-                    # If the connection is dead, the send will fail and
-                    # we'll catch it in the except block below.
-                    if self._ws and self._ws_is_open() and self._is_authenticated:
-                        try:
-                            await self._ws.send('42["ps"]')
-                            logger.debug("[SCANNER] 120s idle — sent keep-alive nudge")
-                        except Exception:
-                            logger.warning("[SCANNER] Keep-alive nudge failed — connection may be lost")
-                            self._is_authenticated = False
-                            break
+                    # This should never happen (no timeout set), but just
+                    # in case — continue the loop, DON'T break.
                     continue
 
                 # Handle binary messages (Socket.IO binary attachments)
