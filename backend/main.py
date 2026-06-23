@@ -802,7 +802,7 @@ async def analyze_pair_internal(pair: str, force: bool = False) -> dict:
 🟢 Direction : <b>{signal['direction']}</b>
 ⌛ Expiration : <b>{signal['expiration']}m</b>
 💰 Payout : <b>{signal['payout']}%</b>
-🎯 Score : <b>{signal['score']}/10</b> | Winrate : <b>{signal['winrate']}%</b>
+🎯 Winrate : <b>{signal['winrate']}%</b>
 
 🏗️ Structure : <i>{signal['smc_structure']}</i>
 ⚡ Confluence : <i>{signal['fibonacci']}</i>

@@ -385,14 +385,13 @@ export function TelegramBotSimulator() {
 ⌛ Expiration: ${sig.expiration}m
 💰 Payout: ${sig.payout}%
 🎯 Winrate: ${sig.winrate}%
-📊 Score: ${sig.score}/10
 💵 Entry: ${sig.entry_price}
 
 Zéro Simulation. 100% Real-Market.`;
       addMessage(signalText, 'bot', 'signal', sig as unknown as SignalPairData);
     } else {
       // Clean error message — no [object Object]
-      const errMsg = typeof res.message === 'string' ? res.message : "Le système attend une opportunité Sniper (score minimum 7/10).";
+      const errMsg = typeof res.message === 'string' ? res.message : "Le système attend une opportunité Sniper (winrate minimum 70%).";
       addMessage(`⏳ Analyse en cours pour ${pair}... ${errMsg}`, 'bot');
     }
   };
