@@ -403,12 +403,20 @@ class PocketOptionScanner:
         try:
             while self._ws and self._ws_is_open():
                 try:
-                    message = await asyncio.wait_for(self._ws.recv(), timeout=60)
+                    message = await asyncio.wait_for(self._ws.recv(), timeout=120)
                 except asyncio.TimeoutError:
-                    # No message for 60s — check if still connected
-                    if self._ws and self._ws_is_open():
-                        continue
-                    break
+                    # No message for 120s — send a keep-alive nudge.
+                    # If the connection is dead, the send will fail and
+                    # we'll catch it in the except block below.
+                    if self._ws and self._ws_is_open() and self._is_authenticated:
+                        try:
+                            await self._ws.send('42["ps"]')
+                            logger.debug("[SCANNER] 120s idle — sent keep-alive nudge")
+                        except Exception:
+                            logger.warning("[SCANNER] Keep-alive nudge failed — connection may be lost")
+                            self._is_authenticated = False
+                            break
+                    continue
 
                 # Handle binary messages (Socket.IO binary attachments)
                 # After a "451-" text frame, binary data arrives as bytes
@@ -433,11 +441,43 @@ class PocketOptionScanner:
             reason = getattr(e, 'reason', '')
             logger.warning(f"[SCANNER] WebSocket closed: code={code}, reason={reason}")
             self._is_authenticated = False
+            # Auto-reconnect if we have a saved SSID
+            await self._auto_reconnect()
         except asyncio.CancelledError:
             pass
         except Exception as e:
             logger.error(f"[SCANNER] Receive loop error: {e}")
             self._is_authenticated = False
+            await self._auto_reconnect()
+
+    async def _auto_reconnect(self):
+        """Automatically reconnect using the saved SSID.
+
+        Called when the WebSocket disconnects unexpectedly. Waits 5 seconds,
+        then attempts to reconnect. If successful, the scanner resumes
+        automatically — no user action needed.
+        """
+        if not self.ssid:
+            logger.info("[SCANNER] Auto-reconnect: no SSID saved — waiting for manual connect")
+            return
+
+        max_retries = 5
+        for attempt in range(max_retries):
+            wait_time = 5 * (attempt + 1)  # 5s, 10s, 15s, 20s, 25s
+            logger.info(f"[SCANNER] Auto-reconnect attempt {attempt+1}/{max_retries} in {wait_time}s...")
+            await asyncio.sleep(wait_time)
+
+            try:
+                success = await self.connect(self.ssid, is_demo=self.is_demo)
+                if success:
+                    logger.info(f"[SCANNER] ✅ Auto-reconnect successful on attempt {attempt+1}")
+                    return
+                else:
+                    logger.warning(f"[SCANNER] Auto-reconnect attempt {attempt+1} failed")
+            except Exception as e:
+                logger.warning(f"[SCANNER] Auto-reconnect attempt {attempt+1} error: {e}")
+
+        logger.warning(f"[SCANNER] Auto-reconnect failed after {max_retries} attempts — waiting for manual connect")
 
     @staticmethod
     def _find_placeholders(obj):
