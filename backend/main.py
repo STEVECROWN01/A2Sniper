@@ -1278,11 +1278,7 @@ async def lifespan(app):
     except Exception as e:
         logger.warning(f"[STARTUP] Background task creation issue: {e}")
 
-    # Auto-reconnect scanner using saved SSID (survives Railway redeploys)
-    try:
-        asyncio.create_task(auto_reconnect_scanner())
-    except Exception as e:
-        logger.warning(f"[STARTUP] Auto-reconnect task issue: {e}")
+    # NO auto-reconnect on startup — connection only happens on user's explicit click
 
     yield  # Application runs here
 

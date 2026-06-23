@@ -436,34 +436,8 @@ export const useAppStore = create<AppState>((set, get) => ({
           }
         });
 
-        // Auto-reconnect: if we were LIVE but now disconnected, try to reconnect
-        // BUT only if the connection was stable (lasted >60s). If it flapped
-        // (connected then disconnected quickly), we DON'T auto-reconnect —
-        // this usually means PO is rejecting the connection because the same
-        // SSID is being used in the user's browser tab.
-        if (wasLive && !isNowLive && get().lastConnectedSSID) {
-          const timeSinceLastConnect = Date.now() - get().lastConnectTime;
-          if (timeSinceLastConnect < 60000) {
-            // Connection lasted <60s — UNSTABLE. Don't auto-reconnect.
-            // The user likely has pocketoption.com open in another tab,
-            // causing PO to reject our connection.
-            console.log(`[SESSION] Connection was unstable (lasted ${Math.round(timeSinceLastConnect/1000)}s) — NOT auto-reconnecting. Close pocketoption.com if it's open in another tab.`);
-            // Still increment the counter so we eventually give up
-            set({ reconnectAttempts: Math.min(get().reconnectAttempts + 1, get().maxReconnectAttempts) });
-          } else if (get().reconnectAttempts < get().maxReconnectAttempts) {
-            // Connection was stable (>60s) but now dropped — genuine disconnect
-            console.log(`[SESSION] Connection lost (was stable for ${Math.round(timeSinceLastConnect/1000)}s) — attempting auto-reconnect ${get().reconnectAttempts + 1}/${get().maxReconnectAttempts}...`);
-            const delay = Math.min(5000 + (get().reconnectAttempts * 5000), 30000);  // 5s, 10s, 15s, 20s, 25s
-            setTimeout(async () => {
-              const state = get();
-              if (state.liveStatus === 'DISCONNECTED' && state.lastConnectedSSID && state.reconnectAttempts < state.maxReconnectAttempts) {
-                await state.attemptReconnect();
-              }
-            }, delay);
-          } else {
-            console.log(`[SESSION] Max reconnect attempts (${get().maxReconnectAttempts}) reached. Close pocketoption.com if open, then reconnect manually.`);
-          }
-        }
+        // NO auto-reconnect — connection ONLY happens on user's explicit click.
+        // If the connection drops, the user must manually click "Connect" again.
       }
     } catch (err) {
       console.error('Failed to fetch market status', err);
@@ -483,26 +457,12 @@ export const useAppStore = create<AppState>((set, get) => ({
         await get().fetchPerformance();
         await get().fetchMarketStatus();
 
-        // Auto-connect on page load: if we have a saved SSID but aren't connected
+        // NO auto-connect — connection ONLY happens on user's explicit click.
+        // We still load the saved SSID into state so the user can quickly
+        // reconnect by clicking the "Reconnect with saved SSID" button.
         const savedSSID = typeof window !== 'undefined' ? localStorage.getItem('a2sniper_last_ssid') : null;
         if (savedSSID && !get().autoConnectDone) {
           set({ autoConnectDone: true, lastConnectedSSID: savedSSID });
-          const statusRes = await fetch(`${url}/api/market/status`, { credentials: 'include' });
-          if (statusRes.ok) {
-            const statusData = await statusRes.json();
-            if (!statusData.is_connected) {
-              console.log('[INIT] Auto-connecting with saved SSID...');
-              get().attemptReconnect().then(result => {
-                if (result.success) {
-                  console.log('[INIT] Auto-connect successful');
-                } else {
-                  console.log('[INIT] Auto-connect failed — user can connect manually');
-                }
-              });
-            } else {
-              console.log('[INIT] Already connected to market');
-            }
-          }
         }
         return;
       }
