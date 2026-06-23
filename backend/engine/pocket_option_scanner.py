@@ -132,6 +132,10 @@ class PocketOptionScanner:
         self._tick_aggregation_task = None
         self._tick_status_task = None  # Periodic tick buffer status logger
         self._last_aggregation_time = 0
+        # Pending candle history requests — when we send changeSymbol,
+        # PO responds with loadHistoryPeriod. We store futures here so
+        # get_candles() can wait for the historical data (instant signals).
+        self._pending_candle_requests = {}  # f"{asset}_{tf}" -> asyncio.Future
 
     # ═══════════ SSID CLEANING ═══════════
 
@@ -1587,6 +1591,15 @@ class PocketOptionScanner:
             cache_key = f"{asset_norm}_{tf_str}"
             self._candles_cache[cache_key] = df
 
+            # Resolve any pending candle request for this asset/timeframe
+            # (this is how get_candles() gets instant historical data after changeSymbol)
+            pending_key = f"{asset_norm}_{tf_str}"
+            if pending_key in self._pending_candle_requests:
+                future = self._pending_candle_requests.pop(pending_key)
+                if not future.done():
+                    future.set_result(df)
+                    logger.info(f"[SCANNER] Resolved pending candle request for {pending_key}")
+
             logger.info(
                 f"[SCANNER] Candles cached: {asset_norm} {tf_str} "
                 f"({len(df)} bars, last close={df['close'].iloc[-1]:.5f})"
@@ -1830,52 +1843,49 @@ class PocketOptionScanner:
             cache_key = f"{asset}_{timeframe}"
 
             # ═══ CHECK TICK-AGGREGATED CANDLES FIRST ═══════════════════
-            # PO's modern API sends live ticks via 'updateStream' events.
-            # We aggregate them into 1-minute candles in real-time.
-            # If we already have tick-aggregated candles, return them
-            # immediately — no need to send WS requests that will timeout.
             if cache_key in self._candles_cache:
                 df = self._candles_cache.get(cache_key)
                 if df is not None and not df.empty:
-                    logger.info(
-                        f"[SCANNER-CANDLE-HIT] asset={asset} tf={timeframe} "
-                        f"bars={len(df)} last_close={df['close'].iloc[-1]:.5f}"
-                    )
                     return df.copy()
 
-            # If we have ticks in the buffer but not enough candles yet,
-            # log the warming-up status
+            # ═══ REQUEST HISTORICAL CANDLES VIA changeSymbol ═══════════
+            # PO responds to changeSymbol with loadHistoryPeriod containing
+            # ~100 historical candles. This gives us INSTANT candle data —
+            # no need to wait for ticks to build candles one by one.
+            # We send changeSymbol ONCE per asset (not per get_candles call)
+            # and wait up to 3 seconds for the response.
+            request_key = f"{asset}_{timeframe}"
+            if request_key not in self._pending_candle_requests:
+                # Create a future and send the request
+                future = asyncio.get_event_loop().create_future()
+                self._pending_candle_requests[request_key] = future
+                try:
+                    await self._ws.send(f'42["changeSymbol",{{"asset":"{asset}","period":{tf_sec}}}]')
+                    logger.info(f"[SCANNER] Sent changeSymbol for {asset} — waiting for loadHistoryPeriod...")
+                except Exception:
+                    self._pending_candle_requests.pop(request_key, None)
+                    return pd.DataFrame()
+
+            # Wait for the response (up to 3 seconds)
+            future = self._pending_candle_requests.get(request_key)
+            if future and not future.done():
+                try:
+                    df = await asyncio.wait_for(future, timeout=3.0)
+                    if df is not None and not df.empty:
+                        logger.info(f"[SCANNER-CANDLE-HIT] asset={asset} tf={timeframe} bars={len(df)} (historical)")
+                        return df.copy()
+                except asyncio.TimeoutError:
+                    logger.info(f"[SCANNER] changeSymbol response timeout for {asset} — will use tick aggregation")
+                    self._pending_candle_requests.pop(request_key, None)
+                except Exception:
+                    self._pending_candle_requests.pop(request_key, None)
+
+            # If we have ticks in the buffer, return what we have
             if asset in self._tick_buffer and len(self._tick_buffer[asset]) > 0:
-                tick_count = len(self._tick_buffer[asset])
                 existing_df = self._candles_cache.get(cache_key)
-                existing_candles = len(existing_df) if existing_df is not None and not existing_df.empty else 0
-                logger.info(
-                    f"[SCANNER-WARMING-UP] asset={asset} candles={existing_candles} "
-                    f"ticks={tick_count} min_remaining={max(0, 5 - existing_candles)}"
-                )
-                # Return what we have (even if < 5 bars) — the caller will
-                # decide if it's enough for analysis
                 if existing_df is not None and not existing_df.empty:
                     return existing_df.copy()
-                return pd.DataFrame()
 
-            # No tick data yet — DON'T send WS candle requests!
-            #
-            # Previously we sent 11 different request formats per pair
-            # (changeSymbol, getCandles, loadHistory, etc.). With 34 pairs
-            # in the trading loop, that's 374 WS messages in a burst —
-            # PO sees this as FLOODING and DISCONNECTS US.
-            #
-            # PO's modern API doesn't respond to these requests anyway —
-            # candle data comes via the updateStream tick feed, which is
-            # already flowing. We just need to WAIT for ticks to accumulate
-            # into candles (takes ~60s for the first candle, ~20min for 20).
-            #
-            # Just log and return empty — the caller will skip analysis.
-            logger.info(
-                f"[SCANNER-WARMING-UP] asset={asset} — waiting for ticks "
-                f"(no WS requests sent to avoid PO flooding/disconnect)"
-            )
             return pd.DataFrame()
 
         except Exception as e:
