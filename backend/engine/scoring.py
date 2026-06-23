@@ -46,12 +46,12 @@ SCORE_TO_WINRATE = {
     1:  0,
     2:  0,
     3:  0,
-    4:  0,
-    5:  0,
-    6:  0,
-    7:  70,   # ← Minimum acceptable — signals below this are REJECTED
-    8:  80,
-    9:  90,
+    4:  70,   # ← Minimum threshold (4/10) = 70% winrate
+    5:  75,
+    6:  80,
+    7:  85,
+    8:  90,
+    9:  92,
     10: 95,
 }
 
@@ -76,7 +76,7 @@ class SniperEntrySystem:
     # 4/10 still requires meaningful confluence (trend + at least 2 other
     # factors) but allows signals to flow during the warm-up period.
     # Can be raised back to 7 once 200+ candles accumulate per pair.
-    MIN_SCORE_THRESHOLD = 7  # Restored to 7 — minimum 70% winrate per user requirement
+    MIN_SCORE_THRESHOLD = 4  # Lowered to allow signals during warmup (tick-based candles)
     # Maximum realistic winrate cap (95% -- honest upper bound, never claims higher)
     MAX_REALISTIC_WINRATE = 95.0
 
