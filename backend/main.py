@@ -1,3 +1,4 @@
+
 """
 Main Orchestration — A2Sniper 3.0
 Pipeline complet : OTC Engine → SMC → Indicateurs → Patterns → Chartist →
