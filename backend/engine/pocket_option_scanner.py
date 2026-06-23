@@ -1807,15 +1807,16 @@ class PocketOptionScanner:
             # log the warming-up status
             if asset in self._tick_buffer and len(self._tick_buffer[asset]) > 0:
                 tick_count = len(self._tick_buffer[asset])
-                existing_candles = len(self._candles_cache.get(cache_key, pd.DataFrame()))
+                existing_df = self._candles_cache.get(cache_key)
+                existing_candles = len(existing_df) if existing_df is not None and not existing_df.empty else 0
                 logger.info(
                     f"[SCANNER-WARMING-UP] asset={asset} candles={existing_candles} "
-                    f"ticks={tick_count} min_remaining={max(0, 20 - existing_candles)}"
+                    f"ticks={tick_count} min_remaining={max(0, 5 - existing_candles)}"
                 )
-                # Return what we have (even if < 52 bars) — the caller will
+                # Return what we have (even if < 5 bars) — the caller will
                 # decide if it's enough for analysis
-                if df is not None and not df.empty:
-                    return df.copy()
+                if existing_df is not None and not existing_df.empty:
+                    return existing_df.copy()
                 return pd.DataFrame()
 
             # No tick data yet — DON'T send WS candle requests!
