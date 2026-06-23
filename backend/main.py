@@ -441,7 +441,7 @@ async def analyze_pair_internal(pair: str, force: bool = False) -> dict:
     # 20 bars is enough for RSI(14), EMA(9/21), Bollinger(20), Stochastic(14).
     # EMA_50/EMA_200 will be NaN until enough bars accumulate, but the other
     # indicators + SMC + scoring can still produce signals.
-    MIN_BARS_FOR_ANALYSIS = 5
+    MIN_BARS_FOR_ANALYSIS = 15  # Need 15 for RSI(14), EMA(9/21), Stochastic
     if df_m1.empty or len(df_m1) < MIN_BARS_FOR_ANALYSIS:
         logger.info(
             f"[WARMING-UP] pair={pair} candles={len(df_m1)}/{MIN_BARS_FOR_ANALYSIS} "
@@ -695,6 +695,16 @@ async def analyze_pair_internal(pair: str, force: bool = False) -> dict:
     # ═══ SIGNAL BUILDING + EMISSION (wrapped in try/except so errors
     # are visible instead of silently swallowed by the trading loop) ═══
     try:
+        # Deduplication: don't emit a signal for the same pair within 60 seconds
+        # of the last signal for that pair. Prevents duplicate signals on the
+        # same candle (the trading loop runs every 5s but a candle lasts 60s).
+        if not hasattr(analyze_pair_internal, '_last_signal_time'):
+            analyze_pair_internal._last_signal_time = {}
+        last_time = analyze_pair_internal._last_signal_time.get(pair, 0)
+        if (datetime.now(timezone.utc).timestamp() - last_time) < 60:
+            logger.debug(f"[{pair}] Signal skipped — duplicate within 60s window")
+            return None
+
         # Construire le signal
         global signal_counter
         async with signal_counter_lock:
@@ -703,12 +713,18 @@ async def analyze_pair_internal(pair: str, force: bool = False) -> dict:
         now = datetime.now(timezone.utc)
         current_price = float(df_m1['close'].iloc[-1])
 
-        # CDC: 1min or 5min based on structure (ATR-based)
-        if atr > 0:
-            atr_ratio = atr / current_price if current_price > 0 else 0
-            if atr_ratio > 0.001:  # High volatility → 5 min
+        # Expiration time based on market conditions (ATR + candle structure):
+        # - High volatility (ATR/price > 0.001): 5 min (more time for move to develop)
+        # - Medium volatility (0.0003 < ATR/price <= 0.001): 3 min
+        # - Low volatility (ATR/price <= 0.0003): 1 min (quick scalp)
+        # This produces DIFFERENT expiration times per pair per market condition.
+        if atr > 0 and current_price > 0:
+            atr_ratio = atr / current_price
+            if atr_ratio > 0.001:
                 expiration = 5
-            else:  # Low volatility → 1 min
+            elif atr_ratio > 0.0003:
+                expiration = 3
+            else:
                 expiration = 1
         else:
             expiration = 5  # Default to 5min (safer)
@@ -767,6 +783,8 @@ async def analyze_pair_internal(pair: str, force: bool = False) -> dict:
             logger.warning(f"[SIGNAL-DB-SAVE-ERROR] pair={pair} err={db_err}")
 
         generated_signals.append(signal)
+        # Track last signal time for this pair (dedup)
+        analyze_pair_internal._last_signal_time[pair] = datetime.now(timezone.utc).timestamp()
         monitor.record_signal(signal['id'], pair, direction, score_result['winrate'])
 
         # Single-token log tag so it's easy to filter in Railway (no spaces)

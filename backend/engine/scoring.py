@@ -34,15 +34,22 @@ CDC_SCORING_FACTORS = {
 CDC_RAW_MAX = 13  # Sum of all factor max points
 
 # Winrate mapping: score (out of 10) -> winrate percentage
+# Updated per user requirement: minimum win rate is 70%.
+# Scores below 7 are REJECTED (below threshold).
+# The winrate reflects the confidence level of the analysis:
+# - 7/10 = 70% (minimum acceptable — good setup)
+# - 8/10 = 80% (strong setup)
+# - 9/10 = 90% (very strong setup)
+# - 10/10 = 95% (perfect confluence)
 SCORE_TO_WINRATE = {
     0:  0,
-    1:  10,
-    2:  20,
-    3:  30,
-    4:  40,
-    5:  50,
-    6:  60,
-    7:  75,
+    1:  0,
+    2:  0,
+    3:  0,
+    4:  0,
+    5:  0,
+    6:  0,
+    7:  70,   # ← Minimum acceptable — signals below this are REJECTED
     8:  80,
     9:  90,
     10: 95,
@@ -69,7 +76,7 @@ class SniperEntrySystem:
     # 4/10 still requires meaningful confluence (trend + at least 2 other
     # factors) but allows signals to flow during the warm-up period.
     # Can be raised back to 7 once 200+ candles accumulate per pair.
-    MIN_SCORE_THRESHOLD = 4
+    MIN_SCORE_THRESHOLD = 7  # Restored to 7 — minimum 70% winrate per user requirement
     # Maximum realistic winrate cap (95% -- honest upper bound, never claims higher)
     MAX_REALISTIC_WINRATE = 95.0
 

@@ -11,9 +11,12 @@ import { createBrandedPDF, drawSectionTitle, drawStatCard, drawTable, drawInfoRo
 interface SignalPairData {
   direction?: string;
   pair?: string;
-  timestamp?: string | number | Date;
+  symbol?: string;
+  payout?: number;
   winrate?: number | string;
+  score?: number;
   expiration?: number | string;
+  entry_price?: number;
   smc_structure?: string;
   [key: string]: unknown;
 }
@@ -155,13 +158,17 @@ function PairRow({
           isActive ? 'text-white group-hover:text-[#D4AF37]' : 'text-gray-500'
         }`}>{pair.symbol}</span>
         <span className={`text-[8px] font-bold uppercase tracking-tighter ${timeColor}`}>
-          {isActive ? `⏱ Next signal in ${mmss}` : '🚫 Inactive on PO'}
+          {isActive ? `⏱ Expiration: ${mmss}` : '🚫 Inactive on PO'}
         </span>
       </div>
       <div className="relative z-10 flex items-center gap-3">
         <div className="text-right">
-          <p className={`text-[10px] font-black ${payoutColor}`}>{payoutDisplay}</p>
-          <p className="text-[8px] text-gray-600 font-bold uppercase">Payout</p>
+          <p className={`text-[10px] font-black ${payoutColor}`}>
+            Payout: {payoutDisplay}
+          </p>
+          <p className="text-[8px] text-gray-600 font-bold uppercase">
+            Winrate: {pair.winrate ? `${pair.winrate}%` : 'N/A'}
+          </p>
         </div>
         {isActive && (
           <ChevronRight className="w-4 h-4 text-gray-600 group-hover:text-[#D4AF37] transition-all group-hover:translate-x-1" />
@@ -370,9 +377,23 @@ export function TelegramBotSimulator() {
     
     const res = await requestSignal(pair);
     if (res.success && res.signal) {
-      addMessage(`🎯 SIGNAL EN COURS : ${pair}`, 'bot', 'signal', res.signal as unknown as SignalPairData);
+      // Format the signal properly — avoid [object Object]
+      const sig = res.signal;
+      const signalText = `🎯 SIGNAL SNIPER — ${pair}
+━━━━━━━━━━━━━━━━━━━━━
+🟢 Direction: ${sig.direction}
+⌛ Expiration: ${sig.expiration}m
+💰 Payout: ${sig.payout}%
+🎯 Winrate: ${sig.winrate}%
+📊 Score: ${sig.score}/10
+💵 Entry: ${sig.entry_price}
+
+Zéro Simulation. 100% Real-Market.`;
+      addMessage(signalText, 'bot', 'signal', sig as unknown as SignalPairData);
     } else {
-      addMessage(`⏳ Analyse en cours pour ${pair}... ${res.message || "Le système attend une opportunité Sniper."}`, 'bot');
+      // Clean error message — no [object Object]
+      const errMsg = typeof res.message === 'string' ? res.message : "Le système attend une opportunité Sniper (score minimum 7/10).";
+      addMessage(`⏳ Analyse en cours pour ${pair}... ${errMsg}`, 'bot');
     }
   };
 

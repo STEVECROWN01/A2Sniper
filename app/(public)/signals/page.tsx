@@ -41,18 +41,15 @@ export default function SignalsPage() {
     let result = signals.filter(signal => {
       const matchesPair = selectedPair === 'ALL' || signal.pair === selectedPair;
       const matchesStatus = selectedStatus === 'ALL' || 
-                           (selectedStatus === 'EXPIRED' ? (new Date(signal.timestamp).getTime() < Date.now() && signal.status === 'ACTIVE') : signal.status === selectedStatus);
+                           (selectedStatus === 'EXPIRED' ? ['EXPIRED', 'WON', 'LOST'].includes(signal.status || 'EXPIRED') : signal.status === selectedStatus);
       const matchesDirection = selectedDirection === 'ALL' || signal.direction === selectedDirection;
       const matchesWinrate = signal.winrate >= minWinrate;
       
       let matchesPayout = true;
       if (selectedPayout !== 'ALL') {
         const payoutVal = signal.payout || 0;
-        if (selectedPayout === '75') matchesPayout = payoutVal > 75;
-        else if (selectedPayout === '80') matchesPayout = payoutVal > 80;
-        else if (selectedPayout === '85') matchesPayout = payoutVal > 85;
-        else if (selectedPayout === '90') matchesPayout = payoutVal > 90;
-        else if (selectedPayout === '92') matchesPayout = payoutVal >= 92;
+        const minPayout = Number(selectedPayout);
+        matchesPayout = payoutVal >= minPayout;
       }
       
       return matchesPair && matchesStatus && matchesDirection && matchesWinrate && matchesPayout;
@@ -500,11 +497,12 @@ export default function SignalsPage() {
                     className="w-full px-4 py-2.5 bg-[#050507] border border-white/5 rounded-xl focus:outline-none focus:border-[#D4AF37] text-xs font-bold text-white"
                   >
                     <option value="0">Tous les Winrates</option>
+                    <option value="70">70%+</option>
                     <option value="75">75%+</option>
+                    <option value="80">80%+</option>
                     <option value="85">85%+</option>
                     <option value="90">90%+</option>
                     <option value="95">95%+</option>
-                    <option value="99">99%+</option>
                   </select>
 
                   {/* Payout Filter */}
@@ -514,11 +512,13 @@ export default function SignalsPage() {
                     className="w-full px-4 py-2.5 bg-[#050507] border border-[#D4AF37]/20 focus:border-[#D4AF37] rounded-xl focus:outline-none text-xs font-bold text-white transition-colors"
                   >
                     <option value="ALL">Tout Payout</option>
-                    <option value="75">&gt; 75% Payout</option>
-                    <option value="80">&gt; 80% Payout</option>
-                    <option value="85">&gt; 85% Payout</option>
-                    <option value="90">&gt; 90% Payout</option>
-                    <option value="92">≥ 92% Payout</option>
+                    <option value="70">&ge; 70% Payout</option>
+                    <option value="75">&ge; 75% Payout</option>
+                    <option value="80">&ge; 80% Payout</option>
+                    <option value="85">&ge; 85% Payout</option>
+                    <option value="90">&ge; 90% Payout</option>
+                    <option value="92">&ge; 92% Payout</option>
+                    <option value="95">&ge; 95% Payout</option>
                   </select>
                 </div>
               </motion.div>
