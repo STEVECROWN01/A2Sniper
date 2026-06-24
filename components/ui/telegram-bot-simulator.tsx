@@ -105,6 +105,7 @@ function PairRow({
     name?: string;
     payout: number;
     isActive?: boolean;
+    winrate?: number;
   },
   onClick: () => void
 }) {
@@ -571,7 +572,7 @@ Zéro Simulation. 100% Real-Market.`;
                           <span className="font-black text-sm tracking-tight text-white">{message.pair_data.pair}</span>
                         </div>
                         <span className="text-[10px] font-black text-gray-400/80 bg-black/40 px-2 py-0.5 rounded-full border border-gray-800">
-                          {new Date(message.pair_data.timestamp ?? Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          {new Date(message.pair_data.timestamp as string | number ?? Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                         </span>
                       </div>
                       
