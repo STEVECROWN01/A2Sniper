@@ -3947,35 +3947,59 @@ async def debug_search_symbols(
                 "updated_at": info.get("updated_at"),
             })
 
-    # Also show what our get_payout() and find_pairs_above_payout() would return
-    # for this pair — so user can verify the fix is working
-    test_display = None
-    test_payout = None
-    if matches:
-        # Try to construct the display name from the first match
-        first_display = matches[0]["display_name"]
-        test_payout = po_scanner.get_payout(first_display)
-        test_display = first_display
-
     # Sort by payout descending so the highest is at the top
     matches.sort(key=lambda x: x.get("payout", 0), reverse=True)
+
+    # Test what our code returns for BOTH OTC and non-OTC display names
+    # (the bot list uses find_pairs_above_payout, signals use get_payout)
+    test_results = {}
+    if matches:
+        # Find the OTC variant and non-OTC variant
+        otc_match = next((m for m in matches if "_otc" in m["symbol"].lower()), None)
+        non_otc_match = next((m for m in matches if "_otc" not in m["symbol"].lower()), None)
+
+        if otc_match:
+            otc_display = otc_match["display_name"]
+            test_results["get_payout_for_otc"] = {
+                "display_name": otc_display,
+                "returns": po_scanner.get_payout(otc_display),
+            }
+        if non_otc_match:
+            non_otc_display = non_otc_match["display_name"]
+            test_results["get_payout_for_non_otc"] = {
+                "display_name": non_otc_display,
+                "returns": po_scanner.get_payout(non_otc_display),
+            }
+
+    # Also show what find_pairs_above_payout returns (this is what the bot list uses)
+    eligible_pairs = po_scanner.find_pairs_above_payout(
+        min_payout=70.0, pair_filter="OTC", active_only=True, forex_only=True
+    )
+    # Filter to only pairs matching the query
+    eligible_matches = {
+        k: v for k, v in eligible_pairs.items()
+        if q_upper in k.upper().replace('/', '').replace(' ', '')
+    }
 
     return {
         "connected": True,
         "query": q,
         "total_matches": len(matches),
         "all_matching_symbols": matches,
-        "our_get_payout_returns": test_payout,
-        "for_display_name": test_display,
+        "our_code_returns": test_results,
+        "find_pairs_above_payout_returns": eligible_matches,
         "freshness": po_scanner.get_freshness_report(),
         "diagnostic_note": (
-            "If PO UI shows +92% for GBP/JPY OTC but our bot shows +86%, "
-            "look at 'all_matching_symbols' — if you see multiple entries with "
-            "different payouts, our code should pick the HIGHEST (top of list). "
-            "Check 'our_get_payout_returns' to verify it matches the highest. "
-            "If only ONE symbol exists and its payout doesn't match PO UI, "
-            "then PO is sending us a different value than what they display — "
-            "this would be a PO-side discrepancy, not our bug."
+            "1. 'all_matching_symbols' = EVERY symbol PO sent us containing the query. "
+            "If you see a symbol with a payout matching PO's UI, our code should use it. "
+            "2. 'our_code_returns.get_payout_for_otc.returns' = what get_payout() returns "
+            "for the OTC display name. This should match the HIGHEST OTC payout. "
+            "3. 'find_pairs_above_payout_returns' = what the bot pair list actually displays. "
+            "4. If NONE of the symbols shown here match what PO's UI displays, then PO is "
+            "sending us different data via WebSocket than what they show in their UI — "
+            "this is a PO-side discrepancy we cannot fix from our end. "
+            "5. Payouts fluctuate — PO changes them frequently based on market conditions. "
+            "A 92% payout can become 85% within seconds."
         )
     }
 
