@@ -159,7 +159,7 @@ function PairRow({
           isActive ? 'text-white group-hover:text-[#D4AF37]' : 'text-gray-500'
         }`}>{pair.symbol}</span>
         <span className={`text-[8px] font-bold uppercase tracking-tighter ${timeColor}`}>
-          {isActive ? `⏱ Expiration: ${mmss}` : '🚫 Inactive on PO'}
+          {isActive ? `Winrate: ${pair.winrate ? `${pair.winrate}%` : 'N/A'}` : '🚫 Inactive on PO'}
         </span>
       </div>
       <div className="relative z-10 flex items-center gap-3">
@@ -168,7 +168,7 @@ function PairRow({
             Payout: {payoutDisplay}
           </p>
           <p className="text-[8px] text-gray-600 font-bold uppercase">
-            Winrate: {pair.winrate ? `${pair.winrate}%` : 'N/A'}
+            Expiration: {isActive ? mmss : 'N/A'}
           </p>
         </div>
         {isActive && (
