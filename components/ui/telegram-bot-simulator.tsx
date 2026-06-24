@@ -167,9 +167,6 @@ function PairRow({
           <p className={`text-[10px] font-black ${payoutColor}`}>
             Payout: {payoutDisplay}
           </p>
-          <p className="text-[8px] text-gray-600 font-bold uppercase">
-            Expiration: {isActive ? mmss : 'N/A'}
-          </p>
         </div>
         {isActive && (
           <ChevronRight className="w-4 h-4 text-gray-600 group-hover:text-[#D4AF37] transition-all group-hover:translate-x-1" />

@@ -473,11 +473,28 @@ async def analyze_pair_internal(pair: str, force: bool = False) -> dict:
             if direction == 'PUT' and not (last3_bearish or closes[-1] < closes[-2]):
                 return None  # No confirmation
 
-        # Quick-signal score: always 4/10 (70% winrate) — minimum acceptable
-        # As more candles accumulate, the full CDC system takes over with
-        # higher scores (5/10, 6/10, 7/10+).
-        score = 4
-        winrate = 70
+        # Quick-signal score: based on momentum strength and candle count
+        # More candles + stronger momentum = higher score = higher winrate
+        if momentum > 0.002 and len(closes) >= 5:
+            score = 6  # 80% winrate — strong momentum + enough candles
+        elif momentum > 0.001 and len(closes) >= 4:
+            score = 5  # 75% winrate — moderate momentum
+        elif momentum > 0.0003 and len(closes) >= 3:
+            score = 4  # 70% winrate — minimum acceptable
+        else:
+            return None  # Too weak — skip
+
+        # Confirmation bonus: 3 consecutive candles in same direction
+        if len(closes) >= 3:
+            if direction == 'CALL' and closes[-1] > closes[-2] > closes[-3]:
+                score = min(score + 1, 7)  # +1 for 3-candle confirmation
+            elif direction == 'PUT' and closes[-1] < closes[-2] < closes[-3]:
+                score = min(score + 1, 7)
+
+        # Map score to winrate
+        winrate_map = {4: 70, 5: 75, 6: 80, 7: 85}
+        winrate = winrate_map.get(score, 70)
+
         logger.info(
             f"[QUICK-SIGNAL] pair={pair} direction={direction} "
             f"score={score}/10 winrate={winrate}% momentum={momentum:.6f} "
