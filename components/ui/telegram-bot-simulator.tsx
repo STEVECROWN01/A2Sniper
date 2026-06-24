@@ -131,7 +131,7 @@ function PairRow({
     <button
       onClick={onClick}
       disabled={!isActive}
-      className={`w-full flex items-center justify-between p-3.5 border rounded-2xl transition-all group relative overflow-hidden ${
+      className={`w-full flex flex-col gap-1 p-3.5 border rounded-2xl transition-all group relative overflow-hidden ${
         isActive
           ? 'bg-black/60 hover:bg-[#D4AF37]/20 border-gray-800 hover:border-[#D4AF37]/50'
           : 'bg-black/30 border-gray-900 opacity-60 cursor-not-allowed'
@@ -140,26 +140,24 @@ function PairRow({
       {isActive && (
         <div className="absolute inset-0 bg-gradient-to-r from-[#D4AF37]/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
       )}
-      {/* LEFT: pair symbol + winrate (real from live signals) */}
-      <div className="relative z-10 flex flex-col items-start">
+      {/* TOP ROW: pair name (LEFT) + winrate (RIGHT) */}
+      <div className="relative z-10 flex items-center justify-between">
         <span className={`text-xs font-black transition-colors ${
           isActive ? 'text-white group-hover:text-[#D4AF37]' : 'text-gray-500'
         }`}>{pair.symbol}</span>
-        <span className={`text-[9px] font-bold uppercase tracking-tight ${
-          pair.winrate !== undefined ? winrateColor : 'text-gray-500'
+        <span className={`text-[10px] font-black ${
+          wr !== undefined ? winrateColor : 'text-gray-500'
         }`}>
-          {pair.winrate !== undefined
-            ? `Winrate: ${pair.winrate}%`
+          {wr !== undefined
+            ? `Winrate: ${wr}%`
             : 'Winrate: N/A'}
         </span>
       </div>
-      {/* RIGHT: payout */}
-      <div className="relative z-10 flex items-center gap-3">
-        <div className="text-right">
-          <p className={`text-[10px] font-black ${payoutColor}`}>
-            Payout: {payoutDisplay}
-          </p>
-        </div>
+      {/* BOTTOM ROW: payout (LEFT, on its own line) */}
+      <div className="relative z-10 flex items-center justify-between">
+        <p className={`text-[10px] font-black ${payoutColor}`}>
+          Payout: {payoutDisplay}
+        </p>
         {isActive && (
           <ChevronRight className="w-4 h-4 text-gray-600 group-hover:text-[#D4AF37] transition-all group-hover:translate-x-1" />
         )}
