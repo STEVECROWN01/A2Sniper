@@ -1975,6 +1975,52 @@ class PocketOptionScanner:
             return float(df['close'].iloc[-1])
         return None
 
+    def get_tick_data(self, pair: str, max_ticks: int = 200) -> tuple:
+        """Return the live tick buffer for a pair — used by the instant-signal engine.
+
+        This is the FAST path: it does not wait for 1-minute candles to be built.
+        Returns the raw ticks received from PO since the last minute boundary.
+
+        Args:
+            pair: Display name like "EUR/USD OTC" or PO symbol like "EURUSD_otc"
+            max_ticks: Maximum number of ticks to return (most recent first)
+
+        Returns:
+            (ticks, asset_norm) where:
+              ticks = list of (timestamp_float, price_float), oldest first
+              asset_norm = the normalized asset symbol used internally
+            If no ticks are available, returns ([], asset_norm).
+        """
+        # Build candidate asset names (same logic as get_payout)
+        base = pair.replace('/', '').replace(' ', '_')
+        base_lower = base.replace('_OTC', '_otc')
+        candidates = [
+            base_lower, base_lower.lower(), base,
+            base.replace('_OTC', ''), base_lower.replace('_otc', ''),
+            f"#{base_lower}", pair,
+        ]
+
+        for cand in candidates:
+            if cand in self._tick_buffer and self._tick_buffer[cand]:
+                ticks = list(self._tick_buffer[cand])
+                if len(ticks) > max_ticks:
+                    ticks = ticks[-max_ticks:]
+                return (ticks, cand)
+
+        # Also try with _otc suffix normalization
+        for cand in candidates:
+            asset_norm = cand
+            if not asset_norm.endswith('_otc') and not asset_norm.endswith('_OTC'):
+                if _FOREX_FILTER_AVAILABLE and _is_forex_pair(asset_norm):
+                    asset_norm = asset_norm + '_otc'
+            if asset_norm in self._tick_buffer and self._tick_buffer[asset_norm]:
+                ticks = list(self._tick_buffer[asset_norm])
+                if len(ticks) > max_ticks:
+                    ticks = ticks[-max_ticks:]
+                return (ticks, asset_norm)
+
+        return ([], pair)
+
     def get_payout(self, pair: str, active_only: bool = True) -> Optional[float]:
         """Get the current payout for a pair — STRICT lookup, no fuzzy matching.
 

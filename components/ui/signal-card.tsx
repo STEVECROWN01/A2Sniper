@@ -17,6 +17,7 @@ export function SignalCard({ signal }: SignalCardProps) {
   const [showDetails, setShowDetails] = useState(false);
   const [timeLeft, setTimeLeft] = useState(0);
   const [isExpiring, setIsExpiring] = useState(false);
+  const [elapsedSinceExpiry, setElapsedSinceExpiry] = useState<string>('');
 
   useEffect(() => {
     if (signal.status === 'ACTIVE') {
@@ -53,6 +54,42 @@ export function SignalCard({ signal }: SignalCardProps) {
         }
       }, 1000);
 
+      return () => clearInterval(interval);
+    }
+
+    // For non-active signals, compute "Expire il y a X" (time elapsed since expiry)
+    // (TypeScript already narrowed away 'ACTIVE' — this branch handles WON/LOST/EXPIRED)
+    {
+      const computeElapsed = () => {
+        const clockOffset = useAppStore.getState().clockOffset || 0;
+        const now = Date.now() + clockOffset;
+        // Expiry time = signal timestamp + expiration minutes
+        // For non-active signals, the signal.timestamp is the emission time.
+        // The actual expiry is the next candle boundary after that.
+        const minutes = signal.timestamp.getMinutes();
+        const minutesToBoundary = signal.expiration - (minutes % signal.expiration);
+        const boundaryDate = new Date(signal.timestamp);
+        boundaryDate.setSeconds(0, 0);
+        boundaryDate.setMinutes(boundaryDate.getMinutes() + minutesToBoundary);
+        const elapsedMs = now - boundaryDate.getTime();
+        if (elapsedMs < 0) return '';
+        const seconds = Math.floor(elapsedMs / 1000);
+        const minutes2 = Math.floor(seconds / 60);
+        const hours = Math.floor(minutes2 / 60);
+        const days = Math.floor(hours / 24);
+        const weeks = Math.floor(days / 7);
+        const months = Math.floor(days / 30);
+        if (months >= 1) return `il y a ${months} mois`;
+        if (weeks >= 1) return `il y a ${weeks} sem.`;
+        if (days >= 1) return `il y a ${days} j`;
+        if (hours >= 1) return `il y a ${hours}h`;
+        if (minutes2 >= 1) return `il y a ${minutes2}min`;
+        return `il y a ${seconds}s`;
+      };
+      setElapsedSinceExpiry(computeElapsed());
+      const interval = setInterval(() => {
+        setElapsedSinceExpiry(computeElapsed());
+      }, 1000);
       return () => clearInterval(interval);
     }
     // Use signal.id as dependency so timer only resets when a new signal arrives,
@@ -197,31 +234,34 @@ Timestamp: ${signal.timestamp.toLocaleString('fr-FR')}
           </div>
         </div>
 
-        {/* Result status — show Pending if is_win is unknown, otherwise show P&L */}
-        {signal.is_win === null || signal.is_win === undefined ? (
-          signal.status !== 'ACTIVE' && (
-            <div className="flex items-center justify-between mb-4 px-3 py-2 bg-[#050507] border border-dashed border-yellow-500/20 rounded-xl">
-              <span className="text-[10px] text-gray-500 font-bold uppercase">Résultat</span>
-              <span className="text-xs font-black text-yellow-500">En attente</span>
-            </div>
-          )
-        ) : signal.profit_loss !== undefined ? (
-          <div className="flex items-center justify-between mb-4 px-3 py-2 bg-[#050507] border border-dashed border-white/10 rounded-xl">
-            <span className="text-[10px] text-gray-500 font-bold uppercase">Résultat Brut</span>
-            <span className={`text-xs font-black ${signal.profit_loss > 0 ? 'text-green-500' : 'text-red-500'}`}>
-              {signal.profit_loss > 0 ? '+' : ''}${Math.abs(signal.profit_loss).toFixed(2)}
-            </span>
-          </div>
+        {/* ─── Zone: Tradez maintenant / Expire il y a ─── */}
+        {/* Active signal → "Tradez maintenant" button (replaces old duplicate result zone) */}
+        {/* Expired signal → "Expire il y a X" elapsed time */}
+        {signal.status === 'ACTIVE' ? (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              handleTrade();
+            }}
+            className="w-full mb-4 bg-gradient-to-r from-[#D4AF37] to-[#C5A059] text-black px-4 py-3 rounded-xl text-sm font-black uppercase tracking-wider hover:from-[#c5a059] hover:to-[#D4AF37] transition-all flex items-center justify-center space-x-2 shadow-[0_0_20px_rgba(212,175,55,0.25)]"
+          >
+            <Zap className="w-4 h-4 fill-current" />
+            <span>Tradez maintenant</span>
+            <ExternalLink className="w-3.5 h-3.5" />
+          </button>
         ) : (
-          <div className="flex items-center justify-between mb-4 px-3 py-2 bg-[#050507] border border-dashed border-white/10 rounded-xl">
-            <span className="text-[10px] text-gray-500 font-bold uppercase">Résultat</span>
-            <span className={`text-xs font-black ${signal.is_win ? 'text-green-500' : 'text-red-500'}`}>
-              {signal.is_win ? 'GAGNÉ' : 'PERDU'}
+          <div className="flex items-center justify-between mb-4 px-3 py-2.5 bg-[#050507] border border-white/5 rounded-xl">
+            <span className="text-[10px] text-gray-500 font-bold uppercase tracking-wider flex items-center gap-1.5">
+              <Clock className="w-3 h-3" />
+              Expiration
+            </span>
+            <span className="text-xs font-black text-gray-400">
+              {elapsedSinceExpiry || '—'}
             </span>
           </div>
         )}
 
-        {/* Actions */}
+        {/* Actions — Copier + manual result mark (for active only) */}
         <div className="flex items-center space-x-2">
           <button
             onClick={(e) => {
@@ -236,17 +276,6 @@ Timestamp: ${signal.timestamp.toLocaleString('fr-FR')}
           
           {signal.status === 'ACTIVE' && (
             <>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleTrade();
-                }}
-                className="flex-1 bg-gradient-to-r from-[#D4AF37] to-[#C5A059] text-black px-3 py-2 rounded-xl text-xs font-black uppercase tracking-wider hover:from-[#c5a059] hover:to-[#D4AF37] transition-all flex items-center justify-center space-x-1"
-              >
-                <ExternalLink className="w-3.5 h-3.5" />
-                <span>Trader</span>
-              </button>
-              
               <button
                 onClick={(e) => {
                   e.stopPropagation();
