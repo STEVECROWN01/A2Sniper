@@ -131,7 +131,7 @@ function PairRow({
     <button
       onClick={onClick}
       disabled={!isActive}
-      className={`w-full flex flex-col gap-1 p-3.5 border rounded-2xl transition-all group relative overflow-hidden ${
+      className={`w-full flex items-center justify-between p-3.5 border rounded-2xl transition-all group relative overflow-hidden ${
         isActive
           ? 'bg-black/60 hover:bg-[#D4AF37]/20 border-gray-800 hover:border-[#D4AF37]/50'
           : 'bg-black/30 border-gray-900 opacity-60 cursor-not-allowed'
@@ -140,11 +140,17 @@ function PairRow({
       {isActive && (
         <div className="absolute inset-0 bg-gradient-to-r from-[#D4AF37]/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
       )}
-      {/* TOP ROW: pair name (LEFT) + winrate (RIGHT) */}
-      <div className="relative z-10 flex items-center justify-between">
+      {/* LEFT: pair name (top) + payout (bottom) */}
+      <div className="relative z-10 flex flex-col items-start gap-0.5">
         <span className={`text-xs font-black transition-colors ${
           isActive ? 'text-white group-hover:text-[#D4AF37]' : 'text-gray-500'
         }`}>{pair.symbol}</span>
+        <p className={`text-[10px] font-black ${payoutColor}`}>
+          Payout: {payoutDisplay}
+        </p>
+      </div>
+      {/* RIGHT: winrate + arrow on the SAME line, vertically centered */}
+      <div className="relative z-10 flex items-center gap-2">
         <span className={`text-[10px] font-black ${
           wr !== undefined ? winrateColor : 'text-gray-500'
         }`}>
@@ -152,12 +158,6 @@ function PairRow({
             ? `Winrate: ${wr}%`
             : 'Winrate: N/A'}
         </span>
-      </div>
-      {/* BOTTOM ROW: payout (LEFT, on its own line) */}
-      <div className="relative z-10 flex items-center justify-between">
-        <p className={`text-[10px] font-black ${payoutColor}`}>
-          Payout: {payoutDisplay}
-        </p>
         {isActive && (
           <ChevronRight className="w-4 h-4 text-gray-600 group-hover:text-[#D4AF37] transition-all group-hover:translate-x-1" />
         )}
