@@ -3273,6 +3273,15 @@ async def disconnect_market(credentials: HTTPAuthorizationCredentials = Security
         raise HTTPException(status_code=401, detail="Token has been revoked")
 
     await po_scanner.disconnect()
+
+    # Delete saved SSID file so nothing can auto-reconnect
+    try:
+        if os.path.exists(SSID_FILE):
+            os.remove(SSID_FILE)
+            logger.info("[MARKET] SSID file deleted on disconnect")
+    except Exception:
+        pass
+
     return {"status": "success", "message": "Déconnecté du marché"}
 
 @app.get("/api/market/status")

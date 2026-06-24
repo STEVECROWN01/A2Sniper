@@ -2212,7 +2212,11 @@ class PocketOptionScanner:
     # ═══════════ DISCONNECT ═══════════
 
     async def disconnect(self):
-        """Déconnecte proprement."""
+        """Déconnecte proprement — clears ALL state including SSID."""
+        # Clear SSID first so nothing can auto-reconnect
+        self.ssid = None
+        self._is_authenticated = False
+
         if self._health_check_task and not self._health_check_task.done():
             self._health_check_task.cancel()
             self._health_check_task = None
@@ -2222,17 +2226,21 @@ class PocketOptionScanner:
         if self._asset_refresh_task and not self._asset_refresh_task.done():
             self._asset_refresh_task.cancel()
             self._asset_refresh_task = None
+        if self._tick_status_task and not self._tick_status_task.done():
+            self._tick_status_task.cancel()
+            self._tick_status_task = None
         if self._receive_task and not self._receive_task.done():
             self._receive_task.cancel()
             self._receive_task = None
 
-        self._is_authenticated = False
         self._payouts = {}
         self._candles_cache = {}
+        self._tick_buffer = {}
         self._balance = None
         self._last_assets_update = None
         self._assets_received_count = 0
         self._last_payout_change = None
+        self._pending_candle_requests = {}
 
         await self._close_ws()
-        logger.info("[SCANNER] 🔌 DÉCONNECTÉ")
+        logger.info("[SCANNER] 🔌 DÉCONNECTÉ — SSID cleared, all state reset")
