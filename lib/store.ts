@@ -165,35 +165,14 @@ export const useAppStore = create<AppState>((set, get) => ({
   // Helper to get API base URL (uses shared config)
   getApiUrl: () => getApiUrl(),
 
-  // Auto-reconnect using the last known SSID
+  // Reconnect using saved SSID — ONLY called when user clicks the button
   attemptReconnect: async () => {
     const state = get();
     const ssid = state.lastConnectedSSID || (typeof window !== 'undefined' ? localStorage.getItem('a2sniper_last_ssid') : null);
-    
     if (!ssid) {
-      console.log('[RECONNECT] No saved SSID available');
       return { success: false, message: 'Aucun SSID sauvegardé pour la reconnexion' };
     }
-
-    if (state.reconnectAttempts >= state.maxReconnectAttempts) {
-      console.log('[RECONNECT] Max attempts reached — reset on next page load');
-      return { success: false, message: `Limite de ${state.maxReconnectAttempts} tentatives atteinte. Rafraîchissez la page ou collez un nouveau SSID.` };
-    }
-
-    set({ reconnectAttempts: state.reconnectAttempts + 1 });
-    console.log(`[RECONNECT] Attempt ${state.reconnectAttempts + 1}/${state.maxReconnectAttempts}`);
-    
-    try {
-      const result = await state.connectMarket(ssid);
-      if (result.success) {
-        set({ reconnectAttempts: 0 });
-        console.log('[RECONNECT] Successfully reconnected');
-      }
-      return result;
-    } catch (err) {
-      console.error('[RECONNECT] Failed:', err);
-      return { success: false, message: 'Reconnexion échouée' };
-    }
+    return await state.connectMarket(ssid);
   },
 
   // Check if the current user's plan allows the requested action
@@ -316,22 +295,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       });
       const data = await res.json();
       if (res.ok) {
-        // Only reset reconnectAttempts if this is a STABLE connection.
-        // If the previous connection lasted <60s (flapping), keep the
-        // counter so we eventually stop retrying.
-        const now = Date.now();
-        const lastConnect = get().lastConnectTime;
-        const timeSinceLastConnect = now - lastConnect;
-        if (lastConnect === 0 || timeSinceLastConnect > 60000) {
-          // First connect OR previous connection lasted >60s → stable, reset counter
-          set({ liveStatus: 'LIVE', lastConnectedSSID: ssid, reconnectAttempts: 0, lastConnectTime: now });
-        } else {
-          // Previous connection lasted <60s → UNSTABLE (flapping). Don't reset.
-          // This prevents the endless connect/disconnect loop.
-          set({ liveStatus: 'LIVE', lastConnectedSSID: ssid, lastConnectTime: now });
-          console.log(`[CONNECT] Connection lasted only ${Math.round(timeSinceLastConnect/1000)}s — NOT resetting reconnect counter (attempt ${get().reconnectAttempts}/${get().maxReconnectAttempts})`);
-        }
-        // Save SSID for auto-reconnect
+        set({ liveStatus: 'LIVE', lastConnectedSSID: ssid });
+        // Save SSID for reconnect button
         if (typeof window !== 'undefined') {
           localStorage.setItem('a2sniper_last_ssid', ssid);
         }
