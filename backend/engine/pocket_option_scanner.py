@@ -2031,6 +2031,15 @@ class PocketOptionScanner:
         We convert "EUR/USD OTC" → "EURUSD_otc" and do an EXACT lookup.
         No partial match — partial matching was returning wrong payouts.
 
+        CRITICAL: When the user requests an OTC pair (e.g., "EUR/USD OTC"),
+        we ONLY look for OTC symbols. We never fall back to the real-market
+        variant ("EURUSD") — that would return the wrong payout (real-market
+        payouts are typically lower than OTC payouts).
+
+        When multiple OTC symbols exist for the same pair (e.g., 24/7 OTC at
+        +92% and session OTC at +86%), we return the HIGHEST payout — matching
+        what PO's UI shows.
+
         Args:
             pair: Display name like "EUR/USD OTC" or PO symbol like "EURUSD_otc"
             active_only: If True, return None for inactive (greyed-out / N/A) pairs.
@@ -2039,78 +2048,161 @@ class PocketOptionScanner:
         if not self._is_authenticated:
             return None
 
-        # Build candidate list — all the formats PO might use
-        candidates = []
+        # Build candidate list — STRICT: only include candidates that match
+        # the OTC-ness of the requested pair.
+        # If user asks for "EUR/USD OTC", we ONLY look for OTC symbols.
+        # If user asks for "EUR/USD" (no OTC), we ONLY look for non-OTC symbols.
+        # This prevents the bug where an OTC pair request returns the real-market payout.
+        request_is_otc = "otc" in pair.lower()
 
-        # "EUR/USD OTC" → "EURUSD_otc" (PO's main OTC forex format)
+        candidates = []
         base = pair.replace('/', '').replace(' ', '_')  # "EUR/USD OTC" → "EURUSD_OTC"
         base_lower = base.replace('_OTC', '_otc')
-        candidates.extend([
-            base_lower,                    # "EURUSD_otc"
-            base_lower.lower(),            # "eurusd_otc"
-            base,                          # "EURUSD_OTC"
-            base.replace('_OTC', ''),      # "EURUSD" (non-OTC variant)
-            base_lower.replace('_otc', ''), # "eurusd"
-            f"#{base_lower}",              # "#EURUSD_otc" (stock-style)
-            pair,                          # "EUR/USD OTC" (display name)
-        ])
+        base_no_otc = base.replace('_OTC', '')        # "EURUSD"
+        base_no_otc_lower = base_lower.replace('_otc', '')  # "eurusd"
 
-        # Exact-match lookup across all candidates
-        match_symbol = None
+        if request_is_otc:
+            # OTC pair requested — ONLY include OTC variants
+            candidates.extend([
+                base_lower,                    # "EURUSD_otc"
+                base_lower.lower(),            # "eurusd_otc"
+                base,                          # "EURUSD_OTC"
+                f"#{base_lower}",              # "#EURUSD_otc" (stock-style OTC)
+                pair,                          # "EUR/USD OTC" (display name)
+            ])
+            # Also try with _otc suffix added (in case user passed "EUR/USD" without OTC)
+            if not base_lower.endswith('_otc'):
+                candidates.append(base_no_otc_lower + '_otc')  # "eurusd_otc"
+                candidates.append(base_no_otc + '_otc')        # "EURUSD_otc"
+        else:
+            # Non-OTC pair requested — only include non-OTC variants
+            candidates.extend([
+                base_no_otc,                   # "EURUSD"
+                base_no_otc_lower,             # "eurusd"
+                pair,                          # "EUR/USD" (display name)
+            ])
+
+        # Collect ALL matching candidates with their payouts
+        # (multiple OTC variants may exist — we pick the highest)
+        matches: list[tuple[str, float]] = []
+        seen_symbols = set()
         for candidate in candidates:
-            if candidate and candidate in self._payouts:
-                match_symbol = candidate
-                break
+            if not candidate:
+                continue
+            if candidate in seen_symbols:
+                continue
+            if candidate in self._payouts:
+                entry = self._payouts[candidate]
+                if active_only and not entry.get("is_active", True):
+                    continue  # Skip inactive — don't add to matches
+                matches.append((candidate, entry.get("payout", 0)))
+                seen_symbols.add(candidate)
 
-        # Case-insensitive exact-match fallback
-        if not match_symbol:
-            pair_lower = pair.lower()
-            for symbol in self._payouts.keys():
-                if symbol.lower() == base_lower.lower():
-                    match_symbol = symbol
-                    break
+        # Case-insensitive fallback (only if no exact matches yet)
+        if not matches:
+            for symbol, entry in self._payouts.items():
+                if symbol in seen_symbols:
+                    continue
+                # Match OTC-ness: only consider symbols whose OTC-ness matches the request
+                symbol_is_otc = "_otc" in symbol.lower()
+                if symbol_is_otc != request_is_otc:
+                    continue
+                # Compare case-insensitively against the base (without OTC suffix)
+                sym_normalized = symbol.lower().replace('_otc', '').lstrip('#')
+                req_normalized = base_no_otc_lower.lower().lstrip('#')
+                if sym_normalized == req_normalized:
+                    if active_only and not entry.get("is_active", True):
+                        continue
+                    matches.append((symbol, entry.get("payout", 0)))
+                    seen_symbols.add(symbol)
 
-        if not match_symbol:
+        if not matches:
             logger.debug(
-                f"[SCANNER] No exact payout match for '{pair}'. "
+                f"[SCANNER] No exact payout match for '{pair}' (OTC={request_is_otc}). "
                 f"Available symbols sample: {list(self._payouts.keys())[:10]}"
             )
             return None
 
-        entry = self._payouts[match_symbol]
-        if active_only and not entry.get("is_active", True):
-            # Pair is currently inactive on PO — return None so callers can drop it.
-            # Inactive pairs are NEVER displayed or used for signals; callers should
-            # treat None as "this pair is not currently available on PO".
-            logger.debug(f"[SCANNER] '{pair}' (symbol='{match_symbol}') is INACTIVE on PO — skipping")
-            return None
-        return entry.get("payout")
+        # Pick the HIGHEST payout among all matches
+        # (handles multiple OTC variants for the same pair)
+        best_symbol, best_payout = max(matches, key=lambda x: x[1])
+        if len(matches) > 1:
+            logger.info(
+                f"[SCANNER] Multiple payouts for '{pair}': "
+                f"{[(s, p) for s, p in matches]} → picked {best_symbol} ({best_payout}%)"
+            )
+
+        return best_payout
 
     def get_pair_status(self, pair: str) -> Optional[dict]:
         """Get full status info for a pair: payout + is_active + updated_at.
         Returns None if pair not found in PO's asset list.
+
+        CRITICAL: Same OTC-strict logic as get_payout — only returns symbols
+        matching the OTC-ness of the request. When multiple OTC variants exist,
+        returns the one with the HIGHEST payout.
         """
         if not self._is_authenticated:
             return None
 
-        candidates = []
+        request_is_otc = "otc" in pair.lower()
         base = pair.replace('/', '').replace(' ', '_')
         base_lower = base.replace('_OTC', '_otc')
-        candidates.extend([
-            base_lower, base_lower.lower(), base,
-            base.replace('_OTC', ''), base_lower.replace('_otc', ''),
-            f"#{base_lower}", pair,
-        ])
+        base_no_otc = base.replace('_OTC', '')
+        base_no_otc_lower = base_lower.replace('_otc', '')
 
+        candidates = []
+        if request_is_otc:
+            candidates.extend([
+                base_lower, base_lower.lower(), base,
+                f"#{base_lower}", pair,
+            ])
+            if not base_lower.endswith('_otc'):
+                candidates.append(base_no_otc_lower + '_otc')
+                candidates.append(base_no_otc + '_otc')
+        else:
+            candidates.extend([base_no_otc, base_no_otc_lower, pair])
+
+        # Collect ALL matches (multiple OTC variants possible)
+        matches: list[tuple[str, dict]] = []
+        seen = set()
         for candidate in candidates:
-            if candidate and candidate in self._payouts:
-                return {"symbol": candidate, **self._payouts[candidate]}
+            if not candidate or candidate in seen:
+                continue
+            if candidate in self._payouts:
+                entry = self._payouts[candidate]
+                # Only include if OTC-ness matches
+                sym_is_otc = "_otc" in candidate.lower()
+                if sym_is_otc != request_is_otc:
+                    continue
+                matches.append((candidate, entry))
+                seen.add(candidate)
 
         # Case-insensitive fallback
-        for symbol, entry in self._payouts.items():
-            if symbol.lower() == base_lower.lower():
-                return {"symbol": symbol, **entry}
-        return None
+        if not matches:
+            for symbol, entry in self._payouts.items():
+                if symbol in seen:
+                    continue
+                sym_is_otc = "_otc" in symbol.lower()
+                if sym_is_otc != request_is_otc:
+                    continue
+                sym_normalized = symbol.lower().replace('_otc', '').lstrip('#')
+                req_normalized = base_no_otc_lower.lower().lstrip('#')
+                if sym_normalized == req_normalized:
+                    matches.append((symbol, entry))
+                    seen.add(symbol)
+
+        if not matches:
+            return None
+
+        # Pick the HIGHEST payout among matches
+        best_symbol, best_entry = max(matches, key=lambda x: x[1].get("payout", 0))
+        if len(matches) > 1:
+            logger.info(
+                f"[SCANNER] get_pair_status: Multiple variants for '{pair}': "
+                f"{[(s, e.get('payout')) for s, e in matches]} → picked {best_symbol}"
+            )
+        return {"symbol": best_symbol, **best_entry}
 
     def get_all_payouts(self, active_only: bool = True) -> dict:
         """Return parsed payouts directly from PO.
@@ -2204,8 +2296,16 @@ class PocketOptionScanner:
             pair_filter: Filter symbols by this substring (e.g. "OTC"). Empty = all.
             active_only: If True (default), exclude inactive pairs.
             forex_only: If True (default), exclude non-FOREX assets (stocks, crypto, etc.)
+
+        CRITICAL: When multiple PO symbols map to the same display name (e.g.,
+        PO sometimes sends multiple OTC variants for the same pair with different
+        payouts), we keep the HIGHEST payout. This ensures the user always sees
+        the best tradable option — matching what PO's UI shows.
         """
-        result = {}
+        # First pass: collect all eligible entries grouped by display name
+        # Key: display name (e.g., "GBP/JPY OTC")
+        # Value: list of (symbol, payout) tuples for all variants
+        grouped: dict[str, list[tuple[str, float]]] = {}
         for symbol, entry in self._payouts.items():
             payout = entry.get("payout", 0)
             is_active = entry.get("is_active", True)
@@ -2219,7 +2319,23 @@ class PocketOptionScanner:
             if forex_only and _FOREX_FILTER_AVAILABLE and not _is_forex_pair(symbol):
                 continue  # Stock, crypto, commodity — DROP
             display = self._symbol_to_display(symbol)
-            result[display] = payout
+            grouped.setdefault(display, []).append((symbol, payout))
+
+        # Second pass: for each display name, keep the HIGHEST payout
+        # This handles cases where PO sends multiple OTC variants for the same
+        # pair (e.g., 24/7 OTC at +92% and session OTC at +86%) — we always
+        # show the best payout, matching what PO's UI displays.
+        result = {}
+        for display, variants in grouped.items():
+            best_symbol, best_payout = max(variants, key=lambda x: x[1])
+            if len(variants) > 1:
+                # Log when we picked the best of multiple variants — helps
+                # verify the fix is working
+                logger.info(
+                    f"[SCANNER] Multiple OTC variants for {display}: "
+                    f"{[(s, p) for s, p in variants]} → picked {best_symbol} ({best_payout}%)"
+                )
+            result[display] = best_payout
         return result
 
     @staticmethod
