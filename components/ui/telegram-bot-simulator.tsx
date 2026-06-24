@@ -118,15 +118,6 @@ function PairRow({
     ? 'text-green-400'
     : 'text-yellow-400';
 
-  // Winrate display: REAL winrate from live signal analysis
-  // Color: green if ≥ 90%, yellow if 80-89%, orange if 70-79%
-  const wr = pair.winrate;
-  const winrateColor = wr !== undefined && wr >= 90
-    ? 'text-green-400'
-    : wr !== undefined && wr >= 80
-      ? 'text-yellow-300'
-      : 'text-orange-400';
-
   return (
     <button
       onClick={onClick}
@@ -140,23 +131,16 @@ function PairRow({
       {isActive && (
         <div className="absolute inset-0 bg-gradient-to-r from-[#D4AF37]/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
       )}
-      {/* LEFT: pair name (top) + payout (bottom) */}
-      <div className="relative z-10 flex flex-col items-start gap-0.5">
+      {/* LEFT: pair name only (winrate is per-signal, not per-pair — shown in signal cards) */}
+      <div className="relative z-10">
         <span className={`text-xs font-black transition-colors ${
           isActive ? 'text-white group-hover:text-[#D4AF37]' : 'text-gray-500'
         }`}>{pair.symbol}</span>
-        <p className={`text-[10px] font-black ${payoutColor}`}>
-          Payout: {payoutDisplay}
-        </p>
       </div>
-      {/* RIGHT: winrate + arrow on the SAME line, vertically centered */}
+      {/* RIGHT: payout + arrow on same line, vertically centered */}
       <div className="relative z-10 flex items-center gap-2">
-        <span className={`text-[10px] font-black ${
-          wr !== undefined ? winrateColor : 'text-gray-500'
-        }`}>
-          {wr !== undefined
-            ? `Winrate: ${wr}%`
-            : 'Winrate: N/A'}
+        <span className={`text-[10px] font-black ${payoutColor}`}>
+          Payout: {payoutDisplay}
         </span>
         {isActive && (
           <ChevronRight className="w-4 h-4 text-gray-600 group-hover:text-[#D4AF37] transition-all group-hover:translate-x-1" />
@@ -284,21 +268,11 @@ export function TelegramBotSimulator() {
     const pairStatus = (marketInfo as any).pair_status || {};
     const allOtcs = (marketInfo as any).all_otc_pairs || {};
 
-    // ─── Build winrate map from LIVE signals (most recent signal per pair) ───
-    // For each pair, find the most recent signal and use its winrate.
-    // This is REAL winrate from REAL market analysis — not hardcoded.
-    // If no signal exists yet for a pair, winrate stays undefined → shows 'N/A'.
-    const winrateByPair: Record<string, number> = {};
-    for (const sig of signals) {
-      // signals are typically sorted newest-first; keep the first (newest) we see
-      if (sig && sig.pair && sig.winrate !== undefined && winrateByPair[sig.pair] === undefined) {
-        winrateByPair[sig.pair] = sig.winrate;
-      }
-    }
-
     // Build a list of tradable pairs (all are active + payout ≥ 70% by construction)
+    // Note: winrate is per-SIGNAL, not per-pair, so it's not shown in the pair list.
+    // Winrate appears on signal cards when a signal is generated for a pair.
     const seenSymbols = new Set<string>();
-    const result: Array<{ symbol: string; name?: string; payout: number; isActive: boolean; winrate?: number }> = [];
+    const result: Array<{ symbol: string; name?: string; payout: number; isActive: boolean }> = [];
 
     // 1. Default OTC pairs that meet the criteria (active + ≥ 70%)
     for (const symbol of Object.keys(marketInfo.payouts)) {
@@ -312,7 +286,6 @@ export function TelegramBotSimulator() {
         name: pairObj ? pairObj.name : symbol,
         payout: payout as number,
         isActive: true,
-        winrate: winrateByPair[symbol],
       });
     }
 
@@ -327,7 +300,6 @@ export function TelegramBotSimulator() {
         name: pairObj ? pairObj.name : symbol,
         payout: payout as number,
         isActive: true,
-        winrate: winrateByPair[symbol],
       });
     }
 
@@ -335,7 +307,7 @@ export function TelegramBotSimulator() {
     result.sort((a, b) => b.payout - a.payout);
 
     return result;
-  }, [marketInfo, signals]);
+  }, [marketInfo]);
 
   const scrollToBottom = () => {
     if (scrollContainerRef.current) {
