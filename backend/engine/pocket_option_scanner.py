@@ -1741,32 +1741,32 @@ class PocketOptionScanner:
                 break
         logger.info("[SCANNER] Sent initial data requests (getPayout + updateAssets nudge)")
 
-        # ═══ SUBSCRIBE TO TICK STREAM FOR ALL FOREX PAIRS ════════════
-        # PO only sends updateStream (live ticks) for symbols that have been
-        # "subscribed" via changeSymbol. We need to subscribe to EVERY forex
-        # pair, not just one. But we do it gradually (1 second apart) to
-        # avoid flooding PO.
+        # ═══ SUBSCRIBE + FETCH HISTORICAL CANDLES FOR ALL FOREX PAIRS ══
+        # Send changeSymbol for each forex pair — this does TWO things:
+        # 1. Subscribes to the tick stream (updateStream events)
+        # 2. PO responds with loadHistoryPeriod containing ~100 historical candles
         #
-        # This runs in the background so it doesn't block the auth flow.
+        # We send them FAST (0.2s apart, not 1s) so all pairs are subscribed
+        # within ~6 seconds. The loadHistoryPeriod responses arrive async
+        # and are processed by _parse_candles → cached → get_candles returns
+        # them instantly → trading loop produces signals within seconds.
         async def _subscribe_all_forex():
             try:
-                # Wait for updateAssets to arrive (so we know which pairs exist)
-                await asyncio.sleep(3)
-                # Get all forex pairs from our payouts store
+                await asyncio.sleep(2)
                 forex_pairs = [
                     sym for sym, entry in self._payouts.items()
                     if entry.get("is_active", True) and _FOREX_FILTER_AVAILABLE and _is_forex_pair(sym)
                 ]
-                logger.info(f"[SCANNER] Subscribing to {len(forex_pairs)} forex pairs via changeSymbol...")
+                logger.info(f"[SCANNER] Subscribing to {len(forex_pairs)} forex pairs (0.2s apart)...")
                 for i, symbol in enumerate(forex_pairs):
                     try:
                         await self._ws.send(f'42["changeSymbol",{{"asset":"{symbol}","period":60}}]')
-                        if i < 5 or i % 10 == 0:  # Log first 5 + every 10th
+                        if i < 3 or i % 20 == 0:
                             logger.info(f"[SCANNER] Subscribed to {symbol} ({i+1}/{len(forex_pairs)})")
                     except Exception:
                         pass
-                    await asyncio.sleep(1)  # 1 second between each — no flooding
-                logger.info(f"[SCANNER] ✅ Subscribed to all {len(forex_pairs)} forex pairs")
+                    await asyncio.sleep(0.2)  # 0.2s — fast but no flooding
+                logger.info(f"[SCANNER] ✅ Subscribed to all {len(forex_pairs)} forex pairs — waiting for loadHistoryPeriod responses")
             except Exception as e:
                 logger.warning(f"[SCANNER] Forex subscription error: {e}")
 
@@ -1820,13 +1820,11 @@ class PocketOptionScanner:
 
             # ═══ REQUEST HISTORICAL CANDLES VIA changeSymbol ═══════════
             # PO responds to changeSymbol with loadHistoryPeriod containing
-            # ~100 historical candles. This gives us INSTANT candle data —
-            # no need to wait for ticks to build candles one by one.
-            # We send changeSymbol ONCE per asset (not per get_candles call)
-            # and wait up to 3 seconds for the response.
+            # ~100 historical candles. The _subscribe_all_forex() background
+            # task already sends changeSymbol for all pairs. Here we just
+            # wait for the response (up to 5 seconds).
             request_key = f"{asset}_{timeframe}"
             if request_key not in self._pending_candle_requests:
-                # Create a future and send the request
                 future = asyncio.get_event_loop().create_future()
                 self._pending_candle_requests[request_key] = future
                 try:
@@ -1836,11 +1834,11 @@ class PocketOptionScanner:
                     self._pending_candle_requests.pop(request_key, None)
                     return pd.DataFrame()
 
-            # Wait for the response (up to 3 seconds)
+            # Wait for the response (up to 5 seconds — PO sometimes takes 2-3s)
             future = self._pending_candle_requests.get(request_key)
             if future and not future.done():
                 try:
-                    df = await asyncio.wait_for(future, timeout=3.0)
+                    df = await asyncio.wait_for(future, timeout=5.0)
                     if df is not None and not df.empty:
                         logger.info(f"[SCANNER-CANDLE-HIT] asset={asset} tf={timeframe} bars={len(df)} (historical)")
                         return df.copy()
