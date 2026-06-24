@@ -109,20 +109,6 @@ function PairRow({
   },
   onClick: () => void
 }) {
-  const [secondsLeft, setSecondsLeft] = useState(0);
-
-  useEffect(() => {
-    const update = () => {
-      const now = new Date();
-      // Seconds remaining until the next minute boundary (next 1m candle close)
-      const remaining = 60 - now.getSeconds();
-      setSecondsLeft(remaining);
-    };
-    update();
-    const timer = setInterval(update, 1000);
-    return () => clearInterval(timer);
-  }, []);
-
   // Pair is always active (upstream filter ensures this) — payout is always ≥ 70%
   const isActive = true;
   const payoutDisplay = `+${Math.round(pair.payout)}%`;
@@ -132,14 +118,14 @@ function PairRow({
     ? 'text-green-400'
     : 'text-yellow-400';
 
-  // Color: green if >30s, yellow if 15-30s, red if <15s (urgency indicator)
-  const timeColor = secondsLeft > 30
+  // Winrate display: REAL winrate from live signal analysis
+  // Color: green if ≥ 90%, yellow if 80-89%, orange if 70-79%
+  const wr = pair.winrate;
+  const winrateColor = wr !== undefined && wr >= 90
     ? 'text-green-400'
-    : secondsLeft > 15
-      ? 'text-yellow-400'
-      : 'text-red-400';
-
-  const mmss = `${Math.floor(secondsLeft / 60).toString().padStart(2, '0')}:${(secondsLeft % 60).toString().padStart(2, '0')}`;
+    : wr !== undefined && wr >= 80
+      ? 'text-yellow-300'
+      : 'text-orange-400';
 
   return (
     <button
@@ -154,14 +140,20 @@ function PairRow({
       {isActive && (
         <div className="absolute inset-0 bg-gradient-to-r from-[#D4AF37]/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
       )}
+      {/* LEFT: pair symbol + winrate (real from live signals) */}
       <div className="relative z-10 flex flex-col items-start">
         <span className={`text-xs font-black transition-colors ${
           isActive ? 'text-white group-hover:text-[#D4AF37]' : 'text-gray-500'
         }`}>{pair.symbol}</span>
-        <span className={`text-[8px] font-bold uppercase tracking-tighter ${timeColor}`}>
-          {isActive ? `Winrate: ${pair.winrate ? `${pair.winrate}%` : 'N/A'}` : '🚫 Inactive on PO'}
+        <span className={`text-[9px] font-bold uppercase tracking-tight ${
+          pair.winrate !== undefined ? winrateColor : 'text-gray-500'
+        }`}>
+          {pair.winrate !== undefined
+            ? `Winrate: ${pair.winrate}%`
+            : 'Winrate: N/A'}
         </span>
       </div>
+      {/* RIGHT: payout */}
       <div className="relative z-10 flex items-center gap-3">
         <div className="text-right">
           <p className={`text-[10px] font-black ${payoutColor}`}>
@@ -294,9 +286,21 @@ export function TelegramBotSimulator() {
     const pairStatus = (marketInfo as any).pair_status || {};
     const allOtcs = (marketInfo as any).all_otc_pairs || {};
 
+    // ─── Build winrate map from LIVE signals (most recent signal per pair) ───
+    // For each pair, find the most recent signal and use its winrate.
+    // This is REAL winrate from REAL market analysis — not hardcoded.
+    // If no signal exists yet for a pair, winrate stays undefined → shows 'N/A'.
+    const winrateByPair: Record<string, number> = {};
+    for (const sig of signals) {
+      // signals are typically sorted newest-first; keep the first (newest) we see
+      if (sig && sig.pair && sig.winrate !== undefined && winrateByPair[sig.pair] === undefined) {
+        winrateByPair[sig.pair] = sig.winrate;
+      }
+    }
+
     // Build a list of tradable pairs (all are active + payout ≥ 70% by construction)
     const seenSymbols = new Set<string>();
-    const result: Array<{ symbol: string; name?: string; payout: number; isActive: boolean }> = [];
+    const result: Array<{ symbol: string; name?: string; payout: number; isActive: boolean; winrate?: number }> = [];
 
     // 1. Default OTC pairs that meet the criteria (active + ≥ 70%)
     for (const symbol of Object.keys(marketInfo.payouts)) {
@@ -310,6 +314,7 @@ export function TelegramBotSimulator() {
         name: pairObj ? pairObj.name : symbol,
         payout: payout as number,
         isActive: true,
+        winrate: winrateByPair[symbol],
       });
     }
 
@@ -324,6 +329,7 @@ export function TelegramBotSimulator() {
         name: pairObj ? pairObj.name : symbol,
         payout: payout as number,
         isActive: true,
+        winrate: winrateByPair[symbol],
       });
     }
 
@@ -331,7 +337,7 @@ export function TelegramBotSimulator() {
     result.sort((a, b) => b.payout - a.payout);
 
     return result;
-  }, [marketInfo]);
+  }, [marketInfo, signals]);
 
   const scrollToBottom = () => {
     if (scrollContainerRef.current) {

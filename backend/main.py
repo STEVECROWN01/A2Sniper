@@ -453,8 +453,10 @@ async def analyze_pair_instant(pair: str) -> dict:
 
     # Get raw tick data — this is the FAST path (no waiting for candles)
     ticks, asset_norm = po_scanner.get_tick_data(pair, max_ticks=300)
-    if len(ticks) < 15:
-        # Need at least 15 ticks (~2-5 seconds of data) to compute meaningful stats
+    # Lowered from 15 to 5 ticks — even 5 ticks (2-5s of data) is enough
+    # to determine direction via linear regression. Better to produce a
+    # signal with lower confidence than no signal at all.
+    if len(ticks) < 5:
         return None
 
     import numpy as np
@@ -475,16 +477,27 @@ async def analyze_pair_instant(pair: str) -> dict:
     avg_price = float(np.mean(prices))
     slope_pct = slope / avg_price if avg_price > 0 else 0.0
 
-    # Direction from slope
-    if slope_pct > 0.000005:  # >0.0005% per tick = uptrend
+    # Direction from slope — LOWERED threshold (1e-6 instead of 5e-6)
+    # Forex moves slowly; even tiny slopes are meaningful over many ticks
+    if slope_pct > 0.0000005:  # 0.00005% per tick = uptrend
         direction = 'CALL'
-        momentum_strength = min(abs(slope_pct) / 0.0001, 1.0)  # 0..1 scale
-    elif slope_pct < -0.000005:
+        momentum_strength = min(abs(slope_pct) / 0.00005, 1.0)  # 0..1 scale
+    elif slope_pct < -0.0000005:
         direction = 'PUT'
-        momentum_strength = min(abs(slope_pct) / 0.0001, 1.0)
+        momentum_strength = min(abs(slope_pct) / 0.00005, 1.0)
     else:
-        # Slope too weak — no clear direction
-        return None
+        # Slope too weak — use last-vs-first as tiebreaker
+        if len(prices) >= 2:
+            if prices[-1] > prices[0]:
+                direction = 'CALL'
+                momentum_strength = 0.15  # Weak but present
+            elif prices[-1] < prices[0]:
+                direction = 'PUT'
+                momentum_strength = 0.15
+            else:
+                return None  # Truly flat — skip
+        else:
+            return None
 
     # ─── Factor 2: Direction consistency ───
     # % of consecutive tick-pairs that moved in the signal direction
@@ -497,7 +510,7 @@ async def analyze_pair_instant(pair: str) -> dict:
 
     # ─── Factor 3: Price velocity (recent vs older) ───
     # Compare last 1/3 of ticks vs first 1/3 — accelerating?
-    third = max(n // 3, 5)
+    third = max(n // 3, 3)
     recent_avg = float(np.mean(prices[-third:]))
     older_avg = float(np.mean(prices[:third]))
     velocity = (recent_avg - older_avg) / older_avg if older_avg > 0 else 0.0
@@ -509,26 +522,34 @@ async def analyze_pair_instant(pair: str) -> dict:
     recent_prices = prices[-min(50, n):]
     volatility = float(np.std(recent_prices))
     vol_pct = volatility / avg_price if avg_price > 0 else 0.0
-    # Sweet spot: 0.0001 to 0.001 (0.01% to 0.1%)
-    if 0.00005 < vol_pct < 0.001:
+    # LOWERED thresholds — much more permissive now
+    # Sweet spot: 0.00001 to 0.002 (was 0.00005 to 0.001)
+    if 0.00001 < vol_pct < 0.002:
         vol_score = 1.0  # optimal volatility
-    elif vol_pct < 0.00002:
-        return None  # too dead — no signal
-    elif vol_pct > 0.005:
-        return None  # too chaotic — skip
+    elif vol_pct < 0.000005:
+        # Too dead — but still produce a signal with lower confidence
+        vol_score = 0.3
+    elif vol_pct > 0.008:
+        # Too chaotic — skip entirely
+        return None
     else:
         vol_score = 0.5  # suboptimal but tradable
 
     # ─── Factor 5: Tick count confidence ───
     # More ticks = more confidence in the analysis
+    # Lowered thresholds so even 5-9 ticks gets a reasonable score
     if n >= 100:
         tick_score = 1.0
     elif n >= 50:
-        tick_score = 0.8
+        tick_score = 0.9
     elif n >= 30:
+        tick_score = 0.8
+    elif n >= 15:
+        tick_score = 0.7
+    elif n >= 8:
         tick_score = 0.6
     else:
-        tick_score = 0.4  # 15-29 ticks — minimum viable
+        tick_score = 0.5  # 5-7 ticks — minimum viable
 
     # ─── Factor 6: Recent high/low breakout ───
     # Is the latest price breaking above the recent high (CALL) or below recent low (PUT)?
@@ -600,10 +621,10 @@ async def analyze_pair_instant(pair: str) -> dict:
     winrate_map = {4: 70, 5: 75, 6: 80, 7: 85, 8: 90, 9: 92, 10: 95}
     winrate = winrate_map.get(score, 70)
 
-    # ─── Dedup: 60s per pair (separate from candle-based dedup) ───
+    # ─── Dedup: 30s per pair (was 60s — shortened to allow more signals) ───
     now = datetime.now(timezone.utc)
     last_time = _instant_last_signal_time.get(pair, 0)
-    if (now.timestamp() - last_time) < 60:
+    if (now.timestamp() - last_time) < 30:
         return None
 
     # ─── Expiration based on volatility ───
@@ -3593,9 +3614,9 @@ async def connect_market(request: Request, credentials: HTTPAuthorizationCredent
         # Fire-and-forget.
         async def _initial_analysis_kick():
             try:
-                # Give PO 3 seconds to push updateAssets (payouts) after auth
-                # (was 5s — reduced to hit the 5-10s signal target)
-                await asyncio.sleep(3)
+                # Give PO 2 seconds to push updateAssets (payouts) + start tick stream
+                # (was 5s, then 3s — now 2s to hit 5-10s signal target)
+                await asyncio.sleep(2)
                 logger.info("[KICK] Starting INSTANT analysis pass after connection")
                 # Use LIVE forex pairs from PO (no hardcoded list)
                 live_pairs = list(po_scanner.find_pairs_above_payout(
@@ -3625,8 +3646,25 @@ async def connect_market(request: Request, credentials: HTTPAuthorizationCredent
                 logger.info(f"[KICK-INSTANT] Pass complete — {signals_generated} signals generated from {len(live_pairs)} pairs")
 
                 # If instant engine didn't produce any signals (insufficient
-                # ticks for all pairs), fall back to candle-based force analysis
-                # on the first 3 pairs as a safety net.
+                # ticks for all pairs), retry after 3 more seconds — by then
+                # PO should have streamed enough ticks (10-30 per pair).
+                if signals_generated == 0:
+                    logger.info("[KICK-INSTANT] No signals on first pass — retrying in 3s (waiting for tick accumulation)")
+                    await asyncio.sleep(3)
+                    for pair in live_pairs:
+                        payout = po_scanner.get_payout(pair)
+                        if payout and payout >= 70:
+                            try:
+                                sig = await analyze_pair_instant(pair)
+                                if sig:
+                                    signals_generated += 1
+                                    logger.info(f"[KICK-INSTANT-RETRY] ✅ Signal generated for {pair} ({sig['winrate']}% winrate)")
+                            except Exception:
+                                pass
+                            await asyncio.sleep(0.05)
+                    logger.info(f"[KICK-INSTANT-RETRY] Pass complete — {signals_generated} signals total")
+
+                # Final fallback: candle-based force analysis on first 3 pairs
                 if signals_generated == 0:
                     logger.info("[KICK] No instant signals yet — trying candle-based fallback for first 3 pairs")
                     for pair in live_pairs[:3]:
