@@ -71,7 +71,7 @@ export function SignalCard({ signal }: SignalCardProps) {
 Paire: ${signal.pair}
 Direction: ${signal.direction === 'CALL' ? 'CALL' : 'PUT'}
 Expiration: ${signal.expiration} minutes
-Score: ${signal.score ?? '-'}/10 | Winrate: ${signal.winrate}% | Payout: ${signal.payout}%
+Winrate: ${signal.winrate}% | Payout: ${signal.payout}%
 Prix d'entree: ${signal.entry_price.toFixed(4)}
 
 ANALYSE :
