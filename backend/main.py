@@ -3901,6 +3901,85 @@ async def debug_market_data(credentials: HTTPAuthorizationCredentials = Security
     }
 
 
+@app.get("/api/market/debug/search")
+async def debug_search_symbols(
+    q: str = "",
+    credentials: HTTPAuthorizationCredentials = Security(security)
+):
+    """DIAGNOSTIC: Search ALL raw symbols in PO's asset list by substring.
+
+    This endpoint exposes the RAW underlying data PO sent us — every symbol
+    whose name contains the query substring (case-insensitive), with its full
+    payout + is_active + display name.
+
+    Use this to diagnose payout mismatches. Example:
+      GET /api/market/debug/search?q=GBPJPY
+    Returns every symbol PO sent containing "GBPJPY" — shows whether PO is
+    sending multiple OTC variants, what payouts each has, and which one our
+    code picks.
+
+    NO filtering — shows inactive pairs too (for diagnosis only).
+    """
+    _payload = decode_access_token(credentials.credentials)
+    _jti = _payload.get("jti")
+    if _jti and await is_token_revoked(_jti):
+        raise HTTPException(status_code=401, detail="Token has been revoked")
+
+    if not po_scanner.is_connected:
+        return {"connected": False, "message": "Scanner not connected."}
+
+    if not q:
+        return {"error": "Add ?q=SEARCH_TERM to search (e.g. ?q=GBPJPY)"}
+
+    q_upper = q.upper()
+    detailed = po_scanner.get_all_payouts_detailed()
+
+    matches = []
+    for symbol, info in detailed.items():
+        if q_upper in symbol.upper():
+            display = po_scanner._symbol_to_display(symbol)
+            matches.append({
+                "symbol": symbol,
+                "display_name": display,
+                "po_display_name": info.get("po_display_name"),  # PO's own label from index 2
+                "payout": info.get("payout"),
+                "is_active": info.get("is_active"),
+                "updated_at": info.get("updated_at"),
+            })
+
+    # Also show what our get_payout() and find_pairs_above_payout() would return
+    # for this pair — so user can verify the fix is working
+    test_display = None
+    test_payout = None
+    if matches:
+        # Try to construct the display name from the first match
+        first_display = matches[0]["display_name"]
+        test_payout = po_scanner.get_payout(first_display)
+        test_display = first_display
+
+    # Sort by payout descending so the highest is at the top
+    matches.sort(key=lambda x: x.get("payout", 0), reverse=True)
+
+    return {
+        "connected": True,
+        "query": q,
+        "total_matches": len(matches),
+        "all_matching_symbols": matches,
+        "our_get_payout_returns": test_payout,
+        "for_display_name": test_display,
+        "freshness": po_scanner.get_freshness_report(),
+        "diagnostic_note": (
+            "If PO UI shows +92% for GBP/JPY OTC but our bot shows +86%, "
+            "look at 'all_matching_symbols' — if you see multiple entries with "
+            "different payouts, our code should pick the HIGHEST (top of list). "
+            "Check 'our_get_payout_returns' to verify it matches the highest. "
+            "If only ONE symbol exists and its payout doesn't match PO UI, "
+            "then PO is sending us a different value than what they display — "
+            "this would be a PO-side discrepancy, not our bug."
+        )
+    }
+
+
 @app.middleware("http")
 async def rate_limit_middleware(request, call_next):
     # CDC Section 8: Measure request latency

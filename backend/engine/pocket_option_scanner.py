@@ -834,10 +834,14 @@ class PocketOptionScanner:
                 # Store EVERYTHING (including inactive payouts) so we can distinguish
                 # "this pair is inactive right now" from "we never received this pair".
                 # Callers (get_payout, get_all_payouts, etc.) will filter on is_active.
+                # Also store PO's own display name (index 2) for diagnostic matching —
+                # this is the EXACT name PO shows in their UI, useful for payout verification.
+                po_display_name = asset_info[2] if len(asset_info) > 2 and isinstance(asset_info[2], str) else None
                 self._payouts[symbol] = {
                     "payout": payout,
                     "is_active": is_active,
                     "updated_at": now_iso,
+                    "po_display_name": po_display_name,  # PO's own label (e.g., "GBP/JPY OTC")
                 }
                 count += 1
                 if is_active:
