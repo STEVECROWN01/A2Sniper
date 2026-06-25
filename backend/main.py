@@ -4053,11 +4053,23 @@ async def debug_verify_payouts(
         request_is_otc = "otc" in display_name.lower()
 
         # Find ALL raw symbols that match this display name
-        # Normalize: remove slashes, spaces, handle OTC suffix
-        base_no_otc = display_name.replace('/', '').replace(' ', '').replace('_OTC', '').replace('_otc', '').upper()
+        # Normalize: remove slashes, spaces, AND the OTC suffix (so "USD/PKR OTC" → "USDPKR")
+        # Then compare against symbols normalized the same way ("USDPKR_otc" → "USDPKR")
+        base_no_otc = display_name.replace('/', '').replace(' ', '').upper()
+        # Remove OTC suffix from display name (handle "OTC" and "_OTC")
+        for suffix in ['_OTC', '_otc', 'OTC']:
+            if base_no_otc.endswith(suffix):
+                base_no_otc = base_no_otc[:-len(suffix)]
+        base_no_otc = base_no_otc.lstrip('#')
+
         matches = []
         for symbol, info in detailed.items():
-            sym_normalized = symbol.upper().replace('_OTC', '').replace('_', '').lstrip('#')
+            # Normalize symbol the same way: "USDPKR_otc" → "USDPKR"
+            sym_normalized = symbol.upper().replace('_', '').lstrip('#')
+            # Remove OTC suffix from symbol too
+            for suffix in ['OTC']:
+                if sym_normalized.endswith(suffix):
+                    sym_normalized = sym_normalized[:-len(suffix)]
             if sym_normalized == base_no_otc:
                 sym_is_otc = "_otc" in symbol.lower()
                 # Include if OTC-ness matches the request
