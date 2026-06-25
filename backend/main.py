@@ -4004,6 +4004,111 @@ async def debug_search_symbols(
     }
 
 
+@app.get("/api/market/debug/verify-payouts")
+async def debug_verify_payouts(
+    pairs: str = "",
+    credentials: HTTPAuthorizationCredentials = Security(security)
+):
+    """DIAGNOSTIC: Batch-verify payouts for multiple pairs at once.
+
+    Pass pairs as a comma-separated list of "DISPLAY_NAME=EXPECTED_PAYOUT" pairs.
+    Example: /api/market/debug/verify-payouts?pairs=GBP/JPY OTC=84,USD/CHF OTC=84,AUD/JPY OTC=90
+
+    Returns a verification report showing:
+    - What PO UI claims (expected)
+    - What our system has (actual)
+    - Match status (MATCH / MISMATCH / NOT FOUND)
+    - All raw symbols PO sent us for each pair
+    """
+    _payload = decode_access_token(credentials.credentials)
+    _jti = _payload.get("jti")
+    if _jti and await is_token_revoked(_jti):
+        raise HTTPException(status_code=401, detail="Token has been revoked")
+
+    if not po_scanner.is_connected:
+        return {"connected": False, "message": "Scanner not connected."}
+
+    if not pairs:
+        return {"error": "Add ?pairs=LIST where LIST is comma-separated 'NAME=PAYOUT' entries"}
+
+    detailed = po_scanner.get_all_payouts_detailed()
+
+    # Parse the input: "GBP/JPY OTC=84,USD/CHF OTC=84" → list of (name, expected)
+    entries = []
+    for raw in pairs.split(','):
+        raw = raw.strip()
+        if not raw or '=' not in raw:
+            continue
+        name, expected_str = raw.rsplit('=', 1)
+        name = name.strip()
+        try:
+            expected = float(expected_str.strip())
+        except ValueError:
+            continue
+        entries.append((name, expected))
+
+    results = []
+    for display_name, expected in entries:
+        # Determine if the request is for OTC or non-OTC
+        request_is_otc = "otc" in display_name.lower()
+
+        # Find ALL raw symbols that match this display name
+        # Normalize: remove slashes, spaces, handle OTC suffix
+        base_no_otc = display_name.replace('/', '').replace(' ', '').replace('_OTC', '').replace('_otc', '').upper()
+        matches = []
+        for symbol, info in detailed.items():
+            sym_normalized = symbol.upper().replace('_OTC', '').replace('_', '').lstrip('#')
+            if sym_normalized == base_no_otc:
+                sym_is_otc = "_otc" in symbol.lower()
+                # Include if OTC-ness matches the request
+                if sym_is_otc == request_is_otc:
+                    matches.append({
+                        "symbol": symbol,
+                        "payout": info.get("payout"),
+                        "is_active": info.get("is_active"),
+                        "po_display_name": info.get("po_display_name"),
+                    })
+
+        # Sort by payout descending
+        matches.sort(key=lambda x: x.get("payout", 0), reverse=True)
+
+        # What our code returns
+        our_payout = po_scanner.get_payout(display_name)
+
+        # Match status (within 1% tolerance for rounding)
+        if our_payout is None:
+            status = "NOT_FOUND"
+        elif abs(our_payout - expected) <= 1.0:
+            status = "MATCH"
+        else:
+            status = "MISMATCH"
+
+        results.append({
+            "display_name": display_name,
+            "po_ui_payout": expected,
+            "our_payout": our_payout,
+            "status": status,
+            "all_raw_symbols": matches,
+        })
+
+    # Summary
+    matched = sum(1 for r in results if r["status"] == "MATCH")
+    mismatched = sum(1 for r in results if r["status"] == "MISMATCH")
+    not_found = sum(1 for r in results if r["status"] == "NOT_FOUND")
+
+    return {
+        "connected": True,
+        "freshness": po_scanner.get_freshness_report(),
+        "summary": {
+            "total_checked": len(results),
+            "matched": matched,
+            "mismatched": mismatched,
+            "not_found": not_found,
+        },
+        "results": results,
+    }
+
+
 @app.middleware("http")
 async def rate_limit_middleware(request, call_next):
     # CDC Section 8: Measure request latency
