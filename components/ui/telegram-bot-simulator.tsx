@@ -462,6 +462,21 @@ Zéro Simulation. 100% Real-Market.`;
     prevLiveStatusRef.current = liveStatus;
   }, [liveStatus]);
 
+  // Real-time market status + signals polling (every 1s — never miss an update)
+  // This ensures the pair list payouts and signal cards update in real-time
+  // as PO pushes new data via WebSocket.
+  useEffect(() => {
+    const store = useAppStore.getState();
+    if (store.fetchMarketStatus) store.fetchMarketStatus();
+    if (store.fetchSignals) store.fetchSignals();
+    const interval = setInterval(() => {
+      const s = useAppStore.getState();
+      if (s.fetchMarketStatus) s.fetchMarketStatus();
+      if (s.fetchSignals) s.fetchSignals();
+    }, 1000);
+    return () => clearInterval(interval);
+  }, []);
+
   useEffect(() => {
     if (messages.length > 0) {
       localStorage.setItem('a2sniper_v3_history_v3', JSON.stringify(messages));

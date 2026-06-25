@@ -92,11 +92,11 @@ USD/CHF OTC=84`);
     }
   };
 
-  // Auto-refresh live data every 3s when enabled
+  // Auto-refresh live data every 1s when enabled (real-time updates)
   useEffect(() => {
     if (!autoRefresh) return;
     fetchLiveData();
-    const interval = setInterval(fetchLiveData, 3000);
+    const interval = setInterval(fetchLiveData, 1000);
     return () => clearInterval(interval);
   }, [autoRefresh]);
 
@@ -113,7 +113,7 @@ USD/CHF OTC=84`);
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-sm font-black uppercase tracking-wider text-green-400 flex items-center gap-2">
               <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
-              Live Payout Monitor (auto-refresh 3s)
+              Live Payout Monitor (real-time, 1s refresh)
             </h2>
             <label className="flex items-center gap-2 text-xs text-gray-400">
               <input

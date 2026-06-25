@@ -66,7 +66,7 @@ export default function DashboardPage() {
     const apiTimer = setInterval(() => {
       fetchSignals().catch(() => {});
       fetchPerformance().catch(() => {});
-    }, 30000); // Refresh every 30s instead of 5s to reduce load
+    }, 2000); // Real-time refresh every 2s (was 30s)
 
     return () => {
       cancelled = true;

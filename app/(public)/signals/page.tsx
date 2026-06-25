@@ -78,10 +78,11 @@ export default function SignalsPage() {
     if (store.fetchSignals) store.fetchSignals();
     if (store.fetchMarketStatus) store.fetchMarketStatus();
 
+    // Real-time refresh every 1s (user requirement: never miss an update)
     const apiTimer = setInterval(() => {
       if (store.fetchSignals) store.fetchSignals();
       if (store.fetchMarketStatus) store.fetchMarketStatus();
-    }, 5000);
+    }, 1000);
 
     return () => clearInterval(apiTimer);
   }, []);
