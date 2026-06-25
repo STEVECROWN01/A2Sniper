@@ -365,8 +365,10 @@ Zéro Simulation. 100% Real-Market.`;
       addMessage(signalText, 'bot', 'signal', sig as unknown as SignalPairData);
     } else {
       // Show the ACTUAL error message from the backend (not a generic fallback)
-      const errMsg = (typeof res.message === 'string' && res.message.length > 0)
-        ? res.message
+      // Triple-check it's a string to avoid [object Object]
+      const msg = res.message;
+      const errMsg = (typeof msg === 'string' && msg.length > 0)
+        ? msg
         : "Aucune donnée de marché disponible. Réessayez dans 5 secondes.";
       addMessage(`⏳ Analyse en cours pour ${pair}... ${errMsg}`, 'bot');
     }

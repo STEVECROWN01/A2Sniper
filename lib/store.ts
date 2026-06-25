@@ -346,10 +346,28 @@ export const useAppStore = create<AppState>((set, get) => ({
         return { success: true, signal: parsedSignal };
       }
       // Backend returned an error — extract the detail message
-      const errMsg = data.detail || data.message || data.error || `Erreur HTTP ${res.status}: ${JSON.stringify(data).slice(0, 200)}`;
-      return { success: false, message: String(errMsg) };
+      // FastAPI's HTTPException detail can be: string, array of objects, or object
+      // We need to extract a clean string, never [object Object]
+      let errMsg = '';
+      if (typeof data.detail === 'string') {
+        errMsg = data.detail;
+      } else if (Array.isArray(data.detail)) {
+        // Validation errors: extract the msg from each item
+        errMsg = data.detail.map((e: any) => e?.msg || String(e)).join('; ');
+      } else if (data.detail && typeof data.detail === 'object') {
+        errMsg = data.detail.msg || data.detail.message || JSON.stringify(data.detail);
+      } else if (typeof data.message === 'string') {
+        errMsg = data.message;
+      } else if (typeof data.error === 'string') {
+        errMsg = data.error;
+      } else {
+        errMsg = `Erreur HTTP ${res.status}`;
+      }
+      return { success: false, message: errMsg };
     } catch (err) {
-      return { success: false, message: 'Erreur réseau' };
+      // Network error — extract message safely (avoid [object Object])
+      const netErr = err instanceof Error ? err.message : 'Erreur réseau';
+      return { success: false, message: netErr };
     }
   },
 
