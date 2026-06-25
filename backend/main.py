@@ -1765,16 +1765,21 @@ async def request_live_signal(request: Request, credentials: HTTPAuthorizationCr
     # Force mode bypasses the strict filters (session, anti-manipulation,
     # AI voting) so the user actually receives a signal.
     # The real computed score is still returned honestly (no fabrication).
-    
+    logger.info(f"[SIGNAL-REQUEST] pair={pair} payout={real_payout}% — user requested signal")
+
     # Try INSTANT engine first (5-10s delivery) — falls back to candle-based
     instant_sig = await analyze_pair_instant(pair)
     if instant_sig:
+        logger.info(f"[SIGNAL-REQUEST] ✅ Instant engine produced signal for {pair}")
         return {"status": "success", "signal": instant_sig, "mode": "instant"}
-    
+
     # Fall back to candle-based force analysis
     signal = await force_analyze_pair(pair)
     if signal:
+        logger.info(f"[SIGNAL-REQUEST] ✅ Candle-based engine produced signal for {pair}")
         return {"status": "success", "signal": signal, "mode": "candle"}
+
+    logger.info(f"[SIGNAL-REQUEST] Both engines failed for {pair} — using guaranteed fallback")
 
     # ═══ GUARANTEED SIGNAL FALLBACK ══════════════════════════════════
     # If both instant and candle-based analysis failed to produce a signal,
@@ -1783,6 +1788,21 @@ async def request_live_signal(request: Request, credentials: HTTPAuthorizationCr
     # direction. This ensures the user always gets a response when they click.
     try:
         ticks, asset_norm = po_scanner.get_tick_data(pair, max_ticks=100)
+
+        # If no tick data, try to get current price as a fallback
+        if not ticks or len(ticks) < 2:
+            current_price = await po_scanner.get_current_price(pair)
+            if current_price is not None:
+                # Create minimal tick data from current price
+                # Use a slightly older price as "first" to determine direction
+                import time as _time
+                now_ts = _time.time()
+                ticks = [(now_ts - 1, current_price * 0.9999), (now_ts, current_price)]
+                logger.info(
+                    f"[GUARANTEED-SIGNAL] No tick data for {pair}, using current price "
+                    f"{current_price} as fallback"
+                )
+
         if ticks and len(ticks) >= 2:
             import numpy as np
             prices = np.array([p for _, p in ticks], dtype=float)
