@@ -1,12 +1,17 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 
 export default function DebugPayoutsPage() {
   const [query, setQuery] = useState('GBPJPY');
   const [result, setResult] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Live payout monitor state
+  const [liveData, setLiveData] = useState<any>(null);
+  const [liveLoading, setLiveLoading] = useState(false);
+  const [autoRefresh, setAutoRefresh] = useState(true);
 
   // Batch verification state
   const [batchInput, setBatchInput] = useState(`USD/PKR OTC=92
@@ -74,6 +79,27 @@ USD/CHF OTC=84`);
     }
   };
 
+  // Live payout monitor — fetches current payouts + event stats every 3s
+  const fetchLiveData = async () => {
+    try {
+      const res = await fetch('/api/market/debug/payout-changes', { credentials: 'include' });
+      if (res.ok) {
+        const data = await res.json();
+        setLiveData(data);
+      }
+    } catch (e) {
+      // silent fail — don't spam console
+    }
+  };
+
+  // Auto-refresh live data every 3s when enabled
+  useEffect(() => {
+    if (!autoRefresh) return;
+    fetchLiveData();
+    const interval = setInterval(fetchLiveData, 3000);
+    return () => clearInterval(interval);
+  }, [autoRefresh]);
+
   return (
     <div className="min-h-screen bg-[#0a0a0c] text-white p-8">
       <div className="max-w-5xl mx-auto">
@@ -81,6 +107,101 @@ USD/CHF OTC=84`);
         <p className="text-gray-400 mb-6 text-sm">
           Verify that payouts shown in our bot match what PocketOption&apos;s UI displays.
         </p>
+
+        {/* LIVE PAYOUT MONITOR */}
+        <div className="mb-8 bg-gradient-to-br from-green-500/10 to-transparent border border-green-500/20 rounded-2xl p-5">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-sm font-black uppercase tracking-wider text-green-400 flex items-center gap-2">
+              <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
+              Live Payout Monitor (auto-refresh 3s)
+            </h2>
+            <label className="flex items-center gap-2 text-xs text-gray-400">
+              <input
+                type="checkbox"
+                checked={autoRefresh}
+                onChange={(e) => setAutoRefresh(e.target.checked)}
+                className="w-4 h-4"
+              />
+              Auto-refresh
+            </label>
+          </div>
+
+          {liveData ? (
+            <div className="space-y-4">
+              {/* Freshness */}
+              {liveData.freshness && (
+                <div className="grid grid-cols-3 gap-3 text-xs">
+                  <div className="bg-black/40 rounded-lg p-2">
+                    <span className="text-gray-500">Last update:</span>{' '}
+                    <span className={`font-black ${liveData.freshness.last_assets_update_age_seconds < 5 ? 'text-green-400' : 'text-yellow-400'}`}>
+                      {liveData.freshness.last_assets_update_age_seconds !== null
+                        ? `${liveData.freshness.last_assets_update_age_seconds}s ago`
+                        : 'never'}
+                    </span>
+                  </div>
+                  <div className="bg-black/40 rounded-lg p-2">
+                    <span className="text-gray-500">Snapshots:</span>{' '}
+                    <span className="font-bold">{liveData.freshness.assets_received_count || 0}</span>
+                  </div>
+                  <div className="bg-black/40 rounded-lg p-2">
+                    <span className="text-gray-500">Payout events:</span>{' '}
+                    <span className={`font-black ${liveData.event_statistics.payout_events_received > 0 ? 'text-green-400' : 'text-red-400'}`}>
+                      {liveData.event_statistics.payout_events_received}
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {/* Current major payouts */}
+              <div>
+                <p className="text-[10px] text-gray-500 uppercase font-bold mb-2">Current Payouts (live):</p>
+                <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+                  {liveData.current_major_payouts &&
+                    Object.entries(liveData.current_major_payouts).map(([pair, payout]: [string, any]) => (
+                      <div key={pair} className="bg-black/40 rounded-lg p-2 border border-white/5">
+                        <p className="text-[9px] text-gray-500 font-mono truncate">{pair}</p>
+                        <p className={`text-lg font-black ${payout >= 90 ? 'text-green-400' : payout >= 80 ? 'text-yellow-300' : 'text-orange-400'}`}>
+                          +{payout}%
+                        </p>
+                      </div>
+                    ))}
+                </div>
+                <p className="text-[9px] text-gray-600 mt-2">
+                  💡 Compare these with PO&apos;s UI right now. They should match within 2-3 seconds.
+                  If they don&apos;t match, check the event statistics below.
+                </p>
+              </div>
+
+              {/* Event statistics */}
+              <div>
+                <p className="text-[10px] text-gray-500 uppercase font-bold mb-2">PO Events Received:</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {liveData.event_statistics.event_counts &&
+                    Object.entries(liveData.event_statistics.event_counts).map(([event, count]: [string, any]) => (
+                      <span
+                        key={event}
+                        className={`text-[10px] font-mono px-2 py-1 rounded border ${
+                          event.toLowerCase().includes('payout') || event.toLowerCase().includes('asset')
+                            ? 'bg-green-500/10 border-green-500/30 text-green-400'
+                            : 'bg-white/5 border-white/10 text-gray-400'
+                        }`}
+                      >
+                        {event}: {count}
+                      </span>
+                    ))}
+                </div>
+                {liveData.event_statistics.payout_events_received === 0 && (
+                  <p className="text-[10px] text-yellow-400 mt-2">
+                    ⚠️ No payout-specific events received. PO may only send full updateAssets snapshots.
+                    Our refresh loop (every 2s) should still catch changes, but with a small delay.
+                  </p>
+                )}
+              </div>
+            </div>
+          ) : (
+            <p className="text-gray-500 text-sm">Loading live data...</p>
+          )}
+        </div>
 
         {/* BATCH VERIFY SECTION */}
         <div className="mb-8">

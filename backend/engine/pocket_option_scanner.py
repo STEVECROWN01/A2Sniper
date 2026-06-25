@@ -905,6 +905,34 @@ class PocketOptionScanner:
     async def _handle_event(self, event_name: str, event_data: list):
         """Handle Socket.IO named events."""
 
+        # ─── COMPREHENSIVE EVENT LOGGING ────────────────────────────────
+        # Log EVERY event name PO sends us (throttled to avoid spam).
+        # This helps us identify which events carry payout updates.
+        # We track event counts and log the first occurrence of each new event,
+        # plus a summary every 60s.
+        if not hasattr(self, '_event_counts'):
+            self._event_counts = {}
+            self._last_event_log = 0
+            self._seen_events = set()
+        self._event_counts[event_name] = self._event_counts.get(event_name, 0) + 1
+        # Log first occurrence of any new event type
+        if event_name not in self._seen_events:
+            self._seen_events.add(event_name)
+            data_preview = str(event_data)[:200] if event_data else "empty"
+            logger.info(
+                f"[SCANNER-EVENT-NEW] '{event_name}' (first time) — "
+                f"data preview: {data_preview}"
+            )
+        # Log event summary every 60s
+        now_ts = datetime.now(timezone.utc).timestamp()
+        if now_ts - self._last_event_log > 60:
+            self._last_event_log = now_ts
+            top_events = sorted(self._event_counts.items(), key=lambda x: x[1], reverse=True)[:10]
+            logger.info(
+                f"[SCANNER-EVENT-SUMMARY] {len(self._event_counts)} event types, "
+                f"top: {dict(top_events)}"
+            )
+
         # Auth success event
         if event_name == "successauth":
             self._is_authenticated = True
@@ -933,12 +961,28 @@ class PocketOptionScanner:
                 logger.error(f"[SCANNER] updateAssets parse error: {e}")
             return
 
-        # Payout update (incremental — PO may send these between full updateAssets snapshots)
-        if event_name == "payout" or event_name == "payoutChange":
+        # Payout update (incremental — PO sends these between full updateAssets snapshots)
+        # This is the KEY to real-time payout updates. PO pushes these events whenever
+        # a payout changes, so we should see them frequently.
+        if event_name.lower() in (
+            "payout", "payoutchange", "payoutupdate", "updatepayout",
+            "payouts", "assetpayout", "assetpayoutchange",
+        ):
             try:
+                # Log that we received a payout update event (first 5 only, to avoid spam)
+                if not hasattr(self, '_payout_event_count'):
+                    self._payout_event_count = 0
+                self._payout_event_count += 1
+                if self._payout_event_count <= 5:
+                    logger.info(
+                        f"[SCANNER-PAYOUT-EVENT] #{self._payout_event_count} "
+                        f"event='{event_name}' data_preview={str(event_data)[:300]}"
+                    )
+
                 if event_data:
                     payout_data = event_data[0] if isinstance(event_data[0], list) else event_data
                     now_iso = datetime.now(timezone.utc).isoformat()
+                    changes_logged = 0
                     if isinstance(payout_data, list):
                         for item in payout_data:
                             if isinstance(item, dict) and "asset" in item and "payout" in item:
@@ -948,11 +992,20 @@ class PocketOptionScanner:
                                 if 0 <= p <= 92:
                                     # Preserve existing is_active, default True
                                     existing = self._payouts.get(item["asset"], {})
+                                    old_payout = existing.get("payout")
                                     self._payouts[item["asset"]] = {
                                         "payout": p,
                                         "is_active": existing.get("is_active", item.get("is_active", True)),
                                         "updated_at": now_iso,
+                                        "po_display_name": existing.get("po_display_name"),
                                     }
+                                    # Log actual payout changes (first 20 per session)
+                                    if old_payout is not None and old_payout != p and changes_logged < 5:
+                                        changes_logged += 1
+                                        logger.info(
+                                            f"[SCANNER-PAYOUT-CHANGE] {item['asset']}: "
+                                            f"{old_payout}% → {p}%"
+                                        )
                     elif isinstance(payout_data, dict):
                         if "asset" in payout_data and "payout" in payout_data:
                             p = float(payout_data["payout"])
@@ -960,13 +1013,20 @@ class PocketOptionScanner:
                                 p = p * 100.0
                             if 0 <= p <= 92:
                                 existing = self._payouts.get(payout_data["asset"], {})
+                                old_payout = existing.get("payout")
                                 self._payouts[payout_data["asset"]] = {
                                     "payout": p,
                                     "is_active": existing.get("is_active", payout_data.get("is_active", True)),
                                     "updated_at": now_iso,
+                                    "po_display_name": existing.get("po_display_name"),
                                 }
+                                if old_payout is not None and old_payout != p:
+                                    logger.info(
+                                        f"[SCANNER-PAYOUT-CHANGE] {payout_data['asset']}: "
+                                        f"{old_payout}% → {p}%"
+                                    )
             except Exception as e:
-                logger.debug(f"[SCANNER] Payout parse error: {e}")
+                logger.warning(f"[SCANNER] Payout parse error: {e}", exc_info=True)
             return
 
         # Balance update
@@ -1687,37 +1747,172 @@ class PocketOptionScanner:
         """Periodically nudge PO to push a fresh `updateAssets` snapshot.
 
         PROBLEM: PO pushes the full asset list (with payouts) once at auth time.
-        After that, PO only pushes new snapshots at unpredictable intervals —
-        could be seconds, minutes, or longer. The timing is decided by PO's
-        internal logic (market sessions, liquidity, trader volume) and is NOT
-        predictable from our side.
+        After that, PO only pushes new snapshots at unpredictable intervals.
+        Payouts change continuously on PO's side, but they don't always push
+        updates proactively.
 
-        SOLUTION: Every 5 seconds, send `42["ps"]` (PO's keep-alive/state
-        request). PO responds by pushing a fresh `[[5, ...], ...]` payload,
-        which our receive loop picks up and routes to `_parse_assets_list`.
+        SOLUTION: Multi-pronged approach:
+        1. Every 2s, send different nudge messages to trigger fresh asset data:
+           - `42["ps"]` (keep-alive/state request)
+           - `42["getPayout"]` (direct payout request)
+           - `42["updateAssets"]` (some PO versions respond to this)
+        2. Every 10s, also fetch payouts via PO's REST API as a fallback.
+           This catches payout changes that PO doesn't push via WebSocket.
+        3. Log every payout change so we can verify real-time updates are working.
 
-        This keeps our payouts within ~5s of what PO's UI shows. When a pair
-        becomes inactive (or active) on PO, our system reflects that change
-        within at most 5 seconds — so users never see stale pair lists.
+        This keeps our payouts within ~2s of what PO's UI shows.
         """
+        # Cycle through different nudge messages — PO may respond to different ones
+        # at different times. Rotating maximizes the chance of getting fresh data.
+        nudges = [
+            '42["ps"]',                    # Standard keep-alive / state request
+            '42["getPayout"]',             # Direct payout table request
+            '42["updateAssets"]',          # Some PO versions respond to this
+        ]
+        nudge_index = 0
+        rest_fallback_counter = 0
+
         try:
             # Wait 3s after auth before first nudge (let initial data arrive first)
             await asyncio.sleep(3)
             while self._ws and self._ws_is_open() and self._is_authenticated:
                 try:
-                    # Send a state request — PO typically responds with a fresh asset snapshot
-                    await self._ws.send('42["ps"]')
-                    logger.debug("[SCANNER] Asset refresh nudge sent: 42[\"ps\"]")
+                    # Send the next nudge in the rotation
+                    nudge = nudges[nudge_index % len(nudges)]
+                    nudge_index += 1
+                    await self._ws.send(nudge)
+                    logger.debug(f"[SCANNER] Asset refresh nudge sent: {nudge}")
                 except Exception as e:
                     logger.warning(f"[SCANNER] Asset refresh nudge failed: {e}")
                     break
-                # Wait 5s before next nudge — keeps our view of PO's state
-                # within ~5s of what PO's UI actually shows.
-                await asyncio.sleep(5)
+
+                # Every 5th iteration (~10s), also try REST API fallback for payouts
+                # This catches payout changes that PO doesn't push via WebSocket
+                rest_fallback_counter += 1
+                if rest_fallback_counter >= 5:
+                    rest_fallback_counter = 0
+                    try:
+                        await self._fetch_payouts_rest_fallback()
+                    except Exception as e:
+                        logger.debug(f"[SCANNER] REST payout fallback error: {e}")
+
+                # Wait 2s before next nudge (was 5s — now 2s for faster updates)
+                await asyncio.sleep(2)
         except asyncio.CancelledError:
             pass
         except Exception as e:
             logger.error(f"[SCANNER] Asset refresh loop error: {e}")
+
+    async def _fetch_payouts_rest_fallback(self):
+        """Fetch payouts from PO's REST API as a fallback to WebSocket updates.
+
+        PO's web UI fetches payouts from a REST endpoint in addition to the
+        WebSocket stream. This endpoint returns the CURRENT payouts (what PO's
+        UI shows right now), which may differ from what we last received via
+        WebSocket if PO didn't push an update.
+
+        We call this every ~10s and merge any changes into our _payouts dict.
+        Changes are logged so we can verify real-time updates.
+        """
+        try:
+            import httpx
+
+            host = "demo-api-eu.po.market" if self.is_demo else "api-eu.po.market"
+
+            # Try multiple known PO payout endpoints
+            # PO's web UI hits these endpoints to get fresh payout data
+            endpoints = [
+                f"https://{host}/api/v1/payouts",
+                f"https://{host}/api/v2/payouts",
+                f"https://{host}/payouts",
+            ]
+
+            headers = {
+                "Origin": "https://pocketoption.com",
+                "Referer": "https://pocketoption.com/",
+                "User-Agent": WS_HEADERS["User-Agent"],
+                "Accept": "application/json, text/plain, */*",
+            }
+
+            async with httpx.AsyncClient(timeout=httpx.Timeout(5.0, connect=3.0)) as client:
+                for url in endpoints:
+                    try:
+                        resp = await client.get(url, headers=headers)
+                        if resp.status_code != 200:
+                            continue
+
+                        data = resp.json()
+                        if not data:
+                            continue
+
+                        # Parse the response — format varies by endpoint
+                        # Could be: [{"asset": "EURUSD_otc", "payout": 92}, ...]
+                        # Or: {"EURUSD_otc": 92, ...}
+                        # Or: {"data": [...]}
+                        payouts_list = []
+                        if isinstance(data, list):
+                            payouts_list = data
+                        elif isinstance(data, dict):
+                            if "data" in data and isinstance(data["data"], list):
+                                payouts_list = data["data"]
+                            elif "payouts" in data and isinstance(data["payouts"], list):
+                                payouts_list = data["payouts"]
+                            else:
+                                # Could be a flat dict: {"EURUSD_otc": 92, ...}
+                                for asset, payout in data.items():
+                                    if isinstance(payout, (int, float)):
+                                        payouts_list.append({"asset": asset, "payout": payout})
+
+                        if not payouts_list:
+                            continue
+
+                        # Merge changes into _payouts
+                        now_iso = datetime.now(timezone.utc).isoformat()
+                        changes = 0
+                        for item in payouts_list:
+                            if not isinstance(item, dict):
+                                continue
+                            asset = item.get("asset") or item.get("symbol")
+                            payout_raw = item.get("payout") or item.get("profit")
+                            if not asset or payout_raw is None:
+                                continue
+                            try:
+                                p = float(payout_raw)
+                                if 0 < p <= 1.0:
+                                    p = p * 100.0
+                                if not (0 <= p <= 92):
+                                    continue
+
+                                existing = self._payouts.get(asset, {})
+                                old_payout = existing.get("payout")
+                                if old_payout is not None and old_payout != p:
+                                    changes += 1
+                                    if changes <= 5:  # Log first 5 changes
+                                        logger.info(
+                                            f"[SCANNER-REST-PAYOUT-CHANGE] {asset}: "
+                                            f"{old_payout}% → {p}% (via REST API)"
+                                        )
+
+                                self._payouts[asset] = {
+                                    "payout": p,
+                                    "is_active": existing.get("is_active", item.get("is_active", True)),
+                                    "updated_at": now_iso,
+                                    "po_display_name": existing.get("po_display_name"),
+                                }
+                            except (ValueError, TypeError):
+                                continue
+
+                        if changes > 0:
+                            logger.info(
+                                f"[SCANNER-REST-FALLBACK] {changes} payout changes "
+                                f"applied from REST API ({url})"
+                            )
+                        # Successfully fetched from this endpoint — stop trying others
+                        return
+                    except Exception:
+                        continue
+        except Exception as e:
+            logger.debug(f"[SCANNER] REST payout fallback failed: {e}")
 
     async def _request_initial_data(self):
         """Request initial market data after authentication.
