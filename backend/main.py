@@ -4028,6 +4028,7 @@ async def debug_payout_changes(
     event_counts = getattr(po_scanner, '_event_counts', {})
     seen_events = getattr(po_scanner, '_seen_events', set())
     payout_event_count = getattr(po_scanner, '_payout_event_count', 0)
+    bare_frame_count = getattr(po_scanner, '_bare_frame_count', 0)
 
     # Get current payouts for major pairs
     major_pairs = ["EUR/USD OTC", "GBP/USD OTC", "USD/JPY OTC", "GBP/JPY OTC",
@@ -4047,15 +4048,17 @@ async def debug_payout_changes(
             "event_counts": dict(sorted(event_counts.items(), key=lambda x: x[1], reverse=True)[:15]),
             "seen_events": sorted(list(seen_events)) if seen_events else [],
             "payout_events_received": payout_event_count,
+            "bare_payout_frames_received": bare_frame_count,
         },
         "current_major_payouts": current_payouts,
         "note": (
             "1. 'event_counts' shows which events PO is sending us. "
             "Look for 'updateAssets', 'payout', 'payoutChange' — these carry payout data. "
-            "2. 'payout_events_received' > 0 means PO IS sending us real-time payout updates. "
-            "If it's 0, PO is not pushing payout changes via WebSocket (only full updateAssets snapshots). "
-            "3. 'freshness.last_assets_update_age_seconds' should be <5s (our refresh loop runs every 2s). "
-            "4. 'current_major_payouts' shows what we currently have — compare with PO's UI right now."
+            "2. 'bare_payout_frames_received' > 0 means the REAL-TIME payout parser is working! "
+            "PO sends bare [[5,...]] frames with fresh payouts — these are now caught and parsed. "
+            "3. 'payout_events_received' tracks Socket.IO payout events (may be 0 — that's OK now). "
+            "4. 'freshness.last_assets_update_age_seconds' should be <60s (PO pushes every 30-60s). "
+            "5. 'current_major_payouts' shows what we currently have — compare with PO's UI right now."
         )
     }
 

@@ -145,8 +145,8 @@ USD/CHF OTC=84`);
                   </div>
                   <div className="bg-black/40 rounded-lg p-2">
                     <span className="text-gray-500">Payout events:</span>{' '}
-                    <span className={`font-black ${liveData.event_statistics.payout_events_received > 0 ? 'text-green-400' : 'text-red-400'}`}>
-                      {liveData.event_statistics.payout_events_received}
+                    <span className={`font-black ${liveData.event_statistics.bare_payout_frames_received > 0 ? 'text-green-400' : 'text-red-400'}`}>
+                      {liveData.event_statistics.bare_payout_frames_received || 0} bare frames
                     </span>
                   </div>
                 </div>
@@ -190,10 +190,17 @@ USD/CHF OTC=84`);
                       </span>
                     ))}
                 </div>
-                {liveData.event_statistics.payout_events_received === 0 && (
+                {liveData.event_statistics.bare_payout_frames_received === 0 && (
                   <p className="text-[10px] text-yellow-400 mt-2">
-                    ⚠️ No payout-specific events received. PO may only send full updateAssets snapshots.
-                    Our refresh loop (every 2s) should still catch changes, but with a small delay.
+                    ⚠️ No bare payout frames received yet. PO pushes these every 30-60s —
+                    wait a minute and check again. If still 0 after 2 min, the bare frame
+                    parser may need adjustment.
+                  </p>
+                )}
+                {liveData.event_statistics.bare_payout_frames_received > 0 && (
+                  <p className="text-[10px] text-green-400 mt-2">
+                    ✅ Real-time payout parser is working! {liveData.event_statistics.bare_payout_frames_received} bare frames received.
+                    Payouts should now update automatically as PO pushes them.
                   </p>
                 )}
               </div>

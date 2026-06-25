@@ -427,7 +427,31 @@ class PocketOptionScanner:
                 if isinstance(message, bytes):
                     self._last_message_time = datetime.now(timezone.utc)
                     try:
-                        # Use the new binary attachment reassembly path
+                        # ═══ BARE FRAME PAYOUT SNAPSHOT (bytes) — CRITICAL FIX ═══
+                        # PO sends payout updates as bare bytes frames containing
+                        # JSON [[5, "EURUSD_otc", "EUR/USD OTC", "currency", 2, 92, ...], ...]
+                        # These are NOT Socket.IO binary attachments — they're raw JSON.
+                        # Detect and handle them BEFORE the Socket.IO binary path.
+                        text = message.decode('utf-8', errors='replace')
+                        if text.startswith('[[5,') or (text.startswith('[[') and '"currency"' in text[:200]):
+                            try:
+                                data = json.loads(text)
+                                if isinstance(data, list) and data and isinstance(data[0], list) and len(data[0]) > 5:
+                                    # This is a bare payout snapshot (received as bytes)
+                                    await self._parse_assets_list(data)
+                                    if not hasattr(self, '_bare_frame_count'):
+                                        self._bare_frame_count = 0
+                                    self._bare_frame_count += 1
+                                    if self._bare_frame_count <= 5:
+                                        logger.info(
+                                            f"[SCANNER-BARE-FRAME-BYTES] #{self._bare_frame_count} "
+                                            f"Received bare payout snapshot (bytes) with {len(data)} assets"
+                                        )
+                                    continue  # Skip the Socket.IO binary attachment path
+                            except (json.JSONDecodeError, ValueError):
+                                pass  # Fall through to Socket.IO binary attachment handling
+
+                        # Use the binary attachment reassembly path (for Socket.IO 451- frames)
                         await self._process_binary_frame(message)
                     except Exception as e:
                         logger.error(f"[SCANNER] Error handling binary frame: {e}")
@@ -694,6 +718,63 @@ class PocketOptionScanner:
         if message.startswith("0"):
             logger.debug("[SCANNER] Engine.IO open message (unexpected during receive)")
             return
+
+        # ═══ BARE FRAME PAYOUT SNAPSHOT — CRITICAL FIX ══════════════════
+        # PO pushes incremental payout updates as BARE WebSocket frames
+        # (NOT wrapped in Socket.IO 42["event",...] envelope).
+        # Format: [[5, "EURUSD_otc", "EUR/USD OTC", "currency", 2, 92, ...], ...]
+        #
+        # These are the REAL-TIME payout updates. Without handling these,
+        # our payout data becomes stale within 30 seconds of connecting
+        # (only the 3 initial updateAssets Socket.IO events are processed).
+        #
+        # Detection: frame starts with "[[5," — the "5" is a constant type
+        # marker PO uses for asset/payout data.
+        # Reference: ChipaDevTeam/PocketOptionAPI, lordralinc/pocket_option
+        if message.startswith("[[5,") or message.startswith('[[5,'):
+            try:
+                data = json.loads(message)
+                if isinstance(data, list) and data and isinstance(data[0], list) and len(data[0]) > 5:
+                    # This is a bare payout snapshot — parse it
+                    await self._parse_assets_list(data)
+                    # Log that we received a bare-frame update (first 5 only)
+                    if not hasattr(self, '_bare_frame_count'):
+                        self._bare_frame_count = 0
+                    self._bare_frame_count += 1
+                    if self._bare_frame_count <= 5:
+                        logger.info(
+                            f"[SCANNER-BARE-FRAME] #{self._bare_frame_count} "
+                            f"Received bare payout snapshot with {len(data)} assets"
+                        )
+                    return
+            except (json.JSONDecodeError, ValueError) as e:
+                logger.debug(f"[SCANNER] Failed to parse bare frame: {e}")
+            return
+
+        # Also handle bare frames that might come as bytes (decoded to str above)
+        # Some PO servers send the bare payout snapshot as bytes, not str.
+        # _handle_binary_data already handles this, but add a check here too
+        # in case the frame arrives as a str that looks like JSON.
+        if message.startswith("[[") and len(message) > 10:
+            try:
+                data = json.loads(message)
+                if isinstance(data, list) and data and isinstance(data[0], list):
+                    # Check if this looks like an asset/payout snapshot
+                    first_row = data[0]
+                    if len(first_row) > 5 and isinstance(first_row[0], int):
+                        # Could be a payout snapshot (first field is type marker, often 5)
+                        await self._parse_assets_list(data)
+                        if not hasattr(self, '_bare_frame_count'):
+                            self._bare_frame_count = 0
+                        self._bare_frame_count += 1
+                        if self._bare_frame_count <= 5:
+                            logger.info(
+                                f"[SCANNER-BARE-FRAME] #{self._bare_frame_count} "
+                                f"Received bare payout snapshot (alt format) with {len(data)} assets"
+                            )
+                        return
+            except (json.JSONDecodeError, ValueError):
+                pass  # Fall through to "Unknown" handler
 
         # Unknown
         logger.debug(f"[SCANNER] Unhandled message type: {message[:50]}")
@@ -1744,60 +1825,36 @@ class PocketOptionScanner:
                 logger.error(f"[SCANNER] Health check error: {e}")
 
     async def _asset_refresh_loop(self):
-        """Periodically nudge PO to push a fresh `updateAssets` snapshot.
+        """Periodically send keep-alive to PO.
 
-        PROBLEM: PO pushes the full asset list (with payouts) once at auth time.
-        After that, PO only pushes new snapshots at unpredictable intervals.
-        Payouts change continuously on PO's side, but they don't always push
-        updates proactively.
+        IMPORTANT FINDING (from researching PO wrappers):
+        - PO does NOT have a "request payouts" message. Payouts are pushed
+          passively by PO as bare [[5,...]] frames (handled in _handle_message).
+        - The ONLY client→server message we should send is `42["ps"]` (keep-alive).
+        - Sending `42["getPayout"]` or `42["updateAssets"]` does NOTHING —
+          these are server→client event names, not client→server requests.
+          Sending them may even cause PO to rate-limit our connection.
+        - Reference wrappers use 20-60s intervals for `42["ps"]`.
+          We use 20s (good balance between keeping connection alive and
+          not being too aggressive).
 
-        SOLUTION: Multi-pronged approach:
-        1. Every 2s, send different nudge messages to trigger fresh asset data:
-           - `42["ps"]` (keep-alive/state request)
-           - `42["getPayout"]` (direct payout request)
-           - `42["updateAssets"]` (some PO versions respond to this)
-        2. Every 10s, also fetch payouts via PO's REST API as a fallback.
-           This catches payout changes that PO doesn't push via WebSocket.
-        3. Log every payout change so we can verify real-time updates are working.
-
-        This keeps our payouts within ~2s of what PO's UI shows.
+        Payout freshness is now handled by the bare-frame parser in
+        _handle_message, which catches PO's real-time payout pushes.
         """
-        # Cycle through different nudge messages — PO may respond to different ones
-        # at different times. Rotating maximizes the chance of getting fresh data.
-        nudges = [
-            '42["ps"]',                    # Standard keep-alive / state request
-            '42["getPayout"]',             # Direct payout table request
-            '42["updateAssets"]',          # Some PO versions respond to this
-        ]
-        nudge_index = 0
-        rest_fallback_counter = 0
-
         try:
-            # Wait 3s after auth before first nudge (let initial data arrive first)
-            await asyncio.sleep(3)
+            # Wait 5s after auth before first keep-alive
+            await asyncio.sleep(5)
             while self._ws and self._ws_is_open() and self._is_authenticated:
                 try:
-                    # Send the next nudge in the rotation
-                    nudge = nudges[nudge_index % len(nudges)]
-                    nudge_index += 1
-                    await self._ws.send(nudge)
-                    logger.debug(f"[SCANNER] Asset refresh nudge sent: {nudge}")
+                    # Only send the keep-alive — PO pushes payouts passively
+                    await self._ws.send('42["ps"]')
+                    logger.debug("[SCANNER] Keep-alive sent: 42[\"ps\"]")
                 except Exception as e:
-                    logger.warning(f"[SCANNER] Asset refresh nudge failed: {e}")
+                    logger.warning(f"[SCANNER] Keep-alive failed: {e}")
                     break
-
-                # Every 5th iteration (~10s), also try REST API fallback for payouts
-                # This catches payout changes that PO doesn't push via WebSocket
-                rest_fallback_counter += 1
-                if rest_fallback_counter >= 5:
-                    rest_fallback_counter = 0
-                    try:
-                        await self._fetch_payouts_rest_fallback()
-                    except Exception as e:
-                        logger.debug(f"[SCANNER] REST payout fallback error: {e}")
-
-                # Wait 2s before next nudge (was 5s — now 2s for faster updates)
-                await asyncio.sleep(2)
+                # 20s interval — matches reference PO wrappers
+                # (was 2s with multiple nudges — too aggressive, PO may rate-limit)
+                await asyncio.sleep(20)
         except asyncio.CancelledError:
             pass
         except Exception as e:
