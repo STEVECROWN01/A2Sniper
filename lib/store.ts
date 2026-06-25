@@ -345,7 +345,9 @@ export const useAppStore = create<AppState>((set, get) => ({
         }));
         return { success: true, signal: parsedSignal };
       }
-      return { success: false, message: data.detail || 'Erreur lors de la génération du signal' };
+      // Backend returned an error — extract the detail message
+      const errMsg = data.detail || data.message || data.error || `Erreur HTTP ${res.status}: ${JSON.stringify(data).slice(0, 200)}`;
+      return { success: false, message: String(errMsg) };
     } catch (err) {
       return { success: false, message: 'Erreur réseau' };
     }
