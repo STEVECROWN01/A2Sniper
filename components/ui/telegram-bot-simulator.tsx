@@ -364,8 +364,10 @@ export function TelegramBotSimulator() {
 Zéro Simulation. 100% Real-Market.`;
       addMessage(signalText, 'bot', 'signal', sig as unknown as SignalPairData);
     } else {
-      // Clean error message — no [object Object]
-      const errMsg = typeof res.message === 'string' ? res.message : "Le système attend une opportunité Sniper (winrate minimum 70%).";
+      // Show the ACTUAL error message from the backend (not a generic fallback)
+      const errMsg = (typeof res.message === 'string' && res.message.length > 0)
+        ? res.message
+        : "Aucune donnée de marché disponible. Réessayez dans 5 secondes.";
       addMessage(`⏳ Analyse en cours pour ${pair}... ${errMsg}`, 'bot');
     }
   };

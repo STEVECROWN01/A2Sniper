@@ -1705,9 +1705,13 @@ app.add_middleware(
 @app.post("/api/signals/request")
 async def request_live_signal(request: Request, credentials: HTTPAuthorizationCredentials = Security(security), geo: dict = Depends(geographic_restriction_dependency)):
     """Génère un signal en direct à la demande pour une paire. Requires authentication."""
+    # Log IMMEDIATELY at the start — before ANY checks
+    logger.info("[SIGNAL-REQUEST-START] Endpoint hit, starting processing...")
+
     check_rate_limit(request)
     # Geographic restriction check
     if not geo['allowed']:
+        logger.warning(f"[SIGNAL-REQUEST] Geographic restriction blocked: {geo['reason']}")
         raise HTTPException(status_code=403, detail=geo['reason'])
 
     # Verify auth
@@ -1715,31 +1719,35 @@ async def request_live_signal(request: Request, credentials: HTTPAuthorizationCr
     # Check if token is revoked
     _jti = payload.get("jti")
     if _jti and await is_token_revoked(_jti):
+        logger.warning("[SIGNAL-REQUEST] Token revoked")
         raise HTTPException(status_code=401, detail="Token has been revoked")
     
     try:
         data = await request.json()
     except Exception:
+        logger.warning("[SIGNAL-REQUEST] Invalid JSON body")
         raise HTTPException(status_code=400, detail="Invalid request body")
     
     pair = data.get("pair")
     if not pair:
+        logger.warning("[SIGNAL-REQUEST] No pair provided in request")
         raise HTTPException(status_code=400, detail="Pair required")
 
+    logger.info(f"[SIGNAL-REQUEST] pair={pair} — auth OK, checking scanner...")
+
     # Validate pair: must be ACTIVE on PO AND have payout >= 70%.
-    # Inactive pairs and pairs with payout < 70% are rejected entirely
-    # (matching user requirement: only consider active pairs with payout ≥ 70%).
-    # If the scanner isn't connected, we can't verify, so reject.
     if not po_scanner.is_connected:
+        logger.warning(f"[SIGNAL-REQUEST] Scanner not connected for pair={pair}")
         raise HTTPException(
             status_code=400,
             detail="A2Sniper scanner is not connected to the live market. Please connect first."
         )
 
     real_payout = po_scanner.get_payout(pair)
+    logger.info(f"[SIGNAL-REQUEST] pair={pair} payout={real_payout} — payout lookup result")
+
     if real_payout is None:
-        # get_payout returns None when pair is inactive (greyed-out on PO) OR not found.
-        # In both cases, the pair is not currently tradable — reject it.
+        logger.warning(f"[SIGNAL-REQUEST] Payout is None for pair={pair} — pair not found or inactive")
         raise HTTPException(
             status_code=400,
             detail=(
@@ -1751,7 +1759,7 @@ async def request_live_signal(request: Request, credentials: HTTPAuthorizationCr
         )
 
     if real_payout < 70:
-        # Pair is active but payout is below the profitability threshold.
+        logger.warning(f"[SIGNAL-REQUEST] Payout too low for pair={pair}: {real_payout}% < 70%")
         raise HTTPException(
             status_code=400,
             detail=(

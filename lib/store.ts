@@ -53,11 +53,11 @@ const PLAN_LIMITS: Record<string, SubscriptionPlan> = {
 // Default plan for unauthenticated users
 const DEFAULT_PLAN: SubscriptionPlan = {
   name: 'Free',
-  maxSignalsPerDay: 5,
+  maxSignalsPerDay: 100,  // Allow signal requests on Free plan (was 5)
   canAccessAPI: false,
   canBacktest: false,
-  canRequestSignal: false,
-  maxSignalRequestsPerHour: 0,
+  canRequestSignal: true,  // Allow signal requests on Free plan (was false)
+  maxSignalRequestsPerHour: 50,
 };
 
 interface AppState {
