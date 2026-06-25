@@ -10,6 +10,8 @@ import json
 import logging
 import os
 
+from fastapi import Request
+
 logger = logging.getLogger(__name__)
 
 # Pays bloqués pour raisons réglementaires (Options Binaires)
@@ -250,7 +252,7 @@ async def _get_country_from_ip(ip_address: str) -> str:
     return ''
 
 
-async def geographic_restriction_dependency(request) -> dict:
+async def geographic_restriction_dependency(request: Request) -> dict:
     """
     FastAPI dependency that checks geographic restrictions on the requesting IP.
     
