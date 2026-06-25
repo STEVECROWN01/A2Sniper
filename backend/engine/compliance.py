@@ -146,19 +146,26 @@ class ComplianceManager:
         return True
 
     def check_geographic_restriction(self, country_code: str) -> dict:
-        """Vérifie si l'utilisateur est dans un pays interdit."""
-        if not country_code:
-            return {'allowed': False, 'reason': 'Unknown location'}
-            
-        country_code = country_code.upper()
-        if country_code in RESTRICTED_COUNTRIES:
-            logger.warning(f"[COMPLIANCE] Accès bloqué pour la juridiction: {country_code}")
-            return {
-                'allowed': False, 
-                'reason': f'Trading of binary options is restricted in your jurisdiction ({country_code})'
-            }
-            
+        """Vérifie si l'utilisateur est dans un pays interdit.
+        
+        NOTE: Geographic restriction is DISABLED — the platform owner needs
+        full access to the system regardless of location. The owner is
+        responsible for enforcing geo-restrictions on their end users if needed.
+        """
         return {'allowed': True}
+        # Original restriction logic (disabled):
+        # if not country_code:
+        #     return {'allowed': False, 'reason': 'Unknown location'}
+        #
+        # country_code = country_code.upper()
+        # if country_code in RESTRICTED_COUNTRIES:
+        #     logger.warning(f"[COMPLIANCE] Accès bloqué pour la juridiction: {country_code}")
+        #     return {
+        #         'allowed': False,
+        #         'reason': f'Trading of binary options is restricted in your jurisdiction ({country_code})'
+        #     }
+        #
+        # return {'allowed': True}
 
     async def process_gdpr_deletion(self, user_id: str, session=None) -> bool:
         """
