@@ -620,15 +620,15 @@ Zéro Simulation. 100% Real-Market.`;
                     <div className="flex justify-between items-center mt-4 pt-4 border-t border-gray-800/50">
                       <button 
                         disabled={pairsScrollIndex === 0}
-                        onClick={() => setPairsScrollIndex(Math.max(0, pairsScrollIndex - 1))}
+                        onClick={() => setPairsScrollIndex(Math.max(0, pairsScrollIndex - visiblePairsCount))}
                         className="p-2 bg-gray-800/50 hover:bg-gray-700 rounded-xl text-gray-400 hover:text-white disabled:opacity-30 transition-all shadow-lg"
                       >
                         <ChevronLeft className="w-4 h-4" />
                       </button>
-                      <span className="text-[10px] text-gray-500 font-black uppercase tracking-widest">Page {Math.floor(pairsScrollIndex/visiblePairsCount) + 1} / {Math.ceil(filteredTradingPairs.length / visiblePairsCount)}</span>
+                      <span className="text-[10px] text-gray-500 font-black uppercase tracking-widest">Page {Math.floor(pairsScrollIndex/visiblePairsCount) + 1} / {Math.max(1, Math.ceil(filteredTradingPairs.length / visiblePairsCount))}</span>
                       <button 
                         disabled={pairsScrollIndex + visiblePairsCount >= filteredTradingPairs.length}
-                        onClick={() => setPairsScrollIndex(Math.min(filteredTradingPairs.length - visiblePairsCount, pairsScrollIndex + 1))}
+                        onClick={() => setPairsScrollIndex(Math.min(filteredTradingPairs.length - visiblePairsCount, pairsScrollIndex + visiblePairsCount))}
                         className="p-2 bg-gray-800/50 hover:bg-gray-700 rounded-xl text-gray-400 hover:text-white disabled:opacity-30 transition-all shadow-lg"
                       >
                         <ChevronRight className="w-4 h-4" />

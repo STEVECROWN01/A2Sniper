@@ -13,6 +13,10 @@ export default function DebugPayoutsPage() {
   const [liveLoading, setLiveLoading] = useState(false);
   const [autoRefresh, setAutoRefresh] = useState(true);
 
+  // Raw frame data state
+  const [rawFrameData, setRawFrameData] = useState<any>(null);
+  const [rawLoading, setRawLoading] = useState(false);
+
   // Batch verification state
   const [batchInput, setBatchInput] = useState(`USD/PKR OTC=92
 USD/RUB OTC=92
@@ -99,6 +103,22 @@ USD/CHF OTC=84`);
     const interval = setInterval(fetchLiveData, 1000);
     return () => clearInterval(interval);
   }, [autoRefresh]);
+
+  // Fetch raw frame data (on button click — not auto-refresh to avoid spam)
+  const fetchRawFrame = async () => {
+    setRawLoading(true);
+    try {
+      const res = await fetch('/api/market/debug/raw-frame', { credentials: 'include' });
+      if (res.ok) {
+        const data = await res.json();
+        setRawFrameData(data);
+      }
+    } catch (e) {
+      // silent
+    } finally {
+      setRawLoading(false);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-[#0a0a0c] text-white p-8">
@@ -207,6 +227,68 @@ USD/CHF OTC=84`);
             </div>
           ) : (
             <p className="text-gray-500 text-sm">Loading live data...</p>
+          )}
+        </div>
+
+        {/* RAW FRAME DATA SECTION */}
+        <div className="mb-8 bg-black/60 border border-yellow-500/20 rounded-2xl p-5">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-sm font-black uppercase tracking-wider text-yellow-400">
+              Raw Frame Data (what PO actually sent us)
+            </h2>
+            <button
+              onClick={fetchRawFrame}
+              disabled={rawLoading}
+              className="bg-yellow-500/20 text-yellow-400 px-4 py-1.5 rounded-lg text-xs font-bold uppercase hover:bg-yellow-500/30 disabled:opacity-50"
+            >
+              {rawLoading ? 'Loading...' : 'Fetch Raw Data'}
+            </button>
+          </div>
+
+          {rawFrameData && rawFrameData.forex_otc_sample && (
+            <div className="space-y-3">
+              <p className="text-[10px] text-gray-500">
+                Last frame: {rawFrameData.total_assets_in_last_frame} assets |
+                Freshness: {rawFrameData.freshness?.last_assets_update_age_seconds}s ago
+              </p>
+              <div className="overflow-x-auto">
+                <table className="w-full text-[10px] min-w-[800px]">
+                  <thead className="bg-white/5">
+                    <tr>
+                      <th className="text-left p-2 font-black uppercase text-gray-400">Symbol</th>
+                      <th className="text-center p-2 font-black uppercase text-gray-400">PO Label</th>
+                      <th className="text-center p-2 font-black uppercase text-yellow-400">Parsed Payout</th>
+                      <th className="text-center p-2 font-black uppercase text-gray-400">Active</th>
+                      <th className="text-left p-2 font-black uppercase text-gray-400">Raw Fields [0..18]</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rawFrameData.forex_otc_sample.map((item: any, i: number) => (
+                      <tr key={i} className="border-t border-white/5">
+                        <td className="p-2 font-mono font-bold">{item.symbol}</td>
+                        <td className="p-2 text-center font-mono">{item.raw_fields[2]}</td>
+                        <td className="p-2 text-center font-black text-yellow-400 text-sm">{item.parsed_payout}%</td>
+                        <td className="p-2 text-center">
+                          <span className={item.parsed_is_active ? 'text-green-400' : 'text-red-400'}>
+                            {item.parsed_is_active ? '✓' : '✗'}
+                          </span>
+                        </td>
+                        <td className="p-2 font-mono text-gray-500 text-[9px]">
+                          [{String(item.raw_fields).slice(0, 200)}...]
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="text-[9px] text-gray-600 mt-2">
+                💡 Field index 5 = payout. Compare the "Parsed Payout" column with PO's UI.
+                If they don't match, PO is sending us different data than what they display.
+              </p>
+            </div>
+          )}
+          {(!rawFrameData || !rawFrameData.forex_otc_sample) && (
+            <p className="text-gray-500 text-xs">Click "Fetch Raw Data" to see what PO is sending us.</p>
           )}
         </div>
 

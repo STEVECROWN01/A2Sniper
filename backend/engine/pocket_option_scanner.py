@@ -853,6 +853,15 @@ class PocketOptionScanner:
             self._assets_received_count += 1
             snapshot_num = self._assets_received_count
 
+            # ─── RAW FRAME STORAGE for diagnostic purposes ────────────────
+            # Store the raw asset data from the latest frame so the debug
+            # endpoint can show EXACTLY what PO sent us for each pair.
+            # This helps diagnose payout mismatches — we can compare the
+            # raw data with what PO's UI shows.
+            self._last_raw_frame = []
+            # Also store a sample of forex OTC pairs with their full raw data
+            self._last_forex_raw_sample = []
+
             # Log a sample so we can verify the format matches our parser
             # (only for first 3 snapshots to avoid log spam)
             if assets and isinstance(assets[0], list) and snapshot_num <= 3:
@@ -867,6 +876,9 @@ class PocketOptionScanner:
                 if not isinstance(asset_info, list) or len(asset_info) < 15:
                     # Need at least 15 fields to read is_active at index 14
                     continue
+
+                # Store raw frame data for diagnostics
+                self._last_raw_frame.append(asset_info)
 
                 # Symbol is at index 1 — must be a non-empty string
                 symbol = asset_info[1] if len(asset_info) > 1 else None
@@ -887,6 +899,16 @@ class PocketOptionScanner:
                 # suggests we're reading the wrong field — skip it.
                 if not (0 <= payout <= 92):
                     continue
+
+                # Store forex OTC raw sample for diagnostics (first 20 forex pairs)
+                if len(self._last_forex_raw_sample) < 20:
+                    if "_otc" in symbol.lower() and _FOREX_FILTER_AVAILABLE and _is_forex_pair(symbol):
+                        self._last_forex_raw_sample.append({
+                            "symbol": symbol,
+                            "raw_fields": asset_info[:19],  # All 19 fields
+                            "parsed_payout": payout,
+                            "parsed_is_active": asset_info[14] if len(asset_info) > 14 else None,
+                        })
 
                 # is_active is at index 14 (verified) — FALSE = greyed out / N/A
                 is_active_raw = asset_info[14] if len(asset_info) > 14 else True

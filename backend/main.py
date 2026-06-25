@@ -4004,6 +4004,70 @@ async def debug_search_symbols(
     }
 
 
+@app.get("/api/market/debug/raw-frame")
+async def debug_raw_frame(
+    credentials: HTTPAuthorizationCredentials = Security(security)
+):
+    """DIAGNOSTIC: Show the RAW data PO sent us in the latest bare frame.
+
+    This exposes the EXACT raw fields PO sent for each forex OTC pair,
+    so we can compare with PO's UI to determine if:
+    - Our parser is reading the wrong field
+    - PO is sending us different data than what they display
+    - There's a field layout mismatch
+
+    Returns:
+    - Last frame timestamp + age
+    - For each forex OTC pair: all 19 raw fields + our parsed payout
+    - Field layout reference for comparison
+    """
+    _payload = decode_access_token(credentials.credentials)
+    _jti = _payload.get("jti")
+    if _jti and await is_token_revoked(_jti):
+        raise HTTPException(status_code=401, detail="Token has been revoked")
+
+    if not po_scanner.is_connected:
+        return {"connected": False, "message": "Scanner not connected."}
+
+    raw_sample = getattr(po_scanner, '_last_forex_raw_sample', [])
+    raw_frame_count = len(getattr(po_scanner, '_last_raw_frame', []))
+
+    return {
+        "connected": True,
+        "freshness": po_scanner.get_freshness_report(),
+        "total_assets_in_last_frame": raw_frame_count,
+        "forex_otc_sample": raw_sample,
+        "field_layout_reference": {
+            "0": "type_marker (always 5)",
+            "1": "symbol (e.g. EURUSD_otc)",
+            "2": "display_label (e.g. EUR/USD OTC)",
+            "3": "type (currency/stock/crypto)",
+            "4": "precision",
+            "5": "PAYOUT % (0-92)",
+            "6": "min_duration",
+            "7": "max_duration",
+            "8": "step_duration",
+            "9": "volatility_index",
+            "10": "spread",
+            "11": "leverage",
+            "12": "extra_data",
+            "13": "expire_time",
+            "14": "is_active (true/false)",
+            "15": "timeframes",
+            "16": "start_time",
+            "17": "default_timeframe",
+            "18": "status_code",
+        },
+        "note": (
+            "Compare 'parsed_payout' with what PO's UI shows for each pair. "
+            "If they match, our parser is correct. If they don't, check the "
+            "'raw_fields' array to see if the payout is at a different index. "
+            "The raw_fields show ALL 19 fields PO sent, so you can identify "
+            "which index contains the correct payout value."
+        )
+    }
+
+
 @app.get("/api/market/debug/payout-changes")
 async def debug_payout_changes(
     credentials: HTTPAuthorizationCredentials = Security(security)
