@@ -18,7 +18,7 @@ interface SignalPairData {
   expiration?: number | string;
   entry_price?: number;
   smc_structure?: string;
-  timestamp?: string;
+  timestamp?: string | number | Date;
   [key: string]: unknown;
 }
 
@@ -33,7 +33,7 @@ interface SignalPairData {
 // 3. The current time (updated every second)
 //
 // When the countdown reaches 0, the signal is no longer valid.
-function SignalCountdown({ timestamp, expiration }: { timestamp?: string; expiration: number }) {
+function SignalCountdown({ timestamp, expiration }: { timestamp?: string | number | Date; expiration: number }) {
   const [timeLeft, setTimeLeft] = useState<number>(0);
   const [isExpired, setIsExpired] = useState(false);
 
@@ -45,8 +45,27 @@ function SignalCountdown({ timestamp, expiration }: { timestamp?: string; expira
     }
 
     const calculateRemaining = () => {
-      // Parse the signal timestamp (ISO format from backend)
-      const sigTime = new Date(timestamp);
+      // Parse the signal timestamp
+      // Could be: Date object, ISO string, or Unix timestamp number
+      let sigTime: Date;
+      if (timestamp instanceof Date) {
+        sigTime = timestamp;
+      } else if (typeof timestamp === 'number') {
+        sigTime = new Date(timestamp);
+      } else if (typeof timestamp === 'string') {
+        // Backend sends ISO format like "2026-06-26T11:29:30.123456+00:00" or
+        // "2026-06-26T11:29:30.123456" (without timezone).
+        // We MUST treat it as UTC — append 'Z' if no timezone info is present.
+        let tsStr = timestamp;
+        if (!tsStr.endsWith('Z') && !tsStr.includes('+') && !tsStr.includes('-', 10)) {
+          tsStr = tsStr + 'Z';
+        }
+        sigTime = new Date(tsStr);
+      } else {
+        setTimeLeft(expiration * 60);
+        return 0;
+      }
+
       if (isNaN(sigTime.getTime())) {
         setTimeLeft(expiration * 60);
         return 0;
