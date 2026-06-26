@@ -32,10 +32,13 @@ interface SignalPairData {
 // 2. The expiration duration (1m, 3m, or 5m — based on market volatility)
 // 3. The current time (updated every second)
 //
-// When the countdown reaches 0, the signal is no longer valid.
-function SignalCountdown({ timestamp, expiration }: { timestamp?: string | number | Date; expiration: number }) {
+// When the countdown reaches 0:
+// - Shows "il y a Xm" / "il y a Xh" / "il y a Xj" (real elapsed time since expiry)
+// - Notifies parent via onExpire callback (to stop pulse animation)
+function SignalCountdown({ timestamp, expiration, onExpire }: { timestamp?: string | number | Date; expiration: number; onExpire?: () => void }) {
   const [timeLeft, setTimeLeft] = useState<number>(0);
   const [isExpired, setIsExpired] = useState(false);
+  const [elapsedText, setElapsedText] = useState<string>('');
 
   useEffect(() => {
     if (!timestamp) {
@@ -76,20 +79,41 @@ function SignalCountdown({ timestamp, expiration }: { timestamp?: string | numbe
 
       // For binary options, the signal expires at the next candle boundary
       // after the signal timestamp + expiration duration.
-      // The candle boundary is aligned to the expiration period.
-      // E.g., for 1m expiration: signal at 11:29:30 → expires at 11:31:00 (next 1m boundary after 1m)
-      // For 5m expiration: signal at 11:29:30 → expires at 11:35:00 (next 5m boundary after 5m)
-
-      // Calculate the expiry time: next candle boundary after (signal_time + expiration)
       const expiryTime = new Date(sigTime);
       expiryTime.setSeconds(0, 0); // Align to minute boundary
       expiryTime.setMinutes(expiryTime.getMinutes() + expMinutes);
 
-      // If expiry is in the past, the signal is expired
       const remaining = expiryTime.getTime() - now.getTime();
       if (remaining <= 0) {
-        setIsExpired(true);
+        // Signal is expired — compute real elapsed time since expiry
+        if (!isExpired) {
+          setIsExpired(true);
+          onExpire?.();
+        }
         setTimeLeft(0);
+
+        // Compute elapsed time since expiry (real, not fake)
+        const elapsedMs = now.getTime() - expiryTime.getTime();
+        const elapsedSec = Math.floor(elapsedMs / 1000);
+        const elapsedMin = Math.floor(elapsedSec / 60);
+        const elapsedHrs = Math.floor(elapsedMin / 60);
+        const elapsedDays = Math.floor(elapsedHrs / 24);
+        const elapsedWeeks = Math.floor(elapsedDays / 7);
+        const elapsedMonths = Math.floor(elapsedDays / 30);
+
+        if (elapsedMonths >= 1) {
+          setElapsedText(`il y a ${elapsedMonths} mois`);
+        } else if (elapsedWeeks >= 1) {
+          setElapsedText(`il y a ${elapsedWeeks} sem.`);
+        } else if (elapsedDays >= 1) {
+          setElapsedText(`il y a ${elapsedDays} j`);
+        } else if (elapsedHrs >= 1) {
+          setElapsedText(`il y a ${elapsedHrs}h`);
+        } else if (elapsedMin >= 1) {
+          setElapsedText(`il y a ${elapsedMin}min`);
+        } else {
+          setElapsedText(`il y a ${elapsedSec}s`);
+        }
         return 0;
       }
 
@@ -101,7 +125,7 @@ function SignalCountdown({ timestamp, expiration }: { timestamp?: string | numbe
     calculateRemaining();
     const interval = setInterval(calculateRemaining, 1000);
     return () => clearInterval(interval);
-  }, [timestamp, expiration]);
+  }, [timestamp, expiration, isExpired, onExpire]);
 
   // Format as M:SS
   const minutes = Math.floor(timeLeft / 60000);
@@ -109,11 +133,11 @@ function SignalCountdown({ timestamp, expiration }: { timestamp?: string | numbe
   const display = `${minutes}:${seconds.toString().padStart(2, '0')}`;
 
   return (
-    <p className={`text-lg font-black ${
+    <p className={`text-sm font-black ${
       isExpired ? 'text-red-500' :
       timeLeft < 30000 ? 'text-[#D4AF37] animate-pulse' : 'text-[#D4AF37]'
     }`}>
-      {isExpired ? 'EXPIRÉ' : display}
+      {isExpired ? elapsedText : display}
     </p>
   );
 }
@@ -252,6 +276,9 @@ export function TelegramBotSimulator() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isTyping, setIsTyping] = useState(false);
   const [pairsScrollIndex, setPairsScrollIndex] = useState(0);
+  // Track which signal messages have expired (by message id) — used to stop
+  // the pulse animation when the signal expires.
+  const [expiredSignalIds, setExpiredSignalIds] = useState<Set<string>>(new Set());
 
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const initializedRef = useRef(false);
@@ -657,7 +684,12 @@ Zéro Simulation. 100% Real-Market.`;
                     <div className="p-4 relative z-10">
                       <div className="flex items-center justify-between mb-4">
                         <div className="flex items-center gap-2">
-                          <div className={`w-2 h-2 rounded-full animate-ping ${message.pair_data.direction === 'CALL' ? 'bg-green-400' : 'bg-red-400'}`} />
+                          {/* Pulse dot — stops animating when signal expires */}
+                          <div className={`w-2 h-2 rounded-full ${
+                            expiredSignalIds.has(message.id)
+                              ? (message.pair_data.direction === 'CALL' ? 'bg-green-400/50' : 'bg-red-400/50')
+                              : `animate-ping ${message.pair_data.direction === 'CALL' ? 'bg-green-400' : 'bg-red-400'}`
+                          }`} />
                           <span className="font-black text-sm tracking-tight text-white">{message.pair_data.pair}</span>
                         </div>
                         {/* PO Market Payout — real, from PocketOption */}
@@ -692,12 +724,19 @@ Zéro Simulation. 100% Real-Market.`;
                           <p className="text-[9px] text-gray-400 font-black uppercase tracking-wider mb-1">Winrate</p>
                           <p className={`text-lg font-black ${message.pair_data.direction === 'CALL' ? 'text-green-400' : 'text-red-400'}`}>{message.pair_data.winrate}%</p>
                         </div>
-                        {/* EXPIRES IN — real-time countdown based on signal timestamp + expiration */}
+                        {/* EXPIRATION — real-time countdown, then elapsed time after expiry */}
                         <div className="bg-white/5 p-2.5 rounded-xl border border-white/10 text-center backdrop-blur-sm">
-                          <p className="text-[9px] text-gray-400 font-black uppercase tracking-wider mb-1">Expires In</p>
+                          <p className="text-[9px] text-gray-400 font-black uppercase tracking-wider mb-1">Expiration</p>
                           <SignalCountdown
-                            timestamp={message.pair_data.timestamp as string}
+                            timestamp={message.pair_data.timestamp as string | number | Date}
                             expiration={Number(message.pair_data.expiration) || 1}
+                            onExpire={() => {
+                              setExpiredSignalIds(prev => {
+                                const next = new Set(prev);
+                                next.add(message.id);
+                                return next;
+                              });
+                            }}
                           />
                         </div>
                       </div>
