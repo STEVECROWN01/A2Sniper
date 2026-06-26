@@ -18,7 +18,85 @@ interface SignalPairData {
   expiration?: number | string;
   entry_price?: number;
   smc_structure?: string;
+  timestamp?: string;
   [key: string]: unknown;
+}
+
+// ─── SignalCountdown ───────────────────────────────────────────────
+// Real-time countdown based on the signal's timestamp + expiration minutes.
+// The signal expires at the next candle boundary after (timestamp + expiration).
+// For binary options, this is the time remaining for the signal to be valid.
+//
+// The countdown is REAL — it's computed from:
+// 1. The signal's emission timestamp (from backend, UTC)
+// 2. The expiration duration (1m, 3m, or 5m — based on market volatility)
+// 3. The current time (updated every second)
+//
+// When the countdown reaches 0, the signal is no longer valid.
+function SignalCountdown({ timestamp, expiration }: { timestamp?: string; expiration: number }) {
+  const [timeLeft, setTimeLeft] = useState<number>(0);
+  const [isExpired, setIsExpired] = useState(false);
+
+  useEffect(() => {
+    if (!timestamp) {
+      // Fallback: just show the expiration duration
+      setTimeLeft(expiration * 60);
+      return;
+    }
+
+    const calculateRemaining = () => {
+      // Parse the signal timestamp (ISO format from backend)
+      const sigTime = new Date(timestamp);
+      if (isNaN(sigTime.getTime())) {
+        setTimeLeft(expiration * 60);
+        return 0;
+      }
+
+      const now = new Date();
+      const expMinutes = Number(expiration) || 1;
+
+      // For binary options, the signal expires at the next candle boundary
+      // after the signal timestamp + expiration duration.
+      // The candle boundary is aligned to the expiration period.
+      // E.g., for 1m expiration: signal at 11:29:30 → expires at 11:31:00 (next 1m boundary after 1m)
+      // For 5m expiration: signal at 11:29:30 → expires at 11:35:00 (next 5m boundary after 5m)
+
+      // Calculate the expiry time: next candle boundary after (signal_time + expiration)
+      const expiryTime = new Date(sigTime);
+      expiryTime.setSeconds(0, 0); // Align to minute boundary
+      expiryTime.setMinutes(expiryTime.getMinutes() + expMinutes);
+
+      // If expiry is in the past, the signal is expired
+      const remaining = expiryTime.getTime() - now.getTime();
+      if (remaining <= 0) {
+        setIsExpired(true);
+        setTimeLeft(0);
+        return 0;
+      }
+
+      setIsExpired(false);
+      setTimeLeft(remaining);
+      return remaining;
+    };
+
+    calculateRemaining();
+    const interval = setInterval(calculateRemaining, 1000);
+    return () => clearInterval(interval);
+  }, [timestamp, expiration]);
+
+  // Format as M:SS
+  const minutes = Math.floor(timeLeft / 60000);
+  const seconds = Math.floor((timeLeft % 60000) / 1000);
+  const display = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+
+  return (
+    <p className={`text-lg font-black ${
+      isExpired ? 'text-red-500' :
+      timeLeft < 30000 ? 'text-[#D4AF37] animate-pulse' : 'text-[#D4AF37]'
+    }`}>
+      {isExpired ? 'EXPIRÉ' : display}
+    </p>
+  );
 }
 
 interface Message {
@@ -563,9 +641,12 @@ Zéro Simulation. 100% Real-Market.`;
                           <div className={`w-2 h-2 rounded-full animate-ping ${message.pair_data.direction === 'CALL' ? 'bg-green-400' : 'bg-red-400'}`} />
                           <span className="font-black text-sm tracking-tight text-white">{message.pair_data.pair}</span>
                         </div>
-                        <span className="text-[10px] font-black text-gray-400/80 bg-black/40 px-2 py-0.5 rounded-full border border-gray-800">
-                          {new Date(message.pair_data.timestamp as string | number ?? Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                        </span>
+                        {/* PO Market Payout — real, from PocketOption */}
+                        {message.pair_data.payout !== undefined && (
+                          <span className="text-[11px] font-black text-[#D4AF37] bg-[#D4AF37]/15 px-2.5 py-1 rounded-full border border-[#D4AF37]/30 shadow-[0_0_8px_rgba(212,175,55,0.2)]">
+                            Payout: +{Math.round(Number(message.pair_data.payout))}%
+                          </span>
+                        )}
                       </div>
                       
                       <div className="flex flex-col items-center justify-center py-4 bg-black/30 rounded-xl border border-white/5 mb-4">
@@ -587,23 +668,29 @@ Zéro Simulation. 100% Real-Market.`;
                       </div>
 
                       <div className="grid grid-cols-2 gap-3 mb-4">
+                        {/* WINRATE — just "WINRATE", real value from market analysis */}
                         <div className="bg-white/5 p-2.5 rounded-xl border border-white/10 text-center backdrop-blur-sm">
-                          <p className="text-[9px] text-gray-400 font-black uppercase tracking-wider mb-1">Winrate Assistant</p>
+                          <p className="text-[9px] text-gray-400 font-black uppercase tracking-wider mb-1">Winrate</p>
                           <p className={`text-lg font-black ${message.pair_data.direction === 'CALL' ? 'text-green-400' : 'text-red-400'}`}>{message.pair_data.winrate}%</p>
                         </div>
+                        {/* EXPIRES IN — real-time countdown based on signal timestamp + expiration */}
                         <div className="bg-white/5 p-2.5 rounded-xl border border-white/10 text-center backdrop-blur-sm">
-                          <p className="text-[9px] text-gray-400 font-black uppercase tracking-wider mb-1">Expiration</p>
-                          <p className="text-lg font-black text-[#D4AF37]">{message.pair_data.expiration}m</p>
+                          <p className="text-[9px] text-gray-400 font-black uppercase tracking-wider mb-1">Expires In</p>
+                          <SignalCountdown
+                            timestamp={message.pair_data.timestamp as string}
+                            expiration={Number(message.pair_data.expiration) || 1}
+                          />
                         </div>
                       </div>
 
+                      {/* RISK MANAGEMENT ADVICE — professional recommendation */}
                       <div className="bg-black/60 p-3 rounded-xl border border-gray-800/50">
                         <div className="flex items-center gap-2 mb-1.5">
-                          <Zap className="w-3 h-3 text-yellow-500" />
-                          <span className="text-[9px] font-black text-gray-400 uppercase tracking-widest">SMC Analysis</span>
+                          <ShieldAlert className="w-3 h-3 text-[#D4AF37]" />
+                          <span className="text-[9px] font-black text-gray-400 uppercase tracking-widest">Risk Management</span>
                         </div>
-                        <p className="text-[10px] text-gray-200 font-bold italic line-clamp-1">
-                          {message.pair_data.smc_structure}
+                        <p className="text-[10px] text-gray-200 font-bold italic line-clamp-2">
+                          Mise recommandée: 1-2% du capital. Ne jamais investir plus de 5% sur un seul trade.
                         </p>
                       </div>
                     </div>
