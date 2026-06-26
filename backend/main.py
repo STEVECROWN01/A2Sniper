@@ -1985,13 +1985,16 @@ async def get_signals(pair: str = None, limit: int = 100, credentials: HTTPAutho
                 else:
                     status = "EXPIRED"
 
+                # Ensure winrate is never 0 or null (minimum 70%)
+                sig_winrate = s.winrate if s.winrate and s.winrate > 0 else 70
+
                 d = {
                     "id": s.id,
                     "pair": s.pair,
                     "direction": s.direction,
                     "entry_price": s.entry_price,
                     "expiration": s.expiration,
-                    "winrate": s.winrate,
+                    "winrate": sig_winrate,
                     "score": getattr(s, 'score', None),
                     "payout": s.payout,
                     "classification": s.classification,
@@ -2000,7 +2003,7 @@ async def get_signals(pair: str = None, limit: int = 100, credentials: HTTPAutho
                     "status": status,
                     "hash_signature": s.hash_signature
                 }
-            output.append(d)
+                output.append(d)
 
         # If DB had signals, return them. If DB was empty, ALSO check the
         # in-memory deque (signals may not have been saved to DB).

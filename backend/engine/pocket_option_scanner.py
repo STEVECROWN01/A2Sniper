@@ -2401,13 +2401,14 @@ class PocketOptionScanner:
             )
             return None
 
-        # Pick the HIGHEST payout among all matches
-        # (handles multiple OTC variants for the same pair)
-        best_symbol, best_payout = max(matches, key=lambda x: x[1])
+        # Pick the FIRST match (PO's UI typically shows the first active OTC variant,
+        # not necessarily the highest payout). This matches what PO's UI displays.
+        # Previous code picked the HIGHEST, which caused mismatches with PO's UI.
+        best_symbol, best_payout = matches[0]
         if len(matches) > 1:
             logger.info(
                 f"[SCANNER] Multiple payouts for '{pair}': "
-                f"{[(s, p) for s, p in matches]} → picked {best_symbol} ({best_payout}%)"
+                f"{[(s, p) for s, p in matches]} → picked {best_symbol} ({best_payout}%) [first match]"
             )
 
         return best_payout
@@ -2473,12 +2474,12 @@ class PocketOptionScanner:
         if not matches:
             return None
 
-        # Pick the HIGHEST payout among matches
-        best_symbol, best_entry = max(matches, key=lambda x: x[1].get("payout", 0))
+        # Pick the FIRST match (matches what PO's UI displays — first active OTC variant)
+        best_symbol, best_entry = matches[0]
         if len(matches) > 1:
             logger.info(
                 f"[SCANNER] get_pair_status: Multiple variants for '{pair}': "
-                f"{[(s, e.get('payout')) for s, e in matches]} → picked {best_symbol}"
+                f"{[(s, e.get('payout')) for s, e in matches]} → picked {best_symbol} [first match]"
             )
         return {"symbol": best_symbol, **best_entry}
 
@@ -2601,17 +2602,15 @@ class PocketOptionScanner:
 
         # Second pass: for each display name, keep the HIGHEST payout
         # This handles cases where PO sends multiple OTC variants for the same
-        # pair (e.g., 24/7 OTC at +92% and session OTC at +86%) — we always
-        # show the best payout, matching what PO's UI displays.
+        # Pick the FIRST variant (PO's UI typically shows the first active OTC variant,
+        # not necessarily the highest payout). This matches what PO's UI displays.
         result = {}
         for display, variants in grouped.items():
-            best_symbol, best_payout = max(variants, key=lambda x: x[1])
+            best_symbol, best_payout = variants[0]
             if len(variants) > 1:
-                # Log when we picked the best of multiple variants — helps
-                # verify the fix is working
                 logger.info(
                     f"[SCANNER] Multiple OTC variants for {display}: "
-                    f"{[(s, p) for s, p in variants]} → picked {best_symbol} ({best_payout}%)"
+                    f"{[(s, p) for s, p in variants]} → picked {best_symbol} ({best_payout}%) [first match]"
                 )
             result[display] = best_payout
         return result

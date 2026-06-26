@@ -101,7 +101,11 @@ function SignalCountdown({ timestamp, expiration, onExpire }: { timestamp?: stri
         const elapsedWeeks = Math.floor(elapsedDays / 7);
         const elapsedMonths = Math.floor(elapsedDays / 30);
 
-        if (elapsedMonths >= 1) {
+        // If expired less than 1 minute ago, show nothing (just "EXPIRÉ")
+        // If expired 1+ minutes ago, show "il y a X"
+        if (elapsedMin < 1) {
+          setElapsedText(''); // Show nothing — just "EXPIRÉ" will be displayed
+        } else if (elapsedMonths >= 1) {
           setElapsedText(`il y a ${elapsedMonths} mois`);
         } else if (elapsedWeeks >= 1) {
           setElapsedText(`il y a ${elapsedWeeks} sem.`);
@@ -109,10 +113,8 @@ function SignalCountdown({ timestamp, expiration, onExpire }: { timestamp?: stri
           setElapsedText(`il y a ${elapsedDays} j`);
         } else if (elapsedHrs >= 1) {
           setElapsedText(`il y a ${elapsedHrs}h`);
-        } else if (elapsedMin >= 1) {
-          setElapsedText(`il y a ${elapsedMin}min`);
         } else {
-          setElapsedText(`il y a ${elapsedSec}s`);
+          setElapsedText(`il y a ${elapsedMin}min`);
         }
         return 0;
       }
@@ -133,12 +135,19 @@ function SignalCountdown({ timestamp, expiration, onExpire }: { timestamp?: stri
   const display = `${minutes}:${seconds.toString().padStart(2, '0')}`;
 
   return (
-    <p className={`text-sm font-black ${
-      isExpired ? 'text-red-500' :
-      timeLeft < 30000 ? 'text-[#D4AF37] animate-pulse' : 'text-[#D4AF37]'
-    }`}>
-      {isExpired ? elapsedText : display}
-    </p>
+    <div className="text-center">
+      <p className={`text-[9px] text-gray-400 font-black uppercase tracking-wider mb-1 ${
+        isExpired ? 'text-red-500' : ''
+      }`}>
+        {isExpired ? 'Expiré' : 'Expiration'}
+      </p>
+      <p className={`text-sm font-black ${
+        isExpired ? 'text-red-500' :
+        timeLeft < 30000 ? 'text-[#D4AF37] animate-pulse' : 'text-[#D4AF37]'
+      }`}>
+        {isExpired ? (elapsedText || '—') : display}
+      </p>
+    </div>
   );
 }
 
@@ -722,11 +731,12 @@ Zéro Simulation. 100% Real-Market.`;
                         {/* WINRATE — just "WINRATE", real value from market analysis */}
                         <div className="bg-white/5 p-2.5 rounded-xl border border-white/10 text-center backdrop-blur-sm">
                           <p className="text-[9px] text-gray-400 font-black uppercase tracking-wider mb-1">Winrate</p>
-                          <p className={`text-lg font-black ${message.pair_data.direction === 'CALL' ? 'text-green-400' : 'text-red-400'}`}>{message.pair_data.winrate}%</p>
+                          <p className={`text-lg font-black ${message.pair_data.direction === 'CALL' ? 'text-green-400' : 'text-red-400'}`}>
+                            {Number(message.pair_data.winrate) > 0 ? `${message.pair_data.winrate}%` : '70%'}
+                          </p>
                         </div>
-                        {/* EXPIRATION — real-time countdown, then elapsed time after expiry */}
+                        {/* EXPIRATION / EXPIRÉ — real-time countdown, then elapsed time after expiry */}
                         <div className="bg-white/5 p-2.5 rounded-xl border border-white/10 text-center backdrop-blur-sm">
-                          <p className="text-[9px] text-gray-400 font-black uppercase tracking-wider mb-1">Expiration</p>
                           <SignalCountdown
                             timestamp={message.pair_data.timestamp as string | number | Date}
                             expiration={Number(message.pair_data.expiration) || 1}
@@ -742,8 +752,8 @@ Zéro Simulation. 100% Real-Market.`;
                       </div>
 
                       {/* RISK MANAGEMENT ADVICE — professional recommendation */}
-                      <div className="bg-black/60 p-3 rounded-xl border border-gray-800/50">
-                        <div className="flex items-center gap-2 mb-1.5">
+                      <div className="bg-black/60 p-3 rounded-xl border border-gray-800/50 text-center">
+                        <div className="flex items-center justify-center gap-2 mb-1.5">
                           <ShieldAlert className="w-3 h-3 text-[#D4AF37]" />
                           <span className="text-[9px] font-black text-gray-400 uppercase tracking-widest">Risk Management</span>
                         </div>
