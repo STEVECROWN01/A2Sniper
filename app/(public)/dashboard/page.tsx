@@ -140,7 +140,7 @@ export default function DashboardPage() {
     y = drawStatCard(doc, startX, y, cardW, 'Total Trades', String(totalTrades));
     y = drawStatCard(doc, startX + cardW + cardGap, y - 21, cardW, 'Trades Gagnes', String(wonTrades), { valueColor: '#22C55E' });
     y = drawStatCard(doc, startX + (cardW + cardGap) * 2, y - 21, cardW, 'Win Rate', `${winRate.toFixed(1)}%`, { valueColor: '#D4AF37' });
-    y = drawStatCard(doc, startX + (cardW + cardGap) * 3, y - 21, cardW, 'Signaux Actifs', String(activeSignals), { valueColor: '#3B82F6' });
+    y = drawStatCard(doc, startX + (cardW + cardGap) * 3, y - 21, cardW, 'Active Signals', String(activeSignals), { valueColor: '#3B82F6' });
     y += 3;
     y = drawStatCard(doc, startX, y, cardW, 'Profit Aujourd\'hui', `$${todayProfit.toFixed(2)}`, { valueColor: todayProfit >= 0 ? '#22C55E' : '#EF4444' });
     y = drawStatCard(doc, startX + cardW + cardGap, y - 21, cardW, 'Winrate Moyen', `${(avgWinrate || 0).toFixed(1)}%`, { valueColor: '#D4AF37' });
@@ -150,10 +150,10 @@ export default function DashboardPage() {
     y = drawSectionTitle(doc, 'Derniers Signaux', y);
     if (signals.length > 0) {
       const headers = [
-        { label: 'Paire', width: 30 },
+        { label: 'Pair', width: 30 },
         { label: 'Direction', width: 22, align: 'center' as const },
         { label: 'Winrate', width: 22, align: 'center' as const },
-        { label: 'Statut', width: 22, align: 'center' as const },
+        { label: 'Status', width: 22, align: 'center' as const },
         { label: 'Payout', width: 20, align: 'right' as const },
       ];
       const rows = signals.slice(0, 20).map(s => [
@@ -167,7 +167,7 @@ export default function DashboardPage() {
     } else {
       doc.setFontSize(8);
       doc.setTextColor(107, 114, 128);
-      doc.text('Aucun signal disponible.', PAGE.marginL + 4, y + 4);
+      doc.text('No signals available.', PAGE.marginL + 4, y + 4);
       y += 10;
     }
 
@@ -256,7 +256,7 @@ export default function DashboardPage() {
         </div>
         <div className="flex items-center justify-center py-12">
           <Loader2 className="w-8 h-8 text-[#D4AF37] animate-spin" />
-          <span className="ml-3 text-gray-400 font-bold">Chargement des données...</span>
+          <span className="ml-3 text-gray-400 font-bold">Loading data...</span>
         </div>
       </div>
     );
@@ -312,7 +312,7 @@ export default function DashboardPage() {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6 mb-10">
           {[
             { label: 'Win Rate Global', value: winRate > 0 ? `${winRate.toFixed(1)}%` : 'N/A', icon: Target, color: 'text-[#D4AF37] bg-[#D4AF37]/10' },
-            { label: 'Signaux Actifs', value: activeSignals, icon: Zap, color: 'text-yellow-500 bg-yellow-500/10' },
+            { label: 'Active Signals', value: activeSignals, icon: Zap, color: 'text-yellow-500 bg-yellow-500/10' },
             { label: 'Profit Jour', value: `$${todayProfit.toFixed(0)}`, icon: DollarSign, color: 'text-green-500 bg-green-500/10' },
             { label: 'Volume 24h', value: todaySignals.length, icon: BarChart3, color: 'text-purple-500 bg-purple-500/10' }
           ].map((stat, i) => (
@@ -393,7 +393,7 @@ export default function DashboardPage() {
                     </div>
                   ))
                 ) : (
-                  <p className="text-sm text-gray-500 font-bold text-center py-6">Aucun signal récent détecté.</p>
+                  <p className="text-sm text-gray-500 font-bold text-center py-6">No recent signals detected.</p>
                 )}
               </div>
             </div>
@@ -411,7 +411,7 @@ export default function DashboardPage() {
                <p className="text-xs text-gray-400 font-bold mb-6">Tous les moteurs de sniping sont pleinement opérationnels.</p>
                <div className="space-y-4">
                  <div className="flex justify-between text-xs font-bold text-gray-400">
-                   <span>Statut Système:</span>
+                   <span>System Status:</span>
                    <span className={connectionStatus === 'Connected' ? 'text-green-400' : connectionStatus === 'Disconnected' ? 'text-red-400' : 'text-yellow-400'}>
                      {connectionStatus === 'Connected' ? 'Connecté' : connectionStatus === 'Disconnected' ? 'Déconnecté' : 'Vérification...'}
                    </span>
@@ -443,7 +443,7 @@ export default function DashboardPage() {
                     {liveStatus === 'LIVE' ? 'WebSocket Connecté' : 'WebSocket Déconnecté'}
                   </p>
                   {liveStatus === 'LIVE'
-                    ? 'Connexion WebSocket sécurisée établie.'
+                    ? 'Secure WebSocket connection established.'
                     : 'Aucune connexion au flux de marché. Connectez-vous via la page Signaux.'}
                 </div>
                 {systemStatus === 'offline' && (

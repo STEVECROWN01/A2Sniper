@@ -150,10 +150,10 @@ export default function SignalsPage() {
 
     // Filter info
     y = drawSectionTitle(doc, 'Filtres appliques', y);
-    y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Paire', selectedPair === 'ALL' ? 'Toutes' : selectedPair);
-    y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Direction', selectedDirection === 'ALL' ? 'Toutes' : selectedDirection);
-    y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Statut', selectedStatus === 'ALL' ? 'Tous' : selectedStatus);
-    y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Payout', selectedPayout === 'ALL' ? 'Tous' : `>${selectedPayout}%`);
+    y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Pair', selectedPair === 'ALL' ? 'All' : selectedPair);
+    y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Direction', selectedDirection === 'ALL' ? 'All' : selectedDirection);
+    y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Status', selectedStatus === 'ALL' ? 'All' : selectedStatus);
+    y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Payout', selectedPayout === 'ALL' ? 'All' : `>${selectedPayout}%`);
     y += 2;
 
     // Stats
@@ -161,7 +161,7 @@ export default function SignalsPage() {
     const cardW = 42;
     const gap = 3;
     y = drawStatCard(doc, PAGE.marginL, y, cardW, 'Total', String(stats.total));
-    y = drawStatCard(doc, PAGE.marginL + cardW + gap, y - 21, cardW, 'Actifs', String(stats.active), { valueColor: '#3B82F6' });
+    y = drawStatCard(doc, PAGE.marginL + cardW + gap, y - 21, cardW, 'Active', String(stats.active), { valueColor: '#3B82F6' });
     y = drawStatCard(doc, PAGE.marginL + (cardW + gap) * 2, y - 21, cardW, 'Gagnes', String(stats.won), { valueColor: '#22C55E' });
     y = drawStatCard(doc, PAGE.marginL + (cardW + gap) * 3, y - 21, cardW, 'Perdus', String(stats.lost), { valueColor: '#EF4444' });
     y += 6;
@@ -170,10 +170,10 @@ export default function SignalsPage() {
     y = drawSectionTitle(doc, 'Liste des signaux', y);
     if (filteredSignals.length > 0) {
       const headers = [
-        { label: 'Paire', width: 28 },
+        { label: 'Pair', width: 28 },
         { label: 'Direction', width: 22, align: 'center' as const },
         { label: 'Winrate', width: 20, align: 'center' as const },
-        { label: 'Statut', width: 20, align: 'center' as const },
+        { label: 'Status', width: 20, align: 'center' as const },
         { label: 'Payout', width: 18, align: 'right' as const },
         { label: 'Expiration', width: 35, align: 'right' as const },
       ];
@@ -189,7 +189,7 @@ export default function SignalsPage() {
     } else {
       doc.setFontSize(8);
       doc.setTextColor(107, 114, 128);
-      doc.text('Aucun signal trouve avec ces filtres.', PAGE.marginL + 4, y + 4);
+      doc.text('No signals found with these filters.', PAGE.marginL + 4, y + 4);
     }
 
     const dateStr = new Date().toISOString().split('T')[0];
@@ -421,9 +421,9 @@ export default function SignalsPage() {
               <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
                 {[
                   { label: 'Total Signaux', value: stats.total, color: 'text-gray-400 bg-white/[0.02]', icon: TrendingUp },
-                  { label: 'Actifs', value: stats.active, color: 'text-[#D4AF37] bg-[#D4AF37]/10', icon: Clock },
-                  { label: 'Gagnants', value: stats.won, color: 'text-green-500 bg-green-500/10', icon: Target },
-                  { label: 'Perdants', value: stats.lost, color: 'text-red-500 bg-red-500/10', icon: TrendingUp }
+                  { label: 'Active', value: stats.active, color: 'text-[#D4AF37] bg-[#D4AF37]/10', icon: Clock },
+                  { label: 'Won', value: stats.won, color: 'text-green-500 bg-green-500/10', icon: Target },
+                  { label: 'Lost', value: stats.lost, color: 'text-red-500 bg-red-500/10', icon: TrendingUp }
                 ].map((card, index) => (
                   <motion.div
                     key={index}
@@ -459,7 +459,7 @@ export default function SignalsPage() {
                     onChange={(e) => setSelectedPair(e.target.value)}
                     className="w-full px-4 py-2.5 bg-[#050507] border border-white/5 rounded-xl focus:outline-none focus:border-[#D4AF37] text-xs font-bold text-white"
                   >
-                    <option value="ALL">Toutes les paires</option>
+                    <option value="ALL">All Pairs</option>
                     {tradingPairs.map(pair => (
                       <option key={pair.symbol} value={pair.symbol}>
                         {pair.symbol}
@@ -474,7 +474,7 @@ export default function SignalsPage() {
                     className="w-full px-4 py-2.5 bg-[#050507] border border-white/5 rounded-xl focus:outline-none focus:border-[#D4AF37] text-xs font-bold text-white"
                   >
                     <option value="ALL">Tous les statuts</option>
-                    <option value="ACTIVE">Actif</option>
+                    <option value="ACTIVE">Active</option>
                     <option value="WON">Gagné</option>
                     <option value="LOST">Perdu</option>
                     <option value="EXPIRED">Expiré</option>
@@ -486,7 +486,7 @@ export default function SignalsPage() {
                     onChange={(e) => setSelectedDirection(e.target.value)}
                     className="w-full px-4 py-2.5 bg-[#050507] border border-white/5 rounded-xl focus:outline-none focus:border-[#D4AF37] text-xs font-bold text-white"
                   >
-                    <option value="ALL">Toutes les directions</option>
+                    <option value="ALL">All Directions</option>
                     <option value="CALL">CALL</option>
                     <option value="PUT">PUT</option>
                   </select>
@@ -497,7 +497,7 @@ export default function SignalsPage() {
                     onChange={(e) => setMinWinrate(Number(e.target.value))}
                     className="w-full px-4 py-2.5 bg-[#050507] border border-white/5 rounded-xl focus:outline-none focus:border-[#D4AF37] text-xs font-bold text-white"
                   >
-                    <option value="0">Tous les Winrates</option>
+                    <option value="0">All Winrates</option>
                     <option value="70">70%+</option>
                     <option value="75">75%+</option>
                     <option value="80">80%+</option>
@@ -512,7 +512,7 @@ export default function SignalsPage() {
                     onChange={(e) => setSelectedPayout(e.target.value)}
                     className="w-full px-4 py-2.5 bg-[#050507] border border-[#D4AF37]/20 focus:border-[#D4AF37] rounded-xl focus:outline-none text-xs font-bold text-white transition-colors"
                   >
-                    <option value="ALL">Tout Payout</option>
+                    <option value="ALL">All Payouts</option>
                     <option value="70">&ge; 70% Payout</option>
                     <option value="75">&ge; 75% Payout</option>
                     <option value="80">&ge; 80% Payout</option>
@@ -549,7 +549,7 @@ export default function SignalsPage() {
                   <div className="w-16 h-16 bg-white/[0.02] border border-white/5 rounded-full flex items-center justify-center mx-auto mb-4">
                     <Filter className="w-6 h-6 text-gray-500" />
                   </div>
-                  <h3 className="text-sm font-black text-white uppercase mb-2">Aucun signal trouvé</h3>
+                  <h3 className="text-sm font-black text-white uppercase mb-2">No signals found</h3>
                   <p className="text-xs text-gray-500 font-bold">Modifiez vos paramètres de filtrage pour rafraîchir le flux.</p>
                 </motion.div>
               )}
