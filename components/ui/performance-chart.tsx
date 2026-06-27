@@ -73,7 +73,7 @@ export function PerformanceChart({ data, title }: PerformanceChartProps) {
               }}
               formatter={(value: number, name: string) => [
                 name === 'profit' ? `$${value}` : `${value}%`,
-                name === 'profit' ? 'Profit' : 'Taux de réussite'
+                name === 'profit' ? 'Profit' : 'Success Rate'
               ]}
               labelFormatter={(label) => new Date(label).toLocaleDateString('en-US')}
             />
@@ -107,7 +107,7 @@ export function PerformanceChart({ data, title }: PerformanceChartProps) {
           <div className="text-2xl font-bold text-green-600">
             {data[data.length - 1]?.winRate || 0}%
           </div>
-          <div className="text-sm text-gray-600">Taux de réussite</div>
+          <div className="text-sm text-gray-600">Success Rate</div>
         </div>
         <div>
           <div className="text-2xl font-bold text-purple-600">

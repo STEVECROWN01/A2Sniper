@@ -23,7 +23,7 @@ export default function HomePage() {
     {
       icon: <Target className="w-6 h-6" />,
       title: "Consensus Multi-Modèles",
-      description: "Taux de réussite exceptionnel confirmé par des milliers de signaux réels"
+      description: "Success Rate exceptionnel confirmé par des milliers de signaux réels"
     },
     {
       icon: <Shield className="w-6 h-6" />,

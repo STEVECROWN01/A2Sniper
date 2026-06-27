@@ -212,10 +212,10 @@ export function validateSSID(ssid: string): SSIDValidationResult {
       };
     }
 
-    const modeLabel = isDemoAccount ? 'COMPTE DÉMO' : 'COMPTE RÉEL';
+    const modeLabel = isDemoAccount ? 'DEMO ACCOUNT' : 'REAL ACCOUNT';
     return {
       status: 'valid',
-      message: `Format WS valide — ${modeLabel} (uid: ${payload.uid}) — Le SSID reste actif tant que vous ne déconnectez pas votre compte Pocket Option`,
+      message: `Valid WS format — ${modeLabel} (uid: ${payload.uid}) — The SSID remains active as long as you don't disconnect your Pocket Option account`,
       normalized: trimmed,
       details
     };

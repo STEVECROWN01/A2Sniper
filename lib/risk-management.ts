@@ -247,7 +247,7 @@ export class RiskManager {
     }
     
     if (accountMetrics.winRate < 85) {
-      recommendations.push('🎯 Taux de réussite faible - Augmentez le seuil de winrate minimum');
+      recommendations.push('🎯 Success Rate faible - Augmentez le seuil de winrate minimum');
       recommendations.push('📊 Analysisz les trades perdants pour identifier les patterns');
     }
     

@@ -218,7 +218,7 @@ export default function AdminSignalsPage() {
         
         <div className="flex items-center space-x-3">
           <div 
-            title={liveStatus === 'LIVE' ? "ANALYSE BASÉE SUR LES DONNÉES RÉELLES" : "SYSTÈME DÉCONNECTÉ DU MARCHÉ"}
+            title={liveStatus === 'LIVE' ? "ANALYSIS BASED ON REAL DATA" : "SYSTEM DISCONNECTED FROM MARKET"}
             className="flex items-center px-3 py-2 bg-white rounded-lg border border-gray-200 shadow-sm cursor-help transition-all hover:border-blue-200"
           >
             <span className="relative flex h-3 w-3 mr-2">
@@ -226,7 +226,7 @@ export default function AdminSignalsPage() {
               <span className={`relative inline-flex rounded-full h-3 w-3 ${liveStatus === 'LIVE' ? 'bg-green-500' : 'bg-red-500'}`}></span>
             </span>
             <span className="text-xs font-bold text-gray-700">
-              {liveStatus === 'LIVE' ? 'MARKET LIVE' : 'DÉCONNECTÉ'}
+              {liveStatus === 'LIVE' ? 'MARKET LIVE' : 'DISCONNECTED'}
             </span>
           </div>
 
@@ -351,7 +351,7 @@ export default function AdminSignalsPage() {
                   ) : (
                     <>
                       <Link2 className="w-5 h-5" />
-                      CONNECTER AU MARCHÉ
+                      CONNECT TO MARKET
                     </>
                   )}
                 </button>

@@ -373,7 +373,7 @@ export function TelegramBotSimulator() {
         setIsClearing(false);
         setShowClearModal(false);
         setClearProgress(0);
-        toast.success("Chat vidé avec succès", { duration: 3000 });
+        toast.success("Chat cleared successfully", { duration: 3000 });
         
         // 2. Start the 5-second delay where the chat is completely empty (matching initial analysis time)
         setTimeout(() => {
@@ -549,7 +549,7 @@ Zero Simulation. 100% Real-Market.`;
       }
       addMessage("Select an active pair for immediate analysis :", 'bot', 'pairs_list');
     } else {
-      addMessage(`🤖 Assistant A2Sniper 3.0\n\nUtilisez les boutons de navigation pour interagir avec le système A2Sniper 3.0.`, 'bot');
+      addMessage(`🤖 A2Sniper 3.0 Assistant\n\nUse the navigation buttons to interact with the A2Sniper 3.0 system.`, 'bot');
     }
   };
 
@@ -946,7 +946,7 @@ Zero Simulation. 100% Real-Market.`;
               <div className="absolute w-2 h-2 bg-indigo-500 rounded-full animate-ping"></div>
             </div>
             <p className="text-[8px] font-black text-indigo-400 uppercase tracking-[0.2em] animate-pulse">
-              ANALYSE INITIALE DU MARCHÉ... (5s)
+              INITIAL MARKET ANALYSIS... (5s)
             </p>
           </motion.div>
         )}
@@ -972,7 +972,7 @@ Zero Simulation. 100% Real-Market.`;
               className="bg-[#121216] border border-gray-800 rounded-3xl w-full max-w-sm overflow-hidden shadow-2xl p-6 text-center space-y-6"
             >
               <h3 className="text-lg font-black text-white">
-                {isClearing ? "Suppression du Chat en cours..." : "Êtes-vous sûr de vouloir vraiment vider le chat ?"}
+                {isClearing ? "Deleting chat in progress..." : "Are you sure you want to clear the chat?"}
               </h3>
               
               {isClearing ? (
@@ -1072,7 +1072,7 @@ function RiskManagerPanel({ onClose }: { onClose: () => void }) {
     const dataToSave = { initialCapital, payout, trades, sessionCounter };
     localStorage.setItem('a2sniper_risk_session', JSON.stringify(dataToSave));
     setIsDirty(false);
-    toast.success("Session sauvegardée avec succès !", { duration: 3000 });
+    toast.success("Session saved successfully!", { duration: 3000 });
   };
 
   const handleExportPDF = async () => {
@@ -1145,7 +1145,7 @@ function RiskManagerPanel({ onClose }: { onClose: () => void }) {
     setSessionCounter(0);
     setIsDirty(false);
     localStorage.removeItem('a2sniper_risk_session');
-    toast.success("Session réinitialisée.", { duration: 3000 });
+    toast.success("Session reset.", { duration: 3000 });
   };
 
   const handleCloseAttempt = () => {
@@ -1484,15 +1484,15 @@ function TradingJournalPanel({ onClose }: { onClose: () => void }) {
 function InfoModal({ type, onClose, stats }: { type: 'DISCLAIMER' | 'AIDE' | 'PERF' | null, onClose: () => void, stats: UserStats }) {
   const content = {
     DISCLAIMER: {
-      title: "Risque & Conformité",
+      title: "Risk & Compliance",
       icon: <ShieldAlert className="w-8 h-8 text-red-500" />,
       body: (
         <div className="text-left space-y-4">
           <p className="font-bold text-red-400 uppercase tracking-widest text-[10px]">Attention : Risque élevé</p>
-          <p>Le trading sur options binaires et Forex comporte un niveau de risque très élevé et peut ne pas convenir à tous les investisseurs.</p>
+          <p>Trading binary options and Forex carries a very high level of risk and may not be suitable for all investors.</p>
           <ul className="list-disc pl-4 space-y-2 text-gray-300">
-            <li>L'effet de levier peut jouer aussi bien en votre faveur qu'en votre défaveur.</li>
-            <li>Avant de trader, examinez attentivement vos objectifs, votre expérience et votre gestion du risque.</li>
+            <li>Leverage can work both in your favor and against you.</li>
+            <li>Before trading, carefully consider your objectives, experience, and risk management.</li>
             <li><strong>Ne tradez jamais</strong> avec de l'argent que vous ne pouvez pas vous permettre de perdre.</li>
           </ul>
           <p className="italic text-gray-500 pt-2 border-t border-gray-800">L'Assistant A2Sniper fournit des analyses de pointe basées sur des algorithmes HFT, mais ne garantit en aucun cas des profits futurs.</p>
@@ -1506,11 +1506,11 @@ function InfoModal({ type, onClose, stats }: { type: 'DISCLAIMER' | 'AIDE' | 'PE
         <div className="text-left space-y-4">
           <p className="font-bold text-[#D4AF37] uppercase tracking-widest text-[10px]">Étapes de déploiement</p>
           <ol className="list-decimal pl-4 space-y-3 text-gray-300">
-            <li><strong>Connectivité</strong> : Assurez-vous d'avoir fourni un SSID valide et que le voyant 'CONNECTED' est vert.</li>
+            <li><strong>Connectivité</strong> : Make sure you have provided a valid SSID and that the 'CONNECTED' indicator is green.</li>
             <li><strong>Analyze</strong>: Click on <span className="text-[#D4AF37]">Currency Pairs</span> to see current market opportunities.</li>
             <li><strong>Exécution</strong> : Suivez la direction signalée (<span className="text-green-400">CALL</span> ou <span className="text-red-400">PUT</span>) et le temps d'expiration exact affiché.</li>
             <li><strong>Gestion du risque</strong> : Utilisez l'outil <span className="text-red-400">Risk Manager</span> pour planifier vos sessions et protéger votre capital.</li>
-            <li><strong>Stratégie</strong> : Notre système utilise un consensus tripartite validant les structures SMC et zones institutionnelles avant de délivrer un signal.</li>
+            <li><strong>Stratégie</strong> : Our system uses a tripartite consensus validating SMC structures and institutional zones before delivering a signal.</li>
           </ol>
         </div>
       )
@@ -1542,7 +1542,7 @@ function InfoModal({ type, onClose, stats }: { type: 'DISCLAIMER' | 'AIDE' | 'PE
             </li>
             <li className="flex items-center gap-2">
               <div className="w-1.5 h-1.5 bg-green-500 rounded-full"></div>
-              Latence Exécution : &lt; 150ms
+              Execution Latency : &lt; 150ms
             </li>
           </ul>
           <p className="text-[10px] text-gray-600 font-bold uppercase text-center mt-2">Données extraites directement du Kernel A2Sniper AI.</p>

@@ -11,11 +11,11 @@ const plans = [
     price: 198,
     originalPrice: 298,
     discount: 33,
-    description: 'Parfait pour débuter avec les signaux Assistant',
+    description: 'Perfect to start with Assistant signals',
     features: [
       'Jusqu\'à 20 signaux/jour',
-      'Accès Bot Telegram privé',
-      'Score de confluence affiché',
+      'Private Telegram Bot access',
+      'Confluence score displayed',
       'Support par email (48h)'
     ],
     limitations: [
@@ -29,12 +29,12 @@ const plans = [
     price: 298,
     originalPrice: 398,
     discount: 25,
-    description: 'Le choix des traders sérieux',
+    description: 'The choice for serious traders',
     features: [
       'Jusqu\'à 35 signaux/jour',
-      'Analysis SMC détaillée par signal',
+      'Detailed SMC analysis per signal',
       'Commandes /analyse et /structure',
-      'Dashboard web avancé',
+      'Advanced web dashboard',
       'Support chat en direct (4h)'
     ],
     limitations: [],
@@ -47,11 +47,11 @@ const plans = [
     discount: 33,
     description: 'Pour les traders professionnels',
     features: [
-      'Signaux illimités',
+      'Unlimited signals',
       'Signaux Sniper Score 10/10 + alerte VIP',
       'Backtesting sur 5 ans',
-      'Accès API Full Access',
-      'Coaching personnalisé (4h/mois)',
+      'Full Access API access',
+      'Personalized coaching (4h/month)',
       'Rapport mensuel PDF',
       'Support prioritaire'
     ],
@@ -62,7 +62,7 @@ const plans = [
 
 const paymentMethods = [
   { id: 'card', name: 'Carte bancaire', icon: CreditCard, description: 'Visa, Mastercard, Amex' },
-  { id: 'paypal', name: 'PayPal', icon: CreditCard, description: 'Paiement sécurisé' },
+  { id: 'paypal', name: 'PayPal', icon: CreditCard, description: 'Secure payment' },
   { id: 'crypto', name: 'Crypto', icon: Zap, description: 'Bitcoin, Ethereum' }
 ];
 
@@ -89,7 +89,7 @@ export function SubscriptionPlans() {
   const handlePayment = async () => {
     setIsProcessing(true);
     if (selectedPlan === null) {
-      toast.error('Aucun plan sélectionné');
+      toast.error('No plan selected');
       setIsProcessing(false);
       return;
     }

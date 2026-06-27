@@ -30,13 +30,13 @@ import { useAppStore } from '@/lib/store';
 
 const navigationItems = [
   { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
-  { name: 'Signaux', href: '/signals', icon: TrendingUp },
-  { name: 'Bot Telegram', href: '/telegram', icon: MessageCircle },
+  { name: 'Signals', href: '/signals', icon: TrendingUp },
+  { name: 'Telegram Bot', href: '/telegram', icon: MessageCircle },
   { name: 'Risk Manager', href: '/risk-manager', icon: Calculator },
   { name: 'Trading Journal', href: '/trading-journal', icon: BookOpen },
   { name: 'Performance', href: '/performance', icon: Activity },
-  { name: 'Analysiss', href: '/analytics', icon: Brain },
-  { name: 'Courtiers', href: '/brokers', icon: BarChart3 },
+  { name: 'Analytics', href: '/analytics', icon: Brain },
+  { name: 'Brokers', href: '/brokers', icon: BarChart3 },
   { name: 'Settings', href: '/settings', icon: Settings },
   { name: 'Pricing', href: '/pricing', icon: DollarSign }
 ];

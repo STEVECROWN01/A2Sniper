@@ -79,10 +79,10 @@ export const pricingPlans = [
     annual: 238, // -20%
     features: [
       'Jusqu\'à 35 signaux/jour',
-      'Analysis SMC détaillée par signal',
+      'Detailed SMC analysis per signal',
       'Commande /analyse à la demande',
       'Commande /structure SMC',
-      'Dashboard web avancé',
+      'Advanced web dashboard',
       'Support Chat 4h'
     ],
     popular: true,
@@ -97,11 +97,11 @@ export const pricingPlans = [
     quarterly: 358, // -10%
     annual: 318, // -20%
     features: [
-      'Signaux illimités',
+      'Unlimited signals',
       'Accès Signaux Sniper Winrate élevé',
       'Backtesting sur 5 ans',
-      'Accès API Full Access',
-      'Coaching personnalisé (4h/mois)',
+      'Full Access API access',
+      'Personalized coaching (4h/month)',
       'Rapport de performance mensuel PDF'
     ],
     brokers: ['Pocket Option'],
@@ -111,7 +111,7 @@ export const pricingPlans = [
   }
 ];
 
-// Courtiers supportés selon le cahier des charges
+// Supported Brokers selon le cahier des charges
 export const supportedBrokers = [
   {
     name: 'Pocket Option',

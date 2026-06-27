@@ -117,9 +117,9 @@ export default function SignalsPage() {
     setConnectError('');
     const result = await attemptReconnect();
     if (result.success) {
-      toast.success('Reconnexion réussie !');
+      toast.success('Reconnection successful!');
     } else {
-      setConnectError(result.message || 'Reconnexion échouée. Vérifiez que votre compte Pocket Option est toujours connecté, ou collez un nouveau SSID.');
+      setConnectError(result.message || 'Reconnection failed. Make sure your Pocket Option account is still connected, or paste a new SSID.');
     }
     setIsConnecting(false);
   };
@@ -142,7 +142,7 @@ export default function SignalsPage() {
       userId: user?.id,
       avatarUrl: user?.avatar,
     };
-    const doc = createBrandedPDF('Rapport Signaux', 'Signaux de trading filtrés et statistiques', pdfUser);
+    const doc = createBrandedPDF('Signals Report', 'Filtered trading signals and statistics', pdfUser);
     let y = 58;
 
     // User info card
@@ -216,14 +216,14 @@ export default function SignalsPage() {
                 </h1>
                 <p className="text-gray-400 max-w-3xl text-xs font-bold leading-relaxed mt-1">
                   {liveStatus === 'LIVE' 
-                    ? "Bienvenue sur A2Sniper 3.0, l'Assistant de pointe pour le trading haute fréquence. Le système est connecté avec succès au market réel via WebSocket."
-                    : "Bienvenue sur A2Sniper 3.0, l'Assistant de pointe pour le trading haute fréquence. Veuillez configurer le SSID ci-dessous pour connecter l'analyseur au market."}
+                    ? "Welcome to A2Sniper 3.0, the cutting-edge assistant for high-frequency trading. The system is successfully connected to the live market via WebSocket."
+                    : "Welcome to A2Sniper 3.0, the cutting-edge assistant for high-frequency trading. Please configure the SSID below to connect the analyzer to the market."}
                 </p>
               </div>
               
               <div className="flex items-center space-x-3">
                 <div 
-                  title={liveStatus === 'LIVE' ? "ANALYSE BASÉE SUR LES DONNÉES RÉELLES" : "SYSTÈME DÉCONNECTÉ DU MARCHÉ"}
+                  title={liveStatus === 'LIVE' ? "ANALYSIS BASED ON REAL DATA" : "SYSTEM DISCONNECTED FROM MARKET"}
                   className="flex items-center px-3 py-2 bg-[#0a0a0c] rounded-xl border border-white/5 shadow-sm cursor-help transition-all"
                 >
                   <span className="relative flex h-3 w-3 mr-2">
@@ -231,7 +231,7 @@ export default function SignalsPage() {
                     <span className={`relative inline-flex rounded-full h-3 w-3 ${liveStatus === 'LIVE' ? 'bg-green-500' : 'bg-red-500'}`}></span>
                   </span>
                   <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">
-                    {liveStatus === 'LIVE' ? 'MARKET LIVE' : 'DÉCONNECTÉ'}
+                    {liveStatus === 'LIVE' ? 'MARKET LIVE' : 'DISCONNECTED'}
                   </span>
                 </div>
 
@@ -284,34 +284,34 @@ export default function SignalsPage() {
                     Login au Marché
                   </h2>
                   <p className="text-xs text-gray-400 mb-6 font-bold leading-relaxed">
-                    Afin que A2Sniper 3.0 analyse en direct le flux WebSocket Pocket Option, vous devez entrer la chaîne d'authentification active (SSID) ci-dessous.
+                    For A2Sniper 3.0 to analyze the Pocket Option WebSocket stream in real time, you must enter the active authentication string (SSID) below.
                   </p>
                   
                   <div className="space-y-4 mb-8">
-                    <h3 className="font-black text-xs text-white uppercase tracking-wider">Protocole de connexion :</h3>
+                    <h3 className="font-black text-xs text-white uppercase tracking-wider">Connection protocol:</h3>
                     <ul className="space-y-3 font-bold text-xs text-gray-400">
                       <li className="flex gap-3">
                         <span className="flex-shrink-0 w-5 h-5 bg-[#D4AF37]/10 border border-[#D4AF37]/20 text-[#D4AF37] rounded-full flex items-center justify-center font-bold text-[10px]">1</span>
-                        <span>Connectez-vous sur votre compte <a href="https://pocketoption.com" target="_blank" rel="noopener noreferrer" className="text-[#D4AF37] hover:underline">pocketoption.com</a></span>
+                        <span>Log in to your account at <a href="https://pocketoption.com" target="_blank" rel="noopener noreferrer" className="text-[#D4AF37] hover:underline">pocketoption.com</a></span>
                       </li>
                       <li className="flex gap-3">
                         <span className="flex-shrink-0 w-5 h-5 bg-[#D4AF37]/10 border border-[#D4AF37]/20 text-[#D4AF37] rounded-full flex items-center justify-center font-bold text-[10px]">2</span>
-                        <span>Ouvrez les Outils de développement (F12) -&gt; onglet Network (Réseau)</span>
+                        <span>Open Developer Tools (F12) -&gt; Network tab</span>
                       </li>
                       <li className="flex gap-3">
                         <span className="flex-shrink-0 w-5 h-5 bg-[#D4AF37]/10 border border-[#D4AF37]/20 text-[#D4AF37] rounded-full flex items-center justify-center font-bold text-[10px]">3</span>
-                        <span>Filtrez par &apos;WS&apos; (WebSockets) et cherchez la trame de connexion commençant par &apos;42[&quot;auth&quot;...&apos;</span>
+                        <span>Filter by &apos;WS&apos; (WebSockets) and find the connection frame starting with &apos;42[&quot;auth&quot;...&apos;</span>
                       </li>
                       <li className="flex gap-3">
                         <span className="flex-shrink-0 w-5 h-5 bg-[#D4AF37]/10 border border-[#D4AF37]/20 text-[#D4AF37] rounded-full flex items-center justify-center font-bold text-[10px]">4</span>
-                        <span>Copiez l'intégralité du texte de la trame et collez-le dans le champ ci-contre.</span>
+                        <span>Copy the entire frame text and paste it into the field on the right.</span>
                       </li>
                     </ul>
                   </div>
 
                   <div className="flex items-center gap-4 p-4 bg-[#D4AF37]/5 border border-[#D4AF37]/10 rounded-xl text-gray-400 text-xs font-bold leading-relaxed">
                     <Target className="w-5 h-5 text-[#D4AF37] flex-shrink-0" />
-                    <p>Le SSID reste actif tant que vous ne déconnectez pas votre compte Pocket Option — même si vous fermez le navigateur. Il change uniquement si vous vous déconnectez puis reconnectez sur Pocket Option.</p>
+                    <p>The SSID remains active as long as you don't disconnect your Pocket Option account — even if you close the browser. It only changes if you log out and log back in to Pocket Option.</p>
                   </div>
                 </div>
 
@@ -321,7 +321,7 @@ export default function SignalsPage() {
                     <textarea
                       value={ssid}
                       onChange={(e) => { setSsid(e.target.value); setConnectError(''); }}
-                      placeholder='Collez ici la trame 42["auth",{...}] copiée depuis F12 → Network → WS'
+                      placeholder='Paste here the 42["auth",{...}] frame copied from F12 → Network → WS'
                       className={`w-full h-32 px-4 py-3 bg-white/[0.02] border rounded-xl focus:outline-none text-[10px] font-mono mb-2 resize-none text-white transition-colors overflow-auto ${
                         ssid && validateSSID(ssid).status === 'invalid'
                           ? 'border-red-500/50 focus:border-red-500'
@@ -350,7 +350,7 @@ export default function SignalsPage() {
                           {validation.details?.isDemoAccount !== undefined && (
                             <p className="mt-1 text-gray-500">
                               Mode: <span className={validation.details.isDemoAccount ? 'text-yellow-400' : 'text-green-400'}>
-                                {validation.details.isDemoAccount ? 'COMPTE DÉMO' : 'COMPTE RÉEL'}
+                                {validation.details.isDemoAccount ? 'DEMO ACCOUNT' : 'REAL ACCOUNT'}
                               </span>
                               {validation.details.uid && <> · UID: {validation.details.uid}</>}
                             </p>
@@ -397,7 +397,7 @@ export default function SignalsPage() {
                     {connectError && (
                       <div className="mt-4 text-[10px] font-bold text-red-400 bg-red-500/10 p-4 rounded-xl border border-red-500/20 space-y-2">
                         <p className="font-black text-red-500 uppercase tracking-wider flex items-center gap-1">
-                          <AlertTriangle className="w-3 h-3" /> Échec de la connexion
+                          <AlertTriangle className="w-3 h-3" /> Connection failed
                         </p>
                         <p className="leading-relaxed">{connectError}</p>
                         <a
@@ -406,7 +406,7 @@ export default function SignalsPage() {
                           rel="noopener noreferrer"
                           className="inline-block mt-1 text-[#D4AF37] underline hover:text-yellow-300 transition-colors"
                         >
-                          → Aller sur pocketoption.com (si vous vous êtes déconnecté de votre compte)
+                          → Go to pocketoption.com (if you logged out of your account)
                         </a>
                       </div>
                     )}
@@ -550,7 +550,7 @@ export default function SignalsPage() {
                     <Filter className="w-6 h-6 text-gray-500" />
                   </div>
                   <h3 className="text-sm font-black text-white uppercase mb-2">No signals found</h3>
-                  <p className="text-xs text-gray-500 font-bold">Modifiez vos paramètres de filtrage pour rafraîchir le flux.</p>
+                  <p className="text-xs text-gray-500 font-bold">Adjust your filter settings to refresh the stream.</p>
                 </motion.div>
               )}
             </>

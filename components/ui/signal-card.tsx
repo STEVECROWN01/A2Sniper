@@ -122,7 +122,7 @@ Timestamp: ${signal.timestamp.toLocaleString('en-US')}
 #${signal.pair.replace('/', '').replace(' OTC', '')} #${signal.direction} #${signal.expiration}MIN`;
 
     navigator.clipboard.writeText(signalText).then(
-      () => toast.success('Signal copié dans le presse-papiers !'),
+      () => toast.success('Signal copied to clipboard!'),
       () => toast.error('Cannot copy signal. Check clipboard permissions.')
     );
   };

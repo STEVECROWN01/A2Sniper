@@ -32,7 +32,7 @@ export default function BrokersPage() {
               transition={{ duration: 0.5 }}
             >
               <h1 className="text-2xl font-black text-white uppercase tracking-tight mb-2">
-                Courtiers Partenaires
+                Partner Brokers
               </h1>
               <p className="text-sm text-gray-400 font-bold">
                 Plateformes de trading compatibles avec A2Sniper
@@ -43,7 +43,7 @@ export default function BrokersPage() {
           {/* Stats */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
             {[
-              { label: 'Courtiers supportés', value: supportedBrokers.length, color: 'text-[#D4AF37] bg-[#D4AF37]/10', icon: TrendingUp },
+              { label: 'Supported Brokers', value: supportedBrokers.length, color: 'text-[#D4AF37] bg-[#D4AF37]/10', icon: TrendingUp },
               { label: 'Dépôt minimum', value: '$5', color: 'text-green-500 bg-green-500/10', icon: DollarSign },
               { label: 'Note moyenne', value: '4.2/5', color: 'text-[#D4AF37] bg-[#D4AF37]/10', icon: Star },
               { label: 'Trades actifs', value: '10K+', color: 'text-purple-500 bg-purple-500/10', icon: Users }

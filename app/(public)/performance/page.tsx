@@ -354,7 +354,7 @@ export default function PerformancePage() {
               color="green"
             />
             <MetricCard
-              title="Taux de réussite"
+              title="Success Rate"
               value={`${metrics.avgWinRate.toFixed(1)}%`}
               change={metrics.winRateChange !== null ? { value: Math.abs(metrics.winRateChange), type: metrics.winRateChange >= 0 ? 'increase' : 'decrease' } : undefined}
               icon={<Target className="w-6 h-6" />}
@@ -405,7 +405,7 @@ export default function PerformancePage() {
                   <tr className="border-b border-[#1a1a2e]">
                     <th className="text-left py-3 px-4 font-medium text-white">Pair</th>
                     <th className="text-left py-3 px-4 font-medium text-white">Trades</th>
-                    <th className="text-left py-3 px-4 font-medium text-white">Taux de réussite</th>
+                    <th className="text-left py-3 px-4 font-medium text-white">Success Rate</th>
                     <th className="text-left py-3 px-4 font-medium text-white">Profit</th>
                     <th className="text-left py-3 px-4 font-medium text-white">Gagnés</th>
                     <th className="text-left py-3 px-4 font-medium text-white">Perdus</th>
@@ -542,7 +542,7 @@ export default function PerformancePage() {
                     { label: 'Ratio Gain/Perte moyen', value: riskMetrics.avgProfitLossRatio, color: 'text-[#D4AF37]' },
                     { label: 'Drawdown maximal', value: `${riskMetrics.maxDrawdown}%`, color: 'text-red-400' },
                     { label: 'Pertes consécutives max', value: String(riskMetrics.maxConsecutiveLosses), color: 'text-orange-400' },
-                    { label: 'Taux de réussite', value: `${riskMetrics.winRate}%`, color: parseFloat(riskMetrics.winRate) >= 60 ? 'text-green-400' : 'text-red-400' },
+                    { label: 'Success Rate', value: `${riskMetrics.winRate}%`, color: parseFloat(riskMetrics.winRate) >= 60 ? 'text-green-400' : 'text-red-400' },
                     { label: 'Trades analysés', value: String(riskMetrics.totalTrades), color: 'text-gray-300' },
                   ].map((metric) => (
                     <div key={metric.label} className="flex items-center justify-between p-3 bg-[#050507] rounded-lg border border-white/5">
