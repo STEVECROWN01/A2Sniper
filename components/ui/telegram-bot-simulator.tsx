@@ -101,10 +101,10 @@ function SignalCountdown({ timestamp, expiration, onExpire }: { timestamp?: stri
         const elapsedWeeks = Math.floor(elapsedDays / 7);
         const elapsedMonths = Math.floor(elapsedDays / 30);
 
-        // If expired less than 1 minute ago, show nothing (just "EXPIRÉ")
+        // If expired less than 1 minute ago, show nothing (just "EXPIRED")
         // If expired 1+ minutes ago, show "il y a X"
         if (elapsedMin < 1) {
-          setElapsedText(''); // Show nothing — just "EXPIRÉ" will be displayed
+          setElapsedText(''); // Show nothing — just "EXPIRED" will be displayed
         } else if (elapsedMonths >= 1) {
           setElapsedText(`${elapsedMonths} month$(elapsedMonths > 1 ? "s" : "") ago`);
         } else if (elapsedWeeks >= 1) {
@@ -348,7 +348,7 @@ export function TelegramBotSimulator() {
       setTimeout(() => {
         setIsAnalyzing(false);
         addMessage(`✅ Initial analysis complete! The system is now broadcasting real signals.`, 'bot');
-        addMessage(`🎉Welcome to A2Sniper 3.0!\n\n🤖The cutting-edge assistant for your high-frequency binary trading.\n\n🟢 You are now successfully connected to the market 💹\n\nTo start receiving your binary trading signals, please click the 'Currency Pairs' button below, then click the currency pair of your choice to receive your signal.\n\n🎉Have an excellent trading session!\n@A2Sniper_BinaryTrader`, 'bot');
+        addMessage(`🎉Welcome to A2Sniper 3.0!\n\n🤖The cutting-edge assistant for your high-frequency binary trading.\n\n🟢 You are now successfully connected to the market 💹\n\nTo start receiving your binary trading signals, please click the 'Currency Pairs' button below, then click the currency pair of your choice to receive your signal.\n\n🎉Have an excellent trading session!\n@A2Sniper_BinaryTrade`, 'bot');
       }, 5000);
     } else {
       const errMsg = "Connection expired or invalid. The provided SSID is not active.";
@@ -380,7 +380,7 @@ export function TelegramBotSimulator() {
           const currentLiveStatus = useAppStore.getState().liveStatus;
           
           if (currentLiveStatus === 'LIVE') {
-            addMessage(`🎉Welcome to A2Sniper 3.0!\n\n🤖The cutting-edge assistant for your high-frequency binary trading.\n\n🟢 You are now successfully connected to the market 💹\n\nTo start receiving your binary trading signals, please click the 'Currency Pairs' button below, then click the currency pair of your choice to receive your signal.\n\n🎉Have an excellent trading session!\n@A2Sniper_BinaryTrader`, 'bot');
+            addMessage(`🎉Welcome to A2Sniper 3.0!\n\n🤖The cutting-edge assistant for your high-frequency binary trading.\n\n🟢 You are now successfully connected to the market 💹\n\nTo start receiving your binary trading signals, please click the 'Currency Pairs' button below, then click the currency pair of your choice to receive your signal.\n\n🎉Have an excellent trading session!\n@A2Sniper_BinaryTrade`, 'bot');
           } else {
             addMessage(`🎉Welcome to A2Sniper 3.0!\n\n🤖The cutting-edge assistant for your high-frequency binary trading.\n\n⛔ You are not currently connected to the market (or your SSID has expired) ⚠️\n\nTo receive signals on active pairs, please connect to the market by providing your current SSID. Here's how:\n1. Open your account on pocketoption.com\n2. Press F12 (Inspect) → Network tab\n3. Filter by "socket.io" then click on a websocket\n4. In the Messages tab, find the stable authentication frame containing the "session" key (starting with 42["auth",{"session":"..."). Right-click it and select "Copy message"\n5. Paste it into the "SSID (Auth Frame)" field of the bot (below 👇) then send.`, 'bot', 'ssid_input');
           }
@@ -521,7 +521,7 @@ Zero Simulation. 100% Real-Market.`;
         setTimeout(() => {
           setIsAnalyzing(false);
           addMessage(`✅ Initial analysis complete! The system is now broadcasting real signals.`, 'bot');
-          addMessage(`🎉Welcome to A2Sniper 3.0!\n\n🤖The cutting-edge assistant for your high-frequency binary trading.\n\n🟢 You are now successfully connected to the market 💹\n\nTo start receiving your binary trading signals, please click the 'Currency Pairs' button below, then click the currency pair of your choice to receive your signal.\n\n🎉Have an excellent trading session!\n@A2Sniper_BinaryTrader`, 'bot');
+          addMessage(`🎉Welcome to A2Sniper 3.0!\n\n🤖The cutting-edge assistant for your high-frequency binary trading.\n\n🟢 You are now successfully connected to the market 💹\n\nTo start receiving your binary trading signals, please click the 'Currency Pairs' button below, then click the currency pair of your choice to receive your signal.\n\n🎉Have an excellent trading session!\n@A2Sniper_BinaryTrade`, 'bot');
         }, 5000);
       } else {
         addMessage(`❌ Connection failed. The provided SSID is expired or invalid. Please retry the connection steps.`, 'bot');
@@ -542,7 +542,7 @@ Zero Simulation. 100% Real-Market.`;
       }
     } else if (userMessage.includes('/performance')) {
       addMessage(`📈 REAL PERFORMANCE\n\n🎯 Win Rate: ${userStats.winRate.toFixed(2)}%\n📊 Signaux: ${userStats.todaySignals} aujourd'hui\n\nPure data. Zero simulation.`, 'bot', 'performance');
-    } else if (userMessage.includes('/pairs') || userMessage.includes('/paires')) {
+    } else if (userMessage.includes('/pairs') || userMessage.includes('/pairs')) {
       if (liveStatus !== 'LIVE') {
         addMessage("⚠️ Cannot list active pairs. No live market connection.", 'bot');
         return;
@@ -583,7 +583,7 @@ Zero Simulation. 100% Real-Market.`;
       }
     } else {
       if (liveStatus === 'LIVE') {
-        addMessage(`🎉Welcome to A2Sniper 3.0!\n\n🤖The cutting-edge assistant for your high-frequency binary trading.\n\n🟢 You are now successfully connected to the market 💹\n\nTo start receiving your binary trading signals, please click the 'Currency Pairs' button below, then click the currency pair of your choice to receive your signal.\n\n🎉Have an excellent trading session!\n@A2Sniper_BinaryTrader`, 'bot');
+        addMessage(`🎉Welcome to A2Sniper 3.0!\n\n🤖The cutting-edge assistant for your high-frequency binary trading.\n\n🟢 You are now successfully connected to the market 💹\n\nTo start receiving your binary trading signals, please click the 'Currency Pairs' button below, then click the currency pair of your choice to receive your signal.\n\n🎉Have an excellent trading session!\n@A2Sniper_BinaryTrade`, 'bot');
       } else {
         addMessage(`🎉Welcome to A2Sniper 3.0!\n\n🤖The cutting-edge assistant for your high-frequency binary trading.\n\n⛔ You are not currently connected to the market (or your SSID has expired) ⚠️\n\nTo receive signals on active pairs, please connect to the market by providing your current SSID. Here's how:\n1. Open your account on pocketoption.com\n2. Press F12 (Inspect) → Network tab\n3. Filter by "socket.io" then click on a websocket\n4. In the Messages tab, find the stable authentication frame containing the "session" key (starting with 42["auth",{"session":"..."). Right-click it and select "Copy message"\n5. Paste it into the "SSID (Auth Frame)" field of the bot (below 👇) then send.`, 'bot', 'ssid_input');
       }
@@ -639,7 +639,7 @@ Zero Simulation. 100% Real-Market.`;
           <div>
             <h3 className="text-white font-black text-sm tracking-tight">A2Sniper 3.0</h3>
             <p className="text-[9px] font-black uppercase tracking-[0.2em] text-[#D4AF37]/80">
-              Binary Trader
+              Binary Trade
             </p>
           </div>
         </div>
@@ -735,7 +735,7 @@ Zero Simulation. 100% Real-Market.`;
                             {Number(message.pair_data.winrate) > 0 ? `${message.pair_data.winrate}%` : '70%'}
                           </p>
                         </div>
-                        {/* EXPIRATION / EXPIRÉ — real-time countdown, then elapsed time after expiry */}
+                        {/* EXPIRATION / EXPIRED — real-time countdown, then elapsed time after expiry */}
                         <div className="bg-white/5 p-2.5 rounded-xl border border-white/10 text-center backdrop-blur-sm">
                           <SignalCountdown
                             timestamp={message.pair_data.timestamp as string | number | Date}
@@ -1112,7 +1112,7 @@ function RiskManagerPanel({ onClose }: { onClose: () => void }) {
     // Trades table
     const validTrades = results.computedTrades.filter((t: any) => t.result);
     if (validTrades.length > 0) {
-      y = drawSectionTitle(doc, 'Journal de trading', y);
+      y = drawSectionTitle(doc, 'Trading Journal', y);
       const headers = [
         { label: '#', width: 12 },
         { label: 'Resultat', width: 22, align: 'center' as const },
@@ -1219,7 +1219,7 @@ function RiskManagerPanel({ onClose }: { onClose: () => void }) {
         <div className="space-y-2">
           <div className="flex px-3 text-[9px] font-black text-gray-600 uppercase tracking-widest">
             <div className="w-8">N°</div>
-            <div className="flex-1">Résultat</div>
+            <div className="flex-1">Result</div>
             <div className="w-24">Stake</div>
             <div className="w-24 text-right">Balance</div>
           </div>
@@ -1402,7 +1402,7 @@ function TradingJournalPanel({ onClose }: { onClose: () => void }) {
         {!sessionData ? (
           <div className="flex flex-col items-center justify-center h-full text-center space-y-4 opacity-50">
             <Info className="w-12 h-12 text-gray-500" />
-            <p className="text-sm font-bold text-gray-400">Aucune session sauvegardée.</p>
+            <p className="text-sm font-bold text-gray-400">No saved sessions.</p>
             <p className="text-xs text-gray-500">Utilisez le Risk Manager pour planifier et sauvegarder vos trades.</p>
           </div>
         ) : (
@@ -1538,7 +1538,7 @@ function InfoModal({ type, onClose, stats }: { type: 'DISCLAIMER' | 'AIDE' | 'PE
           <ul className="space-y-2 text-xs text-gray-400 pt-2 border-t border-gray-800">
             <li className="flex items-center gap-2">
               <div className="w-1.5 h-1.5 bg-green-500 rounded-full"></div>
-              Précision Algorithmique : {stats.winRate > 0 ? `${stats.winRate.toFixed(1)}%` : 'N/A'}
+              Algorithm Accuracy : {stats.winRate > 0 ? `${stats.winRate.toFixed(1)}%` : 'N/A'}
             </li>
             <li className="flex items-center gap-2">
               <div className="w-1.5 h-1.5 bg-green-500 rounded-full"></div>

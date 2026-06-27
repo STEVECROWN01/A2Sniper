@@ -243,7 +243,7 @@ export class BacktestEngine {
     };
   }
 
-  // Analyse de performance par période
+  // Analysis de performance par période
   analyzePerformanceByPeriod(
     result: BacktestResult,
     period: 'daily' | 'weekly' | 'monthly'

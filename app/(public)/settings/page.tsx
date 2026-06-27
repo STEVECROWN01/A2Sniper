@@ -79,7 +79,7 @@ export default function SettingsPage() {
   ];
 
   const handleSave = () => {
-    toast.success('Paramètres sauvegardés avec succès !');
+    toast.success('Settings sauvegardés avec succès !');
     setSavedMessage(true);
     setTimeout(() => setSavedMessage(false), 2000);
   };
@@ -339,7 +339,7 @@ export default function SettingsPage() {
       } else {
         doc.setFontSize(8);
         doc.setTextColor(107, 114, 128);
-        doc.text('Aucune notification configuree.', PAGE.marginL + 4, y + 4);
+        doc.text('No notifications configuree.', PAGE.marginL + 4, y + 4);
         y += 8;
       }
 
@@ -365,7 +365,7 @@ export default function SettingsPage() {
               transition={{ duration: 0.5 }}
             >
               <h1 className="text-2xl font-bold text-white mb-2">
-                Paramètres
+                Settings
               </h1>
               <p className="text-gray-400">
                 Gérez vos préférences et paramètres de compte
@@ -634,7 +634,7 @@ export default function SettingsPage() {
                     {[
                       { key: 'signals' as const, title: 'Signaux de trading', desc: 'Recevoir les nouveaux signaux' },
                       { key: 'performance' as const, title: 'Rapports de performance', desc: 'Résumé quotidien des performances' },
-                      { key: 'news' as const, title: 'Actualités du marché', desc: 'Informations importantes sur les marchés' },
+                      { key: 'news' as const, title: 'Actualités du market', desc: 'Informations importantes sur les markets' },
                       { key: 'marketing' as const, title: 'Emails marketing', desc: 'Offres et nouvelles fonctionnalités' }
                     ].map((item) => (
                     <div key={item.key} className="flex items-center justify-between">

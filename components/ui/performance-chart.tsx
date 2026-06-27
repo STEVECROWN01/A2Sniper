@@ -25,7 +25,7 @@ export function PerformanceChart({ data, title }: PerformanceChartProps) {
       >
         <h3 className="text-lg font-semibold text-gray-900 mb-6">{title}</h3>
         <div className="h-80 flex items-center justify-center text-gray-400">
-          <p>Aucune donnée disponible</p>
+          <p>No data available</p>
         </div>
       </motion.div>
     );
@@ -54,7 +54,7 @@ export function PerformanceChart({ data, title }: PerformanceChartProps) {
               dataKey="date" 
               stroke="#6B7280"
               fontSize={12}
-              tickFormatter={(value) => new Date(value).toLocaleDateString('fr-FR', { 
+              tickFormatter={(value) => new Date(value).toLocaleDateString('en-US', { 
                 month: 'short', 
                 day: 'numeric' 
               })}
@@ -75,7 +75,7 @@ export function PerformanceChart({ data, title }: PerformanceChartProps) {
                 name === 'profit' ? `$${value}` : `${value}%`,
                 name === 'profit' ? 'Profit' : 'Taux de réussite'
               ]}
-              labelFormatter={(label) => new Date(label).toLocaleDateString('fr-FR')}
+              labelFormatter={(label) => new Date(label).toLocaleDateString('en-US')}
             />
             <Area
               type="monotone"

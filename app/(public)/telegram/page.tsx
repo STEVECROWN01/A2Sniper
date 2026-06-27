@@ -9,16 +9,16 @@ export default function TelegramPage() {
     {
       icon: <Bot className="w-6 h-6" />,
       title: "Moteur A2Sniper 3.0",
-      description: "Interface Assistant de pointe avec consensus multi-modèles (LSTM/Transformer/XGBoost)."
+      description: "Cutting-edge Assistant interface avec consensus multi-modèles (LSTM/Transformer/XGBoost)."
     },
     {
       icon: <Zap className="w-6 h-6" />,
-      title: "Signaux Temps Réel",
+      title: "Real-time Signals",
       description: "Données extraites directement du flux WebSocket Pocket Option. Zéro latence."
     },
     {
       icon: <ShieldCheck className="w-6 h-6" />,
-      title: "Gestion du Risque",
+      title: "Risk Management",
       description: "Risk Manager intégré pour une protection maximale du capital et profits constants."
     },
     {
@@ -29,9 +29,9 @@ export default function TelegramPage() {
   ];
 
   const highlights = [
-    { label: "Précision Assistant", value: "N/A", color: "text-green-400" },
+    { label: "Assistant Accuracy", value: "N/A", color: "text-green-400" },
     { label: "Latence", value: "< 150ms", color: "text-[#D4AF37]" },
-    { label: "Actifs", value: "8 OTC Pairs", color: "text-indigo-400" },
+    { label: "Active", value: "8 OTC Pairs", color: "text-indigo-400" },
     { label: "Disponibilité", value: "24/7", color: "text-purple-400" }
   ];
 
@@ -69,8 +69,8 @@ export default function TelegramPage() {
                     Bot Telegram <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#D4AF37] to-[#C5A059]">A2Sniper</span>
                   </h1>
                   <p className="text-lg text-gray-400 max-w-2xl font-medium leading-relaxed mb-6">
-                    Connectez-vous au flux de signaux le plus puissant du marché. 
-                    Données réelles, analyses institutionnelles et exécution instantanée.
+                    Connect to the most powerful signal stream on the market. 
+                    Real data, analyses institutionnelles et exécution instantanée.
                   </p>
                   <a
                     href="https://t.me/A2SniperBot"

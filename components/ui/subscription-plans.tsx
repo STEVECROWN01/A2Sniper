@@ -32,7 +32,7 @@ const plans = [
     description: 'Le choix des traders sérieux',
     features: [
       'Jusqu\'à 35 signaux/jour',
-      'Analyse SMC détaillée par signal',
+      'Analysis SMC détaillée par signal',
       'Commandes /analyse et /structure',
       'Dashboard web avancé',
       'Support chat en direct (4h)'

@@ -53,7 +53,7 @@ export class AITradingEngine {
 
   // Nouvelles méthodes pour conformité au document
   
-  // Collecte de données marché selon spécifications
+  // Collecte de données market selon spécifications
   async collectMarketData(): Promise<MarketData[]> {
     // Simulation de collecte multi-sources (Alpha Vantage, Yahoo Finance, Quandl)
     const sources = ['Alpha Vantage', 'Yahoo Finance', 'Quandl', 'WebSocket'];
@@ -158,12 +158,12 @@ export class AITradingEngine {
   
   // Génération de signaux selon format spécifié
   generateFormattedSignal(signal: AISignal): string {
-    const time = signal.timestamp.toLocaleTimeString('fr-FR');
+    const time = signal.timestamp.toLocaleTimeString('en-US');
     const direction = signal.direction;
     const expiration = signal.expiration;
     const winrate = signal.winrate;
     
-    return `[${time}] – Actif: [${signal.pair}] – Direction: [${direction}] – Expiration: [${expiration} min] – Winrate: [${winrate}%]`;
+    return `[${time}] – Active: [${signal.pair}] – Direction: [${direction}] – Expiration: [${expiration} min] – Winrate: [${winrate}%]`;
   }
   
   private signalIntervalId: ReturnType<typeof setInterval> | null = null;
@@ -228,15 +228,15 @@ export class AITradingEngine {
   private analyzeWithXGBoostLogic(features: MLFeatures, technicals: TechnicalIndicators): number {
     let score = 0.5;
     
-    // Analyse RSI
+    // Analysis RSI
     if (technicals.rsi < 30) score += 0.2; // Survente
     else if (technicals.rsi > 70) score -= 0.2; // Surachat
     
-    // Analyse MACD
+    // Analysis MACD
     if (technicals.macd.histogram > 0) score += 0.15;
     else score -= 0.15;
     
-    // Analyse Bollinger Bands
+    // Analysis Bollinger Bands
     const bbUpper = technicals.bollinger.upper;
     const bbLower = technicals.bollinger.lower;
     const bbRange = bbUpper - bbLower;
@@ -245,7 +245,7 @@ export class AITradingEngine {
     if (bbPosition < 0.2) score += 0.1; // Proche de la bande inférieure
     else if (bbPosition > 0.8) score -= 0.1; // Proche de la bande supérieure
     
-    // Analyse ADX
+    // Analysis ADX
     if (technicals.adx > 25) {
       score += features.trend_strength > 0 ? 0.1 : -0.1;
     }
@@ -258,7 +258,7 @@ export class AITradingEngine {
   private analyzeWithLSTMLogic(marketHistory: MarketData[]): number {
     if (marketHistory.length < 10) return 0.5;
     
-    // Analyse des patterns temporels
+    // Analysis des patterns temporels
     const recentPrices = marketHistory.slice(-10).map(d => d.close);
     const priceChanges = recentPrices.slice(1).map((price, i) => price - recentPrices[i]);
     
@@ -266,7 +266,7 @@ export class AITradingEngine {
     const upMoves = priceChanges.filter(change => change > 0).length;
     const trendScore = upMoves / priceChanges.length;
     
-    // Analyse de la volatilité récente
+    // Analysis de la volatilité récente
     const volatility = this.calculateVolatility(recentPrices);
     const volatilityScore = volatility < 0.02 ? 0.6 : 0.4;
     
@@ -330,7 +330,7 @@ export class AITradingEngine {
     };
   }
 
-  // Calcul du sentiment de marché (déterministe, basé sur les indicateurs)
+  // Calcul du sentiment de market (déterministe, basé sur les indicateurs)
   private calculateSentiment(priceChange1m: number, trendStrength: number): number {
     // Base sentiment from price momentum
     let sentiment = 0.5;
@@ -346,7 +346,7 @@ export class AITradingEngine {
     return Math.max(0, Math.min(1, sentiment));
   }
 
-  // Vérification des heures de marché
+  // Vérification des heures de market
   private isMarketOpen(date: Date): boolean {
     const hour = date.getHours();
     const day = date.getDay();
@@ -390,32 +390,32 @@ export class AITradingEngine {
   private generateReasoning(technicals: TechnicalIndicators, features: MLFeatures, direction: 'CALL' | 'PUT'): string[] {
     const reasons: string[] = [];
     
-    // Analyse RSI
+    // Analysis RSI
     if (technicals.rsi < 30) {
       reasons.push(`RSI en survente (${technicals.rsi.toFixed(1)}) - Signal d'achat potentiel`);
     } else if (technicals.rsi > 70) {
       reasons.push(`RSI en surachat (${technicals.rsi.toFixed(1)}) - Signal de vente potentiel`);
     }
     
-    // Analyse MACD
+    // Analysis MACD
     if (technicals.macd.histogram > 0) {
       reasons.push('MACD au-dessus de la ligne de signal - Momentum haussier');
     } else {
       reasons.push('MACD en-dessous de la ligne de signal - Momentum baissier');
     }
     
-    // Analyse du volume
+    // Analysis du volume
     if (features.volume_ratio > 1.5) {
       reasons.push(`Volume élevé (${(features.volume_ratio * 100).toFixed(0)}% de la moyenne) - Confirmation du mouvement`);
     }
     
-    // Analyse de tendance
+    // Analysis de tendance
     if (Math.abs(features.trend_strength) > 0.01) {
       const trendDirection = features.trend_strength > 0 ? 'haussière' : 'baissière';
       reasons.push(`Tendance ${trendDirection} confirmée par les EMA`);
     }
     
-    // Analyse ADX
+    // Analysis ADX
     if (technicals.adx > 25) {
       reasons.push(`Force de tendance élevée (ADX: ${technicals.adx.toFixed(1)}) - Mouvement directionnel fort`);
     }

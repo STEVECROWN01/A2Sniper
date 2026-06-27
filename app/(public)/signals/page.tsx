@@ -105,7 +105,7 @@ export default function SignalsPage() {
     if (!result.success) {
       setConnectError(result.message);
     } else {
-      toast.success('Connecté au marché Pocket Option !');
+      toast.success('Connecté au market Pocket Option !');
     }
     // NOTE: We intentionally do NOT clear the SSID field on success or failure
     // so the user can see what they pasted and it survives a page refresh.
@@ -183,7 +183,7 @@ export default function SignalsPage() {
         s.winrate ? `${s.winrate}%` : '-',
         s.status || '-',
         s.payout ? `${s.payout}%` : '-',
-        s.timestamp ? new Date(s.timestamp).toLocaleString('fr-FR', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-',
+        s.timestamp ? new Date(s.timestamp).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-',
       ]);
       y = drawTable(doc, PAGE.marginL, y, headers, rows);
     } else {
@@ -216,8 +216,8 @@ export default function SignalsPage() {
                 </h1>
                 <p className="text-gray-400 max-w-3xl text-xs font-bold leading-relaxed mt-1">
                   {liveStatus === 'LIVE' 
-                    ? "Bienvenue sur A2Sniper 3.0, l'Assistant de pointe pour le trading haute fréquence. Le système est connecté avec succès au marché réel via WebSocket."
-                    : "Bienvenue sur A2Sniper 3.0, l'Assistant de pointe pour le trading haute fréquence. Veuillez configurer le SSID ci-dessous pour connecter l'analyseur au marché."}
+                    ? "Bienvenue sur A2Sniper 3.0, l'Assistant de pointe pour le trading haute fréquence. Le système est connecté avec succès au market réel via WebSocket."
+                    : "Bienvenue sur A2Sniper 3.0, l'Assistant de pointe pour le trading haute fréquence. Veuillez configurer le SSID ci-dessous pour connecter l'analyseur au market."}
                 </p>
               </div>
               
@@ -281,7 +281,7 @@ export default function SignalsPage() {
                     <div className="w-10 h-10 bg-[#D4AF37]/10 border border-[#D4AF37]/20 rounded-xl flex items-center justify-center text-[#D4AF37]">
                       <Settings className="w-5 h-5" />
                     </div>
-                    Connexion au Marché
+                    Login au Marché
                   </h2>
                   <p className="text-xs text-gray-400 mb-6 font-bold leading-relaxed">
                     Afin que A2Sniper 3.0 analyse en direct le flux WebSocket Pocket Option, vous devez entrer la chaîne d'authentification active (SSID) ci-dessous.
@@ -373,7 +373,7 @@ export default function SignalsPage() {
                       {isConnecting ? (
                         <>
                           <RefreshCw className="w-4 h-4 animate-spin" />
-                          Connexion en cours...
+                          Login en cours...
                         </>
                       ) : (
                         <>
@@ -477,7 +477,7 @@ export default function SignalsPage() {
                     <option value="ACTIVE">Active</option>
                     <option value="WON">Gagné</option>
                     <option value="LOST">Perdu</option>
-                    <option value="EXPIRED">Expiré</option>
+                    <option value="EXPIRED">Expired</option>
                   </select>
 
                   {/* Direction Filter */}

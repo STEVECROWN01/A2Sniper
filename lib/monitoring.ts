@@ -324,7 +324,7 @@ export class MonitoringSystem {
     const errorCount = logs.filter(log => log.status_code >= 400).length;
     const minutesSpan = hours * 60;
 
-    // Analyse par endpoint
+    // Analysis par endpoint
     const endpointStats = new Map<string, { total_time: number; count: number }>();
     
     logs.forEach(log => {

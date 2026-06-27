@@ -216,7 +216,7 @@ export function createBrandedPDF(title: string, subtitle?: string, user?: PDFUse
   // Export date on right
   doc.setFontSize(7);
   doc.setTextColor(156, 163, 175);
-  const dateStr = new Date().toLocaleDateString('fr-FR', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  const dateStr = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' });
   doc.text(`Export: ${dateStr}`, PAGE.width - PAGE.marginR - 18, 14, { align: 'right' });
 
   // ── User info section in header ──

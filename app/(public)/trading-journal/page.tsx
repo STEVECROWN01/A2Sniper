@@ -117,7 +117,7 @@ export default function TradingJournalPage() {
       setSessionData(null);
       setIsResetting(false);
       setShowResetConfirm(false);
-      toast.success("Journal de trading réinitialisé avec succès.", { duration: 3000 });
+      toast.success("Trading Journal réinitialisé avec succès.", { duration: 3000 });
     }, 800);
   };
 
@@ -138,7 +138,7 @@ export default function TradingJournalPage() {
       avatarUrl: user?.avatar,
     };
 
-    const doc = createBrandedPDF('Trading Journal', 'Journal de trading et performances', pdfUser);
+    const doc = createBrandedPDF('Trading Journal', 'Trading Journal et performances', pdfUser);
     let y = 58;
 
     // User info card
@@ -181,7 +181,7 @@ export default function TradingJournalPage() {
 
       const headers = [
         { label: '#', width: 12 },
-        { label: 'Résultat', width: 22, align: 'center' as const },
+        { label: 'Result', width: 22, align: 'center' as const },
         { label: 'Mise ($)', width: 28, align: 'right' as const },
         { label: 'Profit / Perte ($)', width: 35, align: 'right' as const },
         { label: 'Cumul ($)', width: 28, align: 'right' as const },
@@ -218,7 +218,7 @@ export default function TradingJournalPage() {
             Trading Journal
           </h1>
           <p className="text-sm text-gray-400 mt-1">
-            Analysez vos performances et journal de trading basés sur votre session active.
+            Analysisz vos performances et journal de trading basés sur votre session active.
           </p>
         </div>
         {sessionData && (

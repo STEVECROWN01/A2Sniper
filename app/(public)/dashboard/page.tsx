@@ -347,13 +347,13 @@ export default function DashboardPage() {
                </div>
                <h2 className="text-lg font-black text-white uppercase tracking-wider mb-8 flex items-center gap-3">
                  <BarChart3 className="w-5 h-5 text-[#D4AF37]" />
-                 Analyse Technique du Marché
+                 Analysis Technique du Marché
                </h2>
                 <div className="flex flex-col md:flex-row items-center gap-12">
                   <TechnicalGauge value={gaugeValue} />
                   <div className="flex-1 space-y-6 w-full">
                     <div className="bg-[#050507] p-4 rounded-2xl border border-white/5">
-                      <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest mb-1">Winrate Moyen (Analyse)</p>
+                      <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest mb-1">Winrate Moyen (Analysis)</p>
                       <p className="text-md font-black text-transparent bg-clip-text bg-gradient-to-r from-[#D4AF37] to-[#F3E5AB]">
                         {avgWinrate > 0 ? `${avgWinrate.toFixed(1)}%` : 'Données insuffisantes'}
                       </p>
@@ -383,7 +383,7 @@ export default function DashboardPage() {
                         </div>
                         <div>
                           <p className="font-bold text-white tracking-tight">{signal.pair}</p>
-                          <p className="text-[10px] text-gray-500 font-bold uppercase">{signal.smc_structure || 'Analyse en cours'}</p>
+                          <p className="text-[10px] text-gray-500 font-bold uppercase">{signal.smc_structure || 'Analysis en cours'}</p>
                         </div>
                       </div>
                       <div className="text-right">
@@ -444,7 +444,7 @@ export default function DashboardPage() {
                   </p>
                   {liveStatus === 'LIVE'
                     ? 'Secure WebSocket connection established.'
-                    : 'Aucune connexion au flux de marché. Connectez-vous via la page Signaux.'}
+                    : 'Aucune connexion au flux de market. Connectez-vous via la page Signaux.'}
                 </div>
                 {systemStatus === 'offline' && (
                   <div className="p-3 border-l-2 border-red-500 bg-red-500/5 text-gray-400 rounded-r-xl">

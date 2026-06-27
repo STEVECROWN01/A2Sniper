@@ -79,7 +79,7 @@ export const pricingPlans = [
     annual: 238, // -20%
     features: [
       'Jusqu\'à 35 signaux/jour',
-      'Analyse SMC détaillée par signal',
+      'Analysis SMC détaillée par signal',
       'Commande /analyse à la demande',
       'Commande /structure SMC',
       'Dashboard web avancé',
@@ -163,7 +163,7 @@ export const supportedBrokers = [
   }
 ];
 
-// Actifs OTC supportés — EXCLUSIVEMENT Pocket Option OTC
+// Active OTC supportés — EXCLUSIVEMENT Pocket Option OTC
 export const supportedAssets = {
   forex: [
     'EUR/USD OTC', 'GBP/USD OTC', 'USD/JPY OTC', 'AUD/USD OTC', 'USD/CHF OTC', 'EUR/GBP OTC',
@@ -218,7 +218,7 @@ export const signalConfig = {
     calculation: '1_minute', // Calcul toutes les minutes
     diffusion: 'instantaneous' // Diffusion instantanée
   },
-  format: '[HH:MM:SS] – Actif: [EUR/USD] – Direction: [Call/Put] – Expiration: [1–5 min] – Winrate: [95%]',
+  format: '[HH:MM:SS] – Active: [EUR/USD] – Direction: [Call/Put] – Expiration: [1–5 min] – Winrate: [95%]',
   winrate_based: true,
   model_ensemble: true,
   user_adjustable_thresholds: true,

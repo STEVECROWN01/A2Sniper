@@ -41,7 +41,7 @@ export default function AnalyticsPage() {
       userId: user?.id,
       avatarUrl: user?.avatar,
     };
-    const doc = createBrandedPDF('Analyses Avancees', `Periode: ${selectedTimeframe}`, pdfUser);
+    const doc = createBrandedPDF('Analysiss Avancees', `Periode: ${selectedTimeframe}`, pdfUser);
     let y = 58;
 
     // User info card
@@ -58,10 +58,10 @@ export default function AnalyticsPage() {
     y = drawSectionTitle(doc, 'Signaux', y);
     if (signals.length > 0) {
       const headers = [
-        { label: 'Paire', width: 30 },
+        { label: 'Pair', width: 30 },
         { label: 'Direction', width: 25, align: 'center' as const },
         { label: 'Winrate', width: 25, align: 'center' as const },
-        { label: 'Statut', width: 25, align: 'center' as const },
+        { label: 'Status', width: 25, align: 'center' as const },
         { label: 'Date', width: 40, align: 'right' as const },
       ];
       const rows = signals.slice(0, 50).map(s => [
@@ -69,7 +69,7 @@ export default function AnalyticsPage() {
         s.direction || '-',
         s.winrate ? `${s.winrate}%` : '-',
         s.status || '-',
-        s.timestamp ? new Date(s.timestamp).toLocaleDateString('fr-FR') : '-',
+        s.timestamp ? new Date(s.timestamp).toLocaleDateString('en-US') : '-',
       ]);
       y = drawTable(doc, PAGE.marginL, y, headers, rows);
     } else {
@@ -95,10 +95,10 @@ export default function AnalyticsPage() {
           transition={{ duration: 0.5 }}
         >
           <h1 className="text-2xl font-black text-white uppercase tracking-tight mb-2">
-            Analyses Avancées
+            Analysiss Avancées
           </h1>
           <p className="text-sm text-gray-400 font-bold">
-            Analyses détaillées des performances et métriques
+            Analysiss détaillées des performances et métriques
           </p>
         </motion.div>
 

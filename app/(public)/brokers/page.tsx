@@ -46,7 +46,7 @@ export default function BrokersPage() {
               { label: 'Courtiers supportés', value: supportedBrokers.length, color: 'text-[#D4AF37] bg-[#D4AF37]/10', icon: TrendingUp },
               { label: 'Dépôt minimum', value: '$5', color: 'text-green-500 bg-green-500/10', icon: DollarSign },
               { label: 'Note moyenne', value: '4.2/5', color: 'text-[#D4AF37] bg-[#D4AF37]/10', icon: Star },
-              { label: 'Traders actifs', value: '10K+', color: 'text-purple-500 bg-purple-500/10', icon: Users }
+              { label: 'Trades actifs', value: '10K+', color: 'text-purple-500 bg-purple-500/10', icon: Users }
             ].map((stat, i) => (
               <motion.div
                 key={i}
@@ -135,7 +135,7 @@ export default function BrokersPage() {
                     </>
                   ) : (
                     <>
-                      <span>Trader maintenant</span>
+                      <span>Trade maintenant</span>
                       <ExternalLink className="w-4 h-4" />
                     </>
                   )}

@@ -1,4 +1,4 @@
-// Indicateurs techniques pour l'analyse de marché
+// Indicateurs techniques pour l'analyse de market
 export interface TechnicalIndicators {
   rsi: number;
   macd: {
@@ -208,7 +208,7 @@ export class TechnicalAnalysis {
     return { k, d };
   }
 
-  // Analyse complète des indicateurs techniques
+  // Analysis complète des indicateurs techniques
   static analyzeMarket(marketData: MarketData[]): TechnicalIndicators {
     const closes = marketData.map(d => d.close);
     const highs = marketData.map(d => d.high);

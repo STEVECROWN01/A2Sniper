@@ -17,8 +17,8 @@ export default function HomePage() {
   const features = [
     {
       icon: <Zap className="w-6 h-6" />,
-      title: "Signaux IA en temps réel",
-      description: "Algorithmes d'apprentissage automatique analysant les marchés 24/7"
+      title: "Real-time AI Signals",
+      description: "Machine learning algorithms analyzing markets 24/7"
     },
     {
       icon: <Target className="w-6 h-6" />,
@@ -27,20 +27,20 @@ export default function HomePage() {
     },
     {
       icon: <Shield className="w-6 h-6" />,
-      title: "Gestion du Risque",
+      title: "Risk Management",
       description: "Protocoles intégrés pour protéger votre capital et sécuriser vos gains"
     },
     {
       icon: <Users className="w-6 h-6" />,
       title: "Accès VIP Founders",
-      description: "Rejoignez un cercle exclusif de traders professionnels et performants"
+      description: "Join an exclusive circle of professional and high-performing traders"
     }
   ];
 
   const testimonials = [
     {
       name: "Marc Dubois",
-      role: "Trader Professionnel",
+      role: "Trade Professionnel",
       avatar: "https://images.pexels.com/photos/1043471/pexels-photo-1043471.jpeg?auto=compress&cs=tinysrgb&w=150",
       content: "J'ai optimisé mes performances de manière fulgurante avec A2Sniper. Les analyses sont d'une précision remarquable.",
       rating: 5
@@ -54,7 +54,7 @@ export default function HomePage() {
     },
     {
       name: "Thomas Bernard",
-      role: "Day Trader",
+      role: "Day Trade",
       avatar: "https://images.pexels.com/photos/1043474/pexels-photo-1043474.jpeg?auto=compress&cs=tinysrgb&w=150",
       content: "Les signaux arrivent au bon moment avec une précision incroyable. Parfait pour le trading sur Pocket Option.",
       rating: 5
@@ -115,7 +115,7 @@ export default function HomePage() {
                 href="/login" 
                 className="bg-gradient-to-r from-[#D4AF37] to-[#C5A059] hover:from-[#c5a059] hover:to-[#D4AF37] text-black font-black uppercase tracking-wider text-xs px-6 py-2.5 rounded-xl transition-all duration-300 shadow-[0_0_15px_rgba(212,175,55,0.15)] hover:shadow-[0_0_25px_rgba(212,175,55,0.25)]"
               >
-                Connexion
+                Login
               </Link>
             </div>
           </div>
@@ -142,7 +142,7 @@ export default function HomePage() {
                 </span>
               </h1>
               <p className="text-lg md:text-xl text-gray-400 mb-10 max-w-3xl mx-auto leading-relaxed">
-                Prenez l'avantage sur le marché avec nos signaux neuronaux en direct. 
+                Gain the market advantage with our live neural signals. 
                 Consensus multi-modèles, gestion automatique du risque et intégration exclusive.
               </p>
               
@@ -301,7 +301,7 @@ export default function HomePage() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center mb-20">
             <h2 className="text-3xl md:text-4xl font-black text-white mb-4 uppercase tracking-tight">
-              Avis des <span className="text-[#D4AF37]">Traders</span>
+              Avis des <span className="text-[#D4AF37]">Trades</span>
             </h2>
             <p className="text-gray-400 max-w-2xl mx-auto font-medium">
               Découvrez les retours de notre communauté Founders exclusive.
@@ -353,7 +353,7 @@ export default function HomePage() {
               Prêt à révolutionner votre trading ?
             </h2>
             <p className="text-gray-400 mb-10 max-w-2xl mx-auto leading-relaxed">
-              Rejoignez des milliers de traders qui exploitent la puissance neuronale d'A2Sniper.
+              Join thousands of traders harnessing the neural power of A2Sniper.
             </p>
             <div className="flex flex-col sm:flex-row gap-4 justify-center">
               <Link 
@@ -418,9 +418,9 @@ export default function HomePage() {
               <h3 className="text-sm font-bold text-white mb-6 uppercase tracking-widest">Produit</h3>
               <ul className="space-y-3 text-sm font-bold">
                 <li><Link href="/dashboard" className="hover:text-white transition-colors">Dashboard</Link></li>
-                <li><Link href="/signals" className="hover:text-white transition-colors">Signaux Live</Link></li>
+                <li><Link href="/signals" className="hover:text-white transition-colors">Live Signals</Link></li>
                 <li><Link href="/performance" className="hover:text-white transition-colors">Performance</Link></li>
-                <li><Link href="/trading-journal" className="hover:text-white transition-colors">Journal de Trading</Link></li>
+                <li><Link href="/trading-journal" className="hover:text-white transition-colors">Trading Journal</Link></li>
               </ul>
             </div>
             

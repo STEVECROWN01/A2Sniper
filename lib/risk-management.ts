@@ -86,17 +86,17 @@ export class RiskManager {
     
     // Facteurs de risque
     
-    // 1. Niveau de Winrate (Analyse technique)
+    // 1. Niveau de Winrate (Analysis technique)
     if (signal.winrate >= 95) riskScore += 20;
     else if (signal.winrate >= 85) riskScore += 10;
     else riskScore -= 10;
     
-    // 2. Volatilité du marché
+    // 2. Volatilité du market
     const volatility = signal.ml_features?.volatility || 0.02;
     if (volatility < 0.01) riskScore += 15;
     else if (volatility > 0.05) riskScore -= 20;
     
-    // 3. Conditions de marché
+    // 3. Conditions de market
     const isMarketOpen = signal.ml_features?.time_features?.is_market_open;
     if (isMarketOpen) riskScore += 10;
     else riskScore -= 15;
@@ -248,7 +248,7 @@ export class RiskManager {
     
     if (accountMetrics.winRate < 85) {
       recommendations.push('🎯 Taux de réussite faible - Augmentez le seuil de winrate minimum');
-      recommendations.push('📊 Analysez les trades perdants pour identifier les patterns');
+      recommendations.push('📊 Analysisz les trades perdants pour identifier les patterns');
     }
     
     if (accountMetrics.activeTrades > this.parameters.maxConcurrentTrades) {

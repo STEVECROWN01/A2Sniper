@@ -207,7 +207,7 @@ export default function RiskManagerPage() {
         }),
       });
       if (res.ok) {
-        toast.success('Paramètres sauvegardés avec succès !');
+        toast.success('Settings sauvegardés avec succès !');
       } else {
         toast.success('Sauvegardé localement.');
       }
@@ -246,7 +246,7 @@ export default function RiskManagerPage() {
     y += 2;
 
     // Risk Stats
-    y = drawSectionTitle(doc, 'Analyse de risque', y);
+    y = drawSectionTitle(doc, 'Analysis de risque', y);
     const cardW = 42;
     const gap = 3;
     y = drawStatCard(doc, PAGE.marginL, y, cardW, 'Balance', `$${results.currentBalance.toFixed(2)}`);
@@ -264,7 +264,7 @@ export default function RiskManagerPage() {
     const validTrades = results.computedTrades.filter(t => t.result);
     if (validTrades.length > 0) {
       y = checkPageBreak(doc, y, 30);
-      y = drawSectionTitle(doc, 'Journal de trading', y);
+      y = drawSectionTitle(doc, 'Trading Journal', y);
       const headers = [
         { label: '#', width: 12 },
         { label: 'Resultat', width: 22, align: 'center' as const },
@@ -385,7 +385,7 @@ export default function RiskManagerPage() {
                 <div className="p-6 border-b border-gray-800/50 flex justify-between items-center bg-[#0d0d0f]">
                   <h3 className="text-sm font-black text-white uppercase tracking-widest flex items-center gap-2">
                     <TrendingUp className="w-4 h-4 text-[#D4AF37]" />
-                    Journal de Trading
+                    Trading Journal
                   </h3>
                   <button
                     onClick={addTradeRow}
@@ -400,7 +400,7 @@ export default function RiskManagerPage() {
                     <thead>
                       <tr className="bg-black/40 text-[10px] font-black text-gray-600 uppercase tracking-[0.2em]">
                         <th className="px-6 py-4">#</th>
-                        <th className="px-6 py-4">Résultat</th>
+                        <th className="px-6 py-4">Result</th>
                         <th className="px-6 py-4">Stake ($)</th>
                         <th className="px-6 py-4 text-right">Retour ($)</th>
                         <th className="px-6 py-4 text-right">Balance ($)</th>

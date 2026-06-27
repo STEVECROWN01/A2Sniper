@@ -44,7 +44,7 @@ export default function PerformancePage() {
     return signals.filter(s => new Date(s.timestamp) >= cutoff);
   }, [signals, selectedTimeframe]);
 
-  // Calculer les statistiques par paire
+  // Calculer les statistiques par pair
   const pairStats = useMemo(() => {
     return tradingPairs.map(pair => {
       const pairSignals = filteredSignals.filter(s => s.pair === pair.symbol);
@@ -198,7 +198,7 @@ export default function PerformancePage() {
       userId: user?.id,
       avatarUrl: user?.avatar,
     };
-    const doc = createBrandedPDF('Analyse de Performance', `Periode: ${selectedTimeframe}`, pdfUser);
+    const doc = createBrandedPDF('Analysis de Performance', `Periode: ${selectedTimeframe}`, pdfUser);
     let y = 58;
 
     // User info card
@@ -228,9 +228,9 @@ export default function PerformancePage() {
     // Pair Stats Table
     if (pairStats.length > 0) {
       y = checkPageBreak(doc, y, 30);
-      y = drawSectionTitle(doc, 'Performance par paire', y);
+      y = drawSectionTitle(doc, 'Performance par pair', y);
       const headers = [
-        { label: 'Paire', width: 30 },
+        { label: 'Pair', width: 30 },
         { label: 'Trades', width: 20, align: 'center' as const },
         { label: 'Win Rate', width: 25, align: 'center' as const },
         { label: 'Gagnes', width: 20, align: 'center' as const },
@@ -306,10 +306,10 @@ export default function PerformancePage() {
             >
               <div>
                 <h1 className="text-2xl font-bold text-white mb-2">
-                  Analyse de Performance
+                  Analysis de Performance
                 </h1>
                 <p className="text-gray-400">
-                  Analyse détaillée de vos résultats de trading
+                  Analysis détaillée de vos résultats de trading
                 </p>
               </div>
               
@@ -390,20 +390,20 @@ export default function PerformancePage() {
             className="bg-[#0A0B0E] rounded-xl border border-[#1a1a2e] p-6 mb-8"
           >
             <h3 className="text-lg font-semibold text-white mb-6">
-              Performance par paire de devises
+              Performance par pair de devises
             </h3>
             {pairStats.length === 0 ? (
               <div className="text-center py-12">
                 <AlertCircle className="w-12 h-12 text-gray-600 mx-auto mb-4" />
-                <p className="text-gray-500 text-sm">Aucune donnée de performance disponible pour cette période.</p>
-                <p className="text-gray-600 text-xs mt-2">Les statistiques par paire apparaîtront dès que des signaux résolus seront disponibles.</p>
+                <p className="text-gray-500 text-sm">No performance data available for this period.</p>
+                <p className="text-gray-600 text-xs mt-2">Les statistiques par pair apparaîtront dès que des signaux résolus seront disponibles.</p>
               </div>
             ) : (
             <div className="overflow-x-auto">
               <table className="w-full">
                 <thead>
                   <tr className="border-b border-[#1a1a2e]">
-                    <th className="text-left py-3 px-4 font-medium text-white">Paire</th>
+                    <th className="text-left py-3 px-4 font-medium text-white">Pair</th>
                     <th className="text-left py-3 px-4 font-medium text-white">Trades</th>
                     <th className="text-left py-3 px-4 font-medium text-white">Taux de réussite</th>
                     <th className="text-left py-3 px-4 font-medium text-white">Profit</th>
@@ -492,7 +492,7 @@ export default function PerformancePage() {
               {monthlyPerformance.length === 0 ? (
                 <div className="text-center py-8">
                   <Calendar className="w-10 h-10 text-gray-600 mx-auto mb-3" />
-                  <p className="text-gray-500 text-sm">Aucune donnée mensuelle disponible.</p>
+                  <p className="text-gray-500 text-sm">No monthly data available.</p>
                   <p className="text-gray-600 text-xs mt-1">Les performances mensuelles s&apos;afficheront dès que des signaux résolus seront enregistrés.</p>
                 </div>
               ) : (
@@ -532,7 +532,7 @@ export default function PerformancePage() {
               {!riskMetrics ? (
                 <div className="text-center py-8">
                   <PieChart className="w-10 h-10 text-gray-600 mx-auto mb-3" />
-                  <p className="text-gray-500 text-sm">Aucune donnée de risque disponible.</p>
+                  <p className="text-gray-500 text-sm">No risk data available.</p>
                   <p className="text-gray-600 text-xs mt-1">Les métriques de risque seront calculées dès que des résultats de trades seront enregistrés.</p>
                 </div>
               ) : (
