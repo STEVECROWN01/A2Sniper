@@ -40,21 +40,21 @@ export default function AdminLoginPage() {
         // Check if the user is actually an admin
         if (!data.user?.is_admin) {
           setIsVerifying(false);
-          toast.error('Accès refusé. Privilèges administrateur requis.');
+          toast.error('Access denied. Administrator privileges required.');
           return;
         }
         // Token is now managed via httpOnly cookie by the API proxy
         setAuthToken(data.token);
         setStep('2fa');
-        toast.success('Identité vérifiée. Veuillez saisir le code 2FA.');
+        toast.success('Identity verified. Please enter the 2FA code.');
       } else {
         const data = await res.json().catch(() => ({}));
         setIsVerifying(false);
-        toast.error(data.detail || 'Identifiants invalides. Accès refusé.');
+        toast.error(data.detail || 'Invalid credentials. Access denied.');
       }
     } catch (err) {
       setIsVerifying(false);
-      toast.error('Erreur réseau. Impossible de vérifier les identifiants.');
+      toast.error('Network error. Cannot verify credentials.');
     }
   };
 
@@ -78,7 +78,7 @@ export default function AdminLoginPage() {
 
       if (res.ok) {
         setStep('success');
-        toast.success('Accès accordé. Bienvenue, Fondateur.');
+        toast.success('Access granted. Welcome, Founder.');
 
         setTimeout(() => {
           router.push('/admin-dawes-stevens-2026');
@@ -87,12 +87,12 @@ export default function AdminLoginPage() {
         const data = await res.json().catch(() => ({}));
         setIsVerifying(false);
         setOtp('');
-        toast.error(data.detail || 'Code 2FA invalide. Accès refusé.');
+        toast.error(data.detail || 'Invalid 2FA code. Access denied.');
       }
     } catch (err) {
       setIsVerifying(false);
       setOtp('');
-      toast.error('Erreur réseau. Impossible de vérifier le code 2FA.');
+      toast.error('Network error. Cannot verify 2FA code.');
     }
   };
 
@@ -197,7 +197,7 @@ export default function AdminLoginPage() {
               </Button>
 
               <div className="text-[10px] text-center text-gray-600 uppercase tracking-widest">
-                Protégé par IP-Whitelist &amp; Token Sécurisé
+                Protected by IP-Whitelist &amp; Secure Token
               </div>
             </motion.div>
           )}
@@ -211,7 +211,7 @@ export default function AdminLoginPage() {
               className="space-y-8 flex flex-col items-center"
             >
               <div className="text-center">
-                <p className="text-sm text-gray-400 mb-4">Saisissez le code à 6 chiffres de votre appareil authentificateur.</p>
+                <p className="text-sm text-gray-400 mb-4">Enter the 6-digit code from your authenticator device.</p>
                 <input
                   type="text"
                   maxLength={6}
@@ -228,7 +228,7 @@ export default function AdminLoginPage() {
                 disabled={isVerifying || otp.length < 6}
                 className="w-full bg-red-600 hover:bg-red-700 text-white h-12 font-bold"
               >
-                {isVerifying ? 'VALIDATION DU CODE...' : 'VÉRIFIER IDENTITÉ'}
+                {isVerifying ? 'CODE VALIDATION...' : 'VERIFY IDENTITY'}
               </Button>
             </motion.div>
           )}
@@ -240,8 +240,8 @@ export default function AdminLoginPage() {
               animate={{ opacity: 1, scale: 1 }}
               className="text-center py-8"
             >
-              <div className="text-green-500 font-bold text-xl mb-2">SYSTÈME DÉVERROUILLÉ</div>
-              <div className="text-gray-400 text-sm">Redirection vers le contrôle principal...</div>
+              <div className="text-green-500 font-bold text-xl mb-2">SYSTEM UNLOCKED</div>
+              <div className="text-gray-400 text-sm">Redirecting to main control...</div>
               <div className="mt-8 flex justify-center">
                 <div className="w-12 h-1 bg-gray-800 rounded-full overflow-hidden">
                   <motion.div

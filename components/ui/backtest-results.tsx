@@ -157,7 +157,7 @@ export function BacktestResults({ result, onClose }: BacktestResultsProps) {
                 onClick={() => handleDownload('pdf')}
                 className={`font-black uppercase tracking-wider text-[10px] px-4 py-2 rounded-xl transition-all flex items-center gap-1.5 ${justExported ? 'bg-green-500 text-white' : 'bg-[#D4AF37] hover:bg-[#c5a059] text-black'}`}
               >
-                {justExported ? <><Check className="w-3 h-3" /> EXPORTÉ</> : 'PDF'}
+                {justExported ? <><Check className="w-3 h-3" /> EXPORTED</> : 'PDF'}
               </button>
               <button
                 onClick={() => handleDownload('csv')}

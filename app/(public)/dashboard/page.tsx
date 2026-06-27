@@ -56,7 +56,7 @@ export default function DashboardPage() {
       } catch (err) {
         if (!cancelled) {
           setIsLoading(false);
-          setApiError('Impossible de charger les données. Vérifiez votre connexion.');
+          setApiError('Cannot load data. Check your connection.');
         }
       }
     };
@@ -110,7 +110,7 @@ export default function DashboardPage() {
     try {
       await Promise.all([fetchSignals(), fetchPerformance()]);
     } catch {
-      setApiError('Erreur lors du rafraîchissement.');
+      setApiError('Error during refresh.');
     }
     setTimeout(() => {
       setIsRefreshing(false);
@@ -286,7 +286,7 @@ export default function DashboardPage() {
             <h1 className="text-3xl font-black text-white uppercase tracking-tight">
               Tableau de Bord
             </h1>
-            <p className="text-sm text-gray-400 mt-1">Surveillance en temps réel du flux de signaux neuronaux.</p>
+            <p className="text-sm text-gray-400 mt-1">Real-time monitoring of the neural signal stream.</p>
           </div>
 
           <div className="flex items-center gap-3">
@@ -301,7 +301,7 @@ export default function DashboardPage() {
             <button
               onClick={handleExport}
               className={`p-3 rounded-xl transition-all ${justExported ? 'bg-green-500 text-white' : 'bg-[#0a0a0c] border border-white/5 hover:bg-white/[0.03] text-gray-400 hover:text-white'}`}
-              title={justExported ? 'PDF exported!' : 'Exporter en PDF'}
+              title={justExported ? 'PDF exported!' : 'Export en PDF'}
             >
               {justExported ? <Check className="w-5 h-5" /> : <Download className="w-5 h-5" />}
             </button>
@@ -347,7 +347,7 @@ export default function DashboardPage() {
                </div>
                <h2 className="text-lg font-black text-white uppercase tracking-wider mb-8 flex items-center gap-3">
                  <BarChart3 className="w-5 h-5 text-[#D4AF37]" />
-                 Analysis Technique du Marché
+                 Market Technical Analysis
                </h2>
                 <div className="flex flex-col md:flex-row items-center gap-12">
                   <TechnicalGauge value={gaugeValue} />
@@ -359,9 +359,9 @@ export default function DashboardPage() {
                       </p>
                     </div>
                     <div className="bg-[#050507] p-4 rounded-2xl border border-white/5">
-                      <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest mb-1">Intégrité des Data</p>
+                      <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest mb-1">Data Integrity</p>
                       <p className={`text-md font-black ${liveStatus === 'LIVE' ? 'text-green-500' : 'text-gray-500'}`}>
-                        {liveStatus === 'LIVE' ? 'WebSocket Pocket Option Connecté' : 'WebSocket Déconnecté'}
+                        {liveStatus === 'LIVE' ? 'Pocket Option WebSocket Connected' : 'WebSocket Disconnected'}
                       </p>
                     </div>
                   </div>
@@ -413,15 +413,15 @@ export default function DashboardPage() {
                  <div className="flex justify-between text-xs font-bold text-gray-400">
                    <span>System Status:</span>
                    <span className={connectionStatus === 'Connected' ? 'text-green-400' : connectionStatus === 'Disconnected' ? 'text-red-400' : 'text-yellow-400'}>
-                     {connectionStatus === 'Connected' ? 'Connecté' : connectionStatus === 'Disconnected' ? 'Déconnecté' : 'Vérification...'}
+                     {connectionStatus === 'Connected' ? 'Connected' : connectionStatus === 'Disconnected' ? 'Disconnected' : 'Checking...'}
                    </span>
                  </div>
                  <div className="flex justify-between text-xs font-bold text-gray-400">
-                   <span>Uptime Système:</span>
+                   <span>System Uptime:</span>
                    <span className="text-white">N/A</span>
                  </div>
                  <div className="flex justify-between text-xs font-bold text-gray-400">
-                   <span>Délai Exécution:</span>
+                   <span>Execution Delay:</span>
                    <span className="text-white">N/A</span>
                  </div>
                  <div className="flex justify-between text-xs font-bold text-gray-400">
@@ -435,12 +435,12 @@ export default function DashboardPage() {
             <div className="bg-[#0a0a0c]/80 border border-white/5 p-8 rounded-3xl backdrop-blur-md">
               <h3 className="font-black text-white uppercase tracking-wider mb-6 flex items-center gap-2">
                 <Bell className="w-4 h-4 text-[#D4AF37]" />
-                Alertes Système
+                System Alerts
               </h3>
               <div className="space-y-4 text-xs font-bold">
                 <div className={`p-3 border-l-2 ${liveStatus === 'LIVE' ? 'border-green-500 bg-green-500/5' : 'border-red-500 bg-red-500/5'} text-gray-400 rounded-r-xl`}>
                   <p className={`font-black mb-1 ${liveStatus === 'LIVE' ? 'text-green-400' : 'text-red-400'}`}>
-                    {liveStatus === 'LIVE' ? 'WebSocket Connecté' : 'WebSocket Déconnecté'}
+                    {liveStatus === 'LIVE' ? 'WebSocket Connected' : 'WebSocket Disconnected'}
                   </p>
                   {liveStatus === 'LIVE'
                     ? 'Secure WebSocket connection established.'
@@ -449,7 +449,7 @@ export default function DashboardPage() {
                 {systemStatus === 'offline' && (
                   <div className="p-3 border-l-2 border-red-500 bg-red-500/5 text-gray-400 rounded-r-xl">
                     <p className="text-red-400 font-black mb-1">Serveur API indisponible</p>
-                    Le serveur backend ne répond pas. Veuillez réessayer plus tard.
+                    The backend server is not responding. Please try again later.
                   </div>
                 )}
               </div>

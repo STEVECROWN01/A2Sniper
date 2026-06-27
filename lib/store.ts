@@ -170,7 +170,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const state = get();
     const ssid = state.lastConnectedSSID || (typeof window !== 'undefined' ? localStorage.getItem('a2sniper_last_ssid') : null);
     if (!ssid) {
-      return { success: false, message: 'Aucun SSID sauvegardé pour la reconnexion' };
+      return { success: false, message: 'No saved SSID for reconnection' };
     }
     return await state.connectMarket(ssid);
   },
@@ -190,19 +190,19 @@ export const useAppStore = create<AppState>((set, get) => ({
     switch (action) {
       case 'requestSignal': {
         if (!plan.canRequestSignal) {
-          return { allowed: false, reason: `Le plan ${plan.name} ne permet pas de demander des signaux. Passez au plan Standard ou supérieur.` };
+          return { allowed: false, reason: `The ${plan.name} plan does not allow signal requests. Upgrade to Standard or higher.` };
         }
         return { allowed: true };
       }
       case 'accessAPI': {
         if (!plan.canAccessAPI) {
-          return { allowed: false, reason: `L'accès API nécessite le plan Pro.` };
+          return { allowed: false, reason: `API access requires the Pro plan.` };
         }
         return { allowed: true };
       }
       case 'backtest': {
         if (!plan.canBacktest) {
-          return { allowed: false, reason: `Le backtesting nécessite le plan Premium ou Pro.` };
+          return { allowed: false, reason: `Backtesting requires the Premium or Pro plan.` };
         }
         return { allowed: true };
       }
@@ -305,7 +305,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       }
       return { success: false, message: data.detail || 'Erreur de connexion' };
     } catch (err) {
-      return { success: false, message: 'Erreur réseau — vérifiez que le serveur backend est démarré sur le port 8000.' };
+      return { success: false, message: 'Network error — verify that the backend server is running on port 8000.' };
     }
   },
 
@@ -366,7 +366,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       return { success: false, message: errMsg };
     } catch (err) {
       // Network error — extract message safely (avoid [object Object])
-      const netErr = err instanceof Error ? err.message : 'Erreur réseau';
+      const netErr = err instanceof Error ? err.message : 'Network error';
       return { success: false, message: netErr };
     }
   },

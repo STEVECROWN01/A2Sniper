@@ -117,7 +117,7 @@ export default function TradingJournalPage() {
       setSessionData(null);
       setIsResetting(false);
       setShowResetConfirm(false);
-      toast.success("Trading Journal réinitialisé avec succès.", { duration: 3000 });
+      toast.success("Trading Journal reset successfully.", { duration: 3000 });
     }, 800);
   };
 
@@ -163,8 +163,8 @@ export default function TradingJournalPage() {
     y += 3;
 
     // Win/Loss Breakdown
-    y = drawSectionTitle(doc, 'Répartition des Trades', y);
-    y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Trades Réussis (WIN)', `${stats.wins}`, { valueColor: '#22C55E' });
+    y = drawSectionTitle(doc, 'Trade Distribution', y);
+    y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Successful Trades (WIN)', `${stats.wins}`, { valueColor: '#22C55E' });
     y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Trades Losts (LOSS)', `${stats.losses}`, { valueColor: '#EF4444' });
     y += 2;
 
@@ -206,7 +206,7 @@ export default function TradingJournalPage() {
     savePDF(doc, `a2sniper-journal-${dateStr}.pdf`, pdfUser);
     setJustExported(true);
     setTimeout(() => setJustExported(false), 2500);
-    toast.success('Rapport PDF du journal exporté avec succès !');
+    toast.success('Journal PDF report exported successfully!');
   };
 
   return (
@@ -218,7 +218,7 @@ export default function TradingJournalPage() {
             Trading Journal
           </h1>
           <p className="text-sm text-gray-400 mt-1">
-            Analysisz vos performances et journal de trading basés sur votre session active.
+            Analyze your performance and trading journal based on your active session.
           </p>
         </div>
         {sessionData && (
@@ -228,14 +228,14 @@ export default function TradingJournalPage() {
               className={`px-6 py-2.5 rounded-xl text-xs font-black flex items-center gap-2 transition-all ${justExported ? 'bg-green-500 shadow-lg shadow-green-500/20' : 'bg-[#D4AF37] hover:bg-[#c5a059] shadow-lg shadow-[#D4AF37]/20'} text-black`}
             >
               {justExported ? <Check className="w-4 h-4" /> : <Download className="w-4 h-4 text-black" />}
-              {justExported ? 'EXPORTÉ !' : 'EXPORTER PDF'}
+              {justExported ? 'EXPORTED!' : 'EXPORTER PDF'}
             </button>
             <button
               onClick={handleResetJournal}
               className="flex items-center gap-2 px-4 py-2.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 hover:text-red-300 rounded-xl text-xs font-black uppercase tracking-wider transition-all border border-red-500/20 active:scale-95"
             >
               <Trash2 className="w-4 h-4" />
-              Réinitialiser
+              Reset
             </button>
           </div>
         )}
@@ -289,7 +289,7 @@ export default function TradingJournalPage() {
               <h3 className="text-sm font-black text-white uppercase tracking-wider border-b border-white/5 pb-3">Informations Session</h3>
               <div className="space-y-3 font-bold text-xs">
                 <div className="flex justify-between text-gray-400">
-                  <span>Numéro Session :</span>
+                  <span>Session Number:</span>
                   <span className="text-white">Session {sessionData.sessionCounter}</span>
                 </div>
                 <div className="flex justify-between text-gray-400">
@@ -301,7 +301,7 @@ export default function TradingJournalPage() {
                   <span className="text-white">{stats.totalTrades}</span>
                 </div>
                 <div className="flex justify-between text-gray-400">
-                  <span>Trades Réussis (WIN) :</span>
+                  <span>Successful Trades (WIN) :</span>
                   <span className="text-green-500">{stats.wins}</span>
                 </div>
                 <div className="flex justify-between text-gray-400">
@@ -314,7 +314,7 @@ export default function TradingJournalPage() {
             <div className="bg-[#D4AF37]/5 border border-[#D4AF37]/10 p-5 rounded-2xl flex items-start gap-3">
               <Info className="w-5 h-5 text-[#D4AF37] flex-shrink-0 mt-0.5" />
               <p className="text-[11px] text-gray-400 font-bold leading-relaxed">
-                Ce journal est directement synchronisé avec le Risk Manager. Vos trades saisis dans le simulateur ou le risk manager se reflètent automatiquement ici.
+                This journal is directly synchronized with the Risk Manager. Your trades entered in the simulator or risk manager are automatically reflected here.
               </p>
             </div>
           </div>
@@ -324,7 +324,7 @@ export default function TradingJournalPage() {
             <h3 className="text-sm font-black text-white uppercase tracking-wider">Detailed History des Trades</h3>
             {validTrades.length === 0 ? (
               <p className="text-xs text-gray-500 font-bold italic text-center py-12 bg-[#050507]/40 rounded-2xl border border-white/5">
-                Aucun trade enregistré dans cette session active.
+                No trades recorded in this active session.
               </p>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -391,10 +391,10 @@ export default function TradingJournalPage() {
             >
               <div className="flex items-center gap-3 mb-4">
                 <AlertTriangle className="w-6 h-6 text-red-500" />
-                <h3 className="text-lg font-bold text-white">Réinitialiser le journal</h3>
+                <h3 className="text-lg font-bold text-white">Reset le journal</h3>
               </div>
               <p className="text-sm text-gray-400 mb-6 leading-relaxed">
-                Voulez-vous vraiment réinitialiser le journal de trading ? All les données de session et l&apos;historique des trades seront définitivement effacés.
+                Do you really want to reset the trading journal? All session data and trade history will be permanently erased.
               </p>
               <div className="flex gap-3">
                 <button
@@ -404,7 +404,7 @@ export default function TradingJournalPage() {
                 >
                   {isResetting ? <>
                     <Loader2 className="w-4 h-4 animate-spin" />
-                    Réinitialisation...
+                    Resetting...
                   </> : 'Confirmer'}
                 </button>
                 <button

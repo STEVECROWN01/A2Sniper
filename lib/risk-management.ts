@@ -147,7 +147,7 @@ export class RiskManager {
     };
   }
 
-  // Vérification des limites de risque quotidiennes
+  // Verification des limites de risque quotidiennes
   checkDailyRiskLimits(
     todayTrades: { status: string; profit_loss?: number }[],
     accountBalance: number

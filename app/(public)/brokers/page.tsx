@@ -44,7 +44,7 @@ export default function BrokersPage() {
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
             {[
               { label: 'Supported Brokers', value: supportedBrokers.length, color: 'text-[#D4AF37] bg-[#D4AF37]/10', icon: TrendingUp },
-              { label: 'Dépôt minimum', value: '$5', color: 'text-green-500 bg-green-500/10', icon: DollarSign },
+              { label: 'Minimum Deposit', value: '$5', color: 'text-green-500 bg-green-500/10', icon: DollarSign },
               { label: 'Note moyenne', value: '4.2/5', color: 'text-[#D4AF37] bg-[#D4AF37]/10', icon: Star },
               { label: 'Trades actifs', value: '10K+', color: 'text-purple-500 bg-purple-500/10', icon: Users }
             ].map((stat, i) => (
@@ -104,12 +104,12 @@ export default function BrokersPage() {
 
                 <div className="space-y-3 mb-6">
                   <div className="flex items-center justify-between">
-                    <span className="text-xs text-gray-500 font-bold">Dépôt minimum</span>
+                    <span className="text-xs text-gray-500 font-bold">Minimum Deposit</span>
                     <span className="text-xs font-black text-white">${broker.min_deposit}</span>
                   </div>
                   
                   <div>
-                    <span className="text-xs text-gray-500 font-bold block mb-2">Fonctionnalités</span>
+                    <span className="text-xs text-gray-500 font-bold block mb-2">Features</span>
                     <div className="flex flex-wrap gap-1.5">
                       {broker.features.map((feature, i) => (
                         <span 
@@ -153,15 +153,15 @@ export default function BrokersPage() {
           >
             <div className="text-center">
               <Shield className="w-12 h-12 mx-auto mb-4 text-[#D4AF37]" />
-              <h3 className="text-xl font-black text-white uppercase tracking-wider mb-4">Sécurité et Conformité</h3>
+              <h3 className="text-xl font-black text-white uppercase tracking-wider mb-4">Security & Compliance</h3>
               <p className="text-xs text-gray-400 font-bold mb-8 max-w-2xl mx-auto leading-relaxed">
-                All nos courtiers partenaires sont régulés et offrent une sécurité maximale pour vos fonds. 
-                A2Sniper ne stocke aucune information financière personnelle.
+                All our partner brokers are regulated and offer maximum security for your funds. 
+                A2Sniper does not store any personal financial information.
               </p>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-center">
                 <div>
                   <div className="text-2xl font-black text-[#D4AF37]">100%</div>
-                  <div className="text-xs text-gray-500 font-bold uppercase tracking-wider">Sécurisé</div>
+                  <div className="text-xs text-gray-500 font-bold uppercase tracking-wider">Secure</div>
                 </div>
                 <div>
                   <div className="text-2xl font-black text-[#D4AF37]">24/7</div>

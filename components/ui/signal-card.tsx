@@ -372,13 +372,13 @@ Timestamp: ${signal.timestamp.toLocaleString('en-US')}
                 <div className="p-4 bg-[#050507] border border-white/5 rounded-xl space-y-2.5 font-bold text-xs">
                   <div className="flex items-center gap-2 mb-3">
                     <Zap className="w-4 h-4 text-[#D4AF37] fill-[#D4AF37]" />
-                    <h4 className="font-black text-white uppercase text-[10px] tracking-widest">Moteur Neuronal v3.0</h4>
+                    <h4 className="font-black text-white uppercase text-[10px] tracking-widest">Neural Engine v3.0</h4>
                   </div>
-                  <div className="flex justify-between text-gray-400"><span className="uppercase text-[9px] tracking-wider">Structure :</span> <span className="font-black text-white uppercase">{signal.smc_structure}</span></div>
-                  <div className="flex justify-between text-gray-400"><span className="uppercase text-[9px] tracking-wider">Zone SMC :</span> <span className="font-black text-white uppercase">{signal.smc_zone}</span></div>
-                  <div className="flex justify-between text-gray-400"><span className="uppercase text-[9px] tracking-wider">Pattern Chartiste :</span> <span className="font-black text-white uppercase">{signal.chart_pattern}</span></div>
-                  <div className="flex justify-between text-gray-400"><span className="uppercase text-[9px] tracking-wider">Niveaux Fibonacci :</span> <span className="font-black text-white uppercase">{signal.fibonacci}</span></div>
-                  <div className="flex justify-between text-gray-400"><span className="uppercase text-[9px] tracking-wider">Indicateur RSI :</span> <span className="font-black text-white uppercase">{signal.rsi_status}</span></div>
+                  <div className="flex justify-between text-gray-400"><span className="uppercase text-[9px] tracking-wider">Structure:</span> <span className="font-black text-white uppercase">{signal.smc_structure}</span></div>
+                  <div className="flex justify-between text-gray-400"><span className="uppercase text-[9px] tracking-wider">SMC Zone:</span> <span className="font-black text-white uppercase">{signal.smc_zone}</span></div>
+                  <div className="flex justify-between text-gray-400"><span className="uppercase text-[9px] tracking-wider">Chart Pattern:</span> <span className="font-black text-white uppercase">{signal.chart_pattern}</span></div>
+                  <div className="flex justify-between text-gray-400"><span className="uppercase text-[9px] tracking-wider">Fibonacci Levels:</span> <span className="font-black text-white uppercase">{signal.fibonacci}</span></div>
+                  <div className="flex justify-between text-gray-400"><span className="uppercase text-[9px] tracking-wider">RSI Indicator:</span> <span className="font-black text-white uppercase">{signal.rsi_status}</span></div>
                 </div>
 
                 {signal.result_price && (

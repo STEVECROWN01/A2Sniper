@@ -18,10 +18,10 @@ export default function LegalPage() {
           </div>
           <div>
             <h1 className="text-2xl font-black text-white uppercase tracking-tight">
-              Centre Légal & Documentation
+              Legal Center & Documentation
             </h1>
             <p className="text-sm text-gray-400 font-bold">
-              Informations relatives à l'utilisation de notre plateforme
+              Information regarding the use of our platform
             </p>
           </div>
         </div>
@@ -39,10 +39,10 @@ export default function LegalPage() {
             <FileText className="w-5 h-5 text-[#D4AF37]" />
           </div>
           <h2 className="text-lg font-black text-white mb-2">Conditions d'Utilisation</h2>
-          <p className="text-[10px] text-gray-500 font-bold uppercase tracking-wider mb-4">Dernière mise à jour : 11 Mai 2026</p>
+          <p className="text-[10px] text-gray-500 font-bold uppercase tracking-wider mb-4">Last updated: May 11, 2026</p>
           <div className="space-y-3 text-xs text-gray-400 leading-relaxed">
-            <p>1. L'accès à A2Sniper est réservé aux personnes majeures.</p>
-            <p>2. Les signaux fournis sont à titre informatif uniquement.</p>
+            <p>1. Access to A2Sniper is restricted to adults.</p>
+            <p>2. Signals provided are for informational purposes only.</p>
             <p>3. Toute reproduction est strictement interdite.</p>
           </div>
         </motion.div>
@@ -76,7 +76,7 @@ export default function LegalPage() {
         </div>
         <h2 className="text-xl font-black text-white uppercase tracking-wider mb-3">Besoin d'aide ?</h2>
         <p className="text-xs text-gray-400 font-bold mb-6 max-w-lg mx-auto leading-relaxed">
-          Notre équipe de support est disponible 24/7 pour répondre à vos questions techniques ou légales.
+          Our support team is available 24/7 to answer your technical or legal questions.
         </p>
         <a
           href="mailto:support@a2sniper.com"

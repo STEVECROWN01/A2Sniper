@@ -53,7 +53,7 @@ export class AITradingEngine {
 
   // Nouvelles méthodes pour conformité au document
   
-  // Collecte de données market selon spécifications
+  // Collection de données market selon spécifications
   async collectMarketData(): Promise<MarketData[]> {
     // Simulation de collecte multi-sources (Alpha Vantage, Yahoo Finance, Quandl)
     const sources = ['Alpha Vantage', 'Yahoo Finance', 'Quandl', 'WebSocket'];
@@ -185,7 +185,7 @@ export class AITradingEngine {
     }, 60000); // All les minutes
   }
 
-  // Arrêt de la génération de signaux
+  // Stop de la génération de signaux
   stopSignalGeneration(): void {
     if (this.signalIntervalId !== null) {
       clearInterval(this.signalIntervalId);
@@ -346,7 +346,7 @@ export class AITradingEngine {
     return Math.max(0, Math.min(1, sentiment));
   }
 
-  // Vérification des heures de market
+  // Verification des heures de market
   private isMarketOpen(date: Date): boolean {
     const hour = date.getHours();
     const day = date.getDay();
@@ -544,16 +544,16 @@ export class AITradingEngine {
 
   // Validation du signal
   validateSignal(signal: AISignal): boolean {
-    // Vérifications de base
+    // Verifications de base
     if (signal.winrate < this.winrateThreshold) return false;
     if (!signal.pair || !signal.direction) return false;
     if (signal.entry_price <= 0) return false;
     
-    // Vérification des niveaux de risque
+    // Verification des niveaux de risque
     const riskConfig = this.riskLevels[signal.signal_score.risk_level];
     if (signal.winrate < riskConfig.minWinrate) return false;
     
-    // Vérification de la cohérence des prix
+    // Verification de la cohérence des prix
     const priceRange = Math.abs(signal.target_price - signal.entry_price) / signal.entry_price;
     if (priceRange > 0.1) return false; // Mouvement trop important
     

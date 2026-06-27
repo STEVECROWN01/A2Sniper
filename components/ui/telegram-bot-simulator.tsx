@@ -160,9 +160,9 @@ interface Message {
   pair_data?: SignalPairData;
 }
 
-// Composant pour l'arrière-plan avec les bougies (ChartBackground)
+// Component for the background with candles (ChartBackground)
 const ChartBackground = () => {
-  // Bougies réalistes – chaque objet définit couleur, hauteur du corps en px, hauteurs des mèches en px
+  // Realistic candles – each object defines color, body height in px, wick heights in px
   const candles = [
     { type: 'bear', body: 60, wickTop: 20, wickBottom: 35, dur: 1.8, delay: 0 },
     { type: 'bull', body: 95, wickTop: 40, wickBottom: 25, dur: 2.0, delay: 0.1 },
@@ -176,11 +176,11 @@ const ChartBackground = () => {
 
   return (
     <div className="absolute inset-0 overflow-hidden pointer-events-none flex items-center justify-center opacity-55">
-      {/* Poussé vers le haut avec translateY(-40px) */}
+      {/* Pushed up with translateY(-40px) */}
       <div className="flex items-center gap-4" style={{ height: '350px', transform: 'translateY(-40px)' }}>
         {candles.map((c, i) => {
           const color = c.type === 'bull' ? '#22c55e' : '#ef4444';
-          // Direction alternée pour les bougies adjacentes (l'une monte, la suivante descend)
+          // Alternating direction for adjacent candles (one goes up, the next goes down)
           const direction = i % 2 === 0 ? 1 : -1;
           const yRange = [-10 * direction, 10 * direction];
 
@@ -198,13 +198,13 @@ const ChartBackground = () => {
                 delay: c.delay
               }}
             >
-              {/* Mèche haute */}
+              {/* Upper wick */}
               <div style={{ width: 3, height: c.wickTop, backgroundColor: color }} />
               {/* Corps de la bougie (sans border-radius) – taille fixe, pas de zoom */}
               <div
                 style={{ width: 22, height: c.body, backgroundColor: color, boxShadow: `0 0 20px ${color}60` }}
               />
-              {/* Mèche basse */}
+              {/* Lower wick */}
               <div style={{ width: 3, height: c.wickBottom, backgroundColor: color }} />
             </motion.div>
           );
@@ -475,7 +475,7 @@ export function TelegramBotSimulator() {
 
   const handlePairClick = async (pair: string) => {
     addMessage(pair, 'user');
-    await simulateTyping(1000); // Délai de 1s pour rester sous les 3s max spécifiés
+    await simulateTyping(1000); // 1s delay to stay under the 3s max specified
     
     if (liveStatus !== 'LIVE') {
       addMessage(`⚠️ Cannot analyze ${pair}. System is not connected to the live market. Zero simulation tolerated.`, 'bot');
@@ -563,7 +563,7 @@ Zero Simulation. 100% Real-Market.`;
       try {
         const parsed = JSON.parse(saved);
         // Normalise les anciens messages: si un message bot contient les instructions
-        // SSID mais a le type 'text' (sauvegardé avant l'implémentation de ssid_input),
+        // SSID but has type 'text' (saved before ssid_input implementation),
         // on lui restitue le bon type pour que le formulaire inline s'affiche correctement.
         const loaded = parsed.map((m: Record<string, unknown>) => {
           let type = (m.type as string) || 'text';
@@ -1279,10 +1279,10 @@ function RiskManagerPanel({ onClose }: { onClose: () => void }) {
 
       <div className="p-4 bg-[#0a0a0c] border-t border-gray-800 grid grid-cols-2 gap-3">
         <button onClick={handleSave} className="py-3 bg-[#1a1a1e] border border-gray-800 rounded-2xl text-[10px] font-black text-white flex items-center justify-center gap-2 hover:bg-[#25252b] transition-all">
-          <Save className={`w-4 h-4 ${isDirty ? 'text-yellow-500 animate-pulse' : 'text-[#D4AF37]'}`} /> SAUVEGARDER
+          <Save className={`w-4 h-4 ${isDirty ? 'text-yellow-500 animate-pulse' : 'text-[#D4AF37]'}`} /> SAVE
         </button>
         <button onClick={handleExportPDF} className={`py-2 rounded-2xl text-[10px] font-black text-black flex items-center justify-center gap-2 transition-all ${justExported ? 'bg-green-500 shadow-lg shadow-green-500/20' : 'bg-[#D4AF37] hover:bg-[#c5a059] shadow-lg shadow-[#D4AF37]/20'}`}>
-          {justExported ? <Check className="w-4 h-4" /> : <Download className="w-4 h-4 text-black" />} {justExported ? 'EXPORTÉ !' : 'EXPORTER EN PDF'}
+          {justExported ? <Check className="w-4 h-4" /> : <Download className="w-4 h-4 text-black" />} {justExported ? 'EXPORTED!' : 'EXPORT TO PDF'}
         </button>
       </div>
 
@@ -1296,7 +1296,7 @@ function RiskManagerPanel({ onClose }: { onClose: () => void }) {
               exit={{ scale: 0.9, opacity: 0 }}
               className="bg-[#121216] border border-gray-800 rounded-3xl w-full max-w-sm overflow-hidden shadow-2xl p-6 text-center space-y-6"
             >
-              <h3 className="text-base font-black text-white">Voulez-vous vraiment fermer le risk manager sans avoir sauvegardé vos trades ?</h3>
+              <h3 className="text-base font-black text-white">Do you really want to close the risk manager without saving your trades?</h3>
               <div className="flex gap-3">
                 <button 
                   onClick={() => {
@@ -1495,7 +1495,7 @@ function InfoModal({ type, onClose, stats }: { type: 'DISCLAIMER' | 'AIDE' | 'PE
             <li>Before trading, carefully consider your objectives, experience, and risk management.</li>
             <li><strong>Ne tradez jamais</strong> avec de l'argent que vous ne pouvez pas vous permettre de perdre.</li>
           </ul>
-          <p className="italic text-gray-500 pt-2 border-t border-gray-800">L'Assistant A2Sniper fournit des analyses de pointe basées sur des algorithmes HFT, mais ne garantit en aucun cas des profits futurs.</p>
+          <p className="italic text-gray-500 pt-2 border-t border-gray-800">The A2Sniper Assistant provides cutting-edge analysis based on HFT algorithms, but does not guarantee future profits in any way.</p>
         </div>
       )
     },
@@ -1506,11 +1506,11 @@ function InfoModal({ type, onClose, stats }: { type: 'DISCLAIMER' | 'AIDE' | 'PE
         <div className="text-left space-y-4">
           <p className="font-bold text-[#D4AF37] uppercase tracking-widest text-[10px]">Deployment Steps</p>
           <ol className="list-decimal pl-4 space-y-3 text-gray-300">
-            <li><strong>Connectivité</strong> : Make sure you have provided a valid SSID and that the 'CONNECTED' indicator is green.</li>
+            <li><strong>Connectivity</strong> : Make sure you have provided a valid SSID and that the 'CONNECTED' indicator is green.</li>
             <li><strong>Analyze</strong>: Click on <span className="text-[#D4AF37]">Currency Pairs</span> to see current market opportunities.</li>
-            <li><strong>Exécution</strong> : Follow the signaled direction (<span className="text-green-400">CALL</span> ou <span className="text-red-400">PUT</span>) et le temps d'expiration exact affiché.</li>
-            <li><strong>Risk Management</strong> : Use the <span className="text-red-400">Risk Manager</span> to plan vos sessions et protéger votre capital.</li>
-            <li><strong>Stratégie</strong> : Our system uses a tripartite consensus validating SMC structures and institutional zones before delivering a signal.</li>
+            <li><strong>Execution</strong> : Follow the signaled direction (<span className="text-green-400">CALL</span> or <span className="text-red-400">PUT</span>) and the exact expiration time displayed.</li>
+            <li><strong>Risk Management</strong> : Use the <span className="text-red-400">Risk Manager</span> to plan your sessions and protect your capital.</li>
+            <li><strong>Strategy</strong> : Our system uses a tripartite consensus validating SMC structures and institutional zones before delivering a signal.</li>
           </ol>
         </div>
       )

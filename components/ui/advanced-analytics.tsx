@@ -273,7 +273,7 @@ export function AdvancedAnalytics({ timeframe = '24H' }: AdvancedAnalyticsProps)
           <div>
             <p className="text-red-300 font-bold">{error || 'No data available'}</p>
             <button onClick={handleRefresh} className="text-red-400 hover:text-red-300 text-sm mt-1 underline">
-              Réessayer
+              Retry
             </button>
           </div>
         </div>
@@ -351,7 +351,7 @@ export function AdvancedAnalytics({ timeframe = '24H' }: AdvancedAnalyticsProps)
             </ResponsiveContainer>
           ) : (
             <div className="h-[300px] flex items-center justify-center text-gray-500 text-sm font-bold">
-              No data available pour cette période
+              No data available for this period
             </div>
           )}
         </motion.div>
@@ -409,7 +409,7 @@ export function AdvancedAnalytics({ timeframe = '24H' }: AdvancedAnalyticsProps)
                   <th className="text-left py-3 px-4 text-[10px] font-bold text-gray-500 uppercase tracking-wider">Trades</th>
                   <th className="text-left py-3 px-4 text-[10px] font-bold text-gray-500 uppercase tracking-wider">Success Rate</th>
                   <th className="text-left py-3 px-4 text-[10px] font-bold text-gray-500 uppercase tracking-wider">Profit</th>
-                  <th className="text-left py-3 px-4 text-[10px] font-bold text-gray-500 uppercase tracking-wider">Tendance</th>
+                  <th className="text-left py-3 px-4 text-[10px] font-bold text-gray-500 uppercase tracking-wider">Trend</th>
                 </tr>
               </thead>
               <tbody>

@@ -132,7 +132,7 @@ export default function RiskManagerPage() {
     const newTrades = [...trades];
     // Validate negative amounts
     if (field === 'amount' && typeof val === 'number' && val < 0) {
-      toast.error('Le montant ne peut pas être négatif.');
+      toast.error('Amount cannot be negative.');
       return;
     }
     newTrades[idx] = { ...newTrades[idx], [field]: val };
@@ -159,7 +159,7 @@ export default function RiskManagerPage() {
     localStorage.removeItem('a2sniper_risk_trades');
     localStorage.removeItem('a2sniper_risk_session');
     setShowResetConfirm(false);
-    toast.success("Session réinitialisée");
+    toast.success("Session reset");
   };
 
   // Sync session data to localStorage so Trading Journal can read it
@@ -207,12 +207,12 @@ export default function RiskManagerPage() {
         }),
       });
       if (res.ok) {
-        toast.success('Settings sauvegardés avec succès !');
+        toast.success('Settings saved successfully!');
       } else {
-        toast.success('Sauvegardé localement.');
+        toast.success('Saved locally.');
       }
     } catch {
-      toast.success('Sauvegardé localement.');
+      toast.success('Saved locally.');
     } finally {
       setIsSaving(false);
       setJustSaved(true);
@@ -323,14 +323,14 @@ export default function RiskManagerPage() {
                 className={`px-4 py-2 border rounded-xl text-xs font-black flex items-center gap-2 transition-all disabled:opacity-50 ${justSaved ? 'bg-green-500/10 border-green-500/30 text-green-400' : 'bg-[#121216] hover:bg-[#1a1a1f] border-gray-800 text-white'}`}
               >
                 {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : justSaved ? <Check className="w-4 h-4" /> : <Save className="w-4 h-4 text-[#D4AF37]" />}
-                {isSaving ? 'Sauvegarde...' : justSaved ? 'Sauvegardé !' : 'SAUVEGARDER'}
+                {isSaving ? 'Saving...' : justSaved ? 'Saved!' : 'SAVE'}
               </button>
               <button
                 onClick={handleExportPDF}
                 className={`px-6 py-2 rounded-xl text-xs font-black flex items-center gap-2 transition-all ${justExported ? 'bg-green-500 shadow-lg shadow-green-500/20' : 'bg-[#D4AF37] hover:bg-[#c5a059] shadow-lg shadow-[#D4AF37]/20'} text-black`}
               >
                 {justExported ? <Check className="w-4 h-4" /> : <Download className="w-4 h-4 text-black" />}
-                {justExported ? 'EXPORTÉ !' : 'EXPORTER PDF'}
+                {justExported ? 'EXPORTED!' : 'EXPORTER PDF'}
               </button>
             </div>
           </div>
@@ -374,7 +374,7 @@ export default function RiskManagerPage() {
                       <ShieldAlert className={`w-3.5 h-3.5 ${riskStyle.text}`} />
                     )}
                     <span className={`text-xs font-black ${riskStyle.text}`}>
-                      {riskLevel === 'Low' ? 'Faible' : riskLevel === 'Medium' ? 'Moyen' : riskLevel === 'High' ? 'Élevé' : 'Critique'}
+                      {riskLevel === 'Low' ? 'Low' : riskLevel === 'Medium' ? 'Medium' : riskLevel === 'High' ? 'High' : 'Critical'}
                     </span>
                   </div>
                 </div>
@@ -479,7 +479,7 @@ export default function RiskManagerPage() {
                   </div>
 
                   <div>
-                    <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest block mb-2">Payout Marché (%)</label>
+                    <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest block mb-2">Market Payout (%)</label>
                     <div className="relative">
                       <Zap className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-yellow-500" />
                       <input
@@ -522,10 +522,10 @@ export default function RiskManagerPage() {
                   Sniper Stake Helper
                 </h3>
                 <p className="text-xs text-gray-400 font-bold mb-6 leading-relaxed">
-                  Basé sur votre Winrate actuel de <span className="text-green-400">{displayWinRate > 0 ? displayWinRate.toFixed(1) : 'N/A'}%</span>, la mise suggérée pour une croissance optimale :
+                  Based on your current Winrate of <span className="text-green-400">{displayWinRate > 0 ? displayWinRate.toFixed(1) : 'N/A'}%</span>, the suggested stake for optimal growth:
                 </p>
                 <div className="bg-black/60 p-6 rounded-2xl border border-[#D4AF37]/30 text-center relative z-10">
-                  <p className="text-[10px] font-black text-[#D4AF37] uppercase tracking-[0.2em] mb-1">Stake Conseillé</p>
+                  <p className="text-[10px] font-black text-[#D4AF37] uppercase tracking-[0.2em] mb-1">Recommended Stake</p>
                   <p className="text-3xl font-black text-white tracking-tighter">
                     ${(results.currentBalance * 0.05).toFixed(2)}
                   </p>
@@ -539,16 +539,16 @@ export default function RiskManagerPage() {
                   <ShieldAlert className={`w-6 h-6 ${riskStyle.text} flex-shrink-0`} />
                   <div>
                     <h4 className={`text-xs font-black ${riskStyle.text} uppercase tracking-widest mb-1`}>
-                      Alerte Risk Management — Niveau: {riskLevel === 'Low' ? 'Faible' : riskLevel === 'Medium' ? 'Moyen' : riskLevel === 'High' ? 'Élevé' : 'Critique'}
+                      Risk Management Alert — Level: {riskLevel === 'Low' ? 'Low' : riskLevel === 'Medium' ? 'Medium' : riskLevel === 'High' ? 'High' : 'Critical'}
                     </h4>
                     <p className="text-[10px] text-gray-500 font-bold leading-relaxed">
                       {riskLevel === 'Critical'
-                        ? 'Votre compte est en perte significative. Réduisez immédiatement la taille de vos positions et envisagez de faire une pause.'
+                        ? 'Your account is in significant loss. Immediately reduce your position sizes and consider taking a break.'
                         : riskLevel === 'High'
-                        ? 'Votre winrate ou votre gain est négatif. Réduisez la taille des mises et respectez le plan de gestion du risque.'
+                        ? 'Your winrate or gain is negative. Reduce your stake sizes and follow the risk management plan.'
                         : riskLevel === 'Medium'
-                        ? 'Data insuffisantes ou performances mitigées. La discipline est essentielle — ne dépassez pas 5% du capital par trade.'
-                        : 'Ne dépassez jamais 10% de votre capital sur un seul trade, même avec une précision sniper. La discipline est la clé du succès.'
+                        ? 'Insufficient data or mixed performance. Discipline is essential — do not exceed 5% of capital per trade.'
+                        : 'Never exceed 10% of your capital on a single trade, even with sniper accuracy. Discipline is the key to success.'
                       }
                     </p>
                   </div>
@@ -577,10 +577,10 @@ export default function RiskManagerPage() {
                 >
                   <div className="flex items-center gap-3 mb-4">
                     <AlertTriangle className="w-6 h-6 text-red-500" />
-                    <h3 className="text-lg font-bold text-white">Réinitialiser la session</h3>
+                    <h3 className="text-lg font-bold text-white">Reset la session</h3>
                   </div>
                   <p className="text-sm text-gray-400 mb-6">
-                    Voulez-vous vraiment réinitialiser la session actuelle ? All les données de trading seront effacées.
+                    Do you really want to reset the current session? All trading data will be erased.
                   </p>
                   <div className="flex gap-3">
                     <button

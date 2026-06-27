@@ -54,7 +54,7 @@ export class BacktestEngine {
     this.riskManager = new RiskManager();
   }
 
-  // Exécution du backtest principal
+  // Main backtest execution
   async runBacktest(
     signals: AISignal[],
     config: BacktestConfig
@@ -68,7 +68,7 @@ export class BacktestEngine {
     let maxConsecutiveWins = 0;
     let maxConsecutiveLosses = 0;
 
-    // Filtrage des signaux par période et confiance
+    // Signal filtering by period and confidence
     const filteredSignals = signals.filter(signal => {
       const signalDate = new Date(signal.timestamp);
       return signalDate >= config.startDate && 
@@ -89,7 +89,7 @@ export class BacktestEngine {
         
         currentBalance += trade.netProfit;
         
-        // Mise à jour des statistiques
+        // Update des statistiques
         if (trade.result === 'WIN') {
           consecutiveWins++;
           consecutiveLosses = 0;
@@ -143,10 +143,10 @@ export class BacktestEngine {
     
     const isWin = signal.is_win;
     
-    // Utilisation des prix réels si disponibles
+    // Using real prices if available
     const entryPrice = signal.entry_price;
     const exitPrice = isWin 
-      ? entryPrice * (1 + 0.001) // Simulation légère si prix sortie non stocké
+      ? entryPrice * (1 + 0.001) // Slight simulation if exit price not stored
       : entryPrice * (1 - 0.001);
     
     const holdingTime = signal.expiration;
@@ -176,7 +176,7 @@ export class BacktestEngine {
     };
   }
 
-  // Calcul des résultats finaux — only resolved trades (WIN/LOSS) count toward winrate
+  // Final results calculation — only resolved trades (WIN/LOSS) count toward winrate
   // PENDING trades are excluded from statistical calculations
   private calculateResults(
     trades: BacktestTrade[],
@@ -196,7 +196,7 @@ export class BacktestEngine {
     
     const profitFactor = totalLoss > 0 ? totalProfit / totalLoss : totalProfit > 0 ? Infinity : 0;
     
-    // Calcul du ratio de Sharpe (simplifié) — only from resolved trades
+    // Sharpe ratio calculation (simplifié) — only from resolved trades
     const returns = resolvedTrades.map(t => t.netProfit / initialBalance);
     const avgReturn = returns.length > 0 ? returns.reduce((sum, r) => sum + r, 0) / returns.length : 0;
     const returnStdDev = returns.length > 0 ? Math.sqrt(

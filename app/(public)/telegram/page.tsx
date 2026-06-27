@@ -9,22 +9,22 @@ export default function TelegramPage() {
     {
       icon: <Bot className="w-6 h-6" />,
       title: "Moteur A2Sniper 3.0",
-      description: "Cutting-edge Assistant interface avec consensus multi-modèles (LSTM/Transformer/XGBoost)."
+      description: "Cutting-edge Assistant interface with multi-model consensus (LSTM/Transformer/XGBoost)."
     },
     {
       icon: <Zap className="w-6 h-6" />,
       title: "Real-time Signals",
-      description: "Data extraites directement du flux WebSocket Pocket Option. Zéro latence."
+      description: "Data extracted directly from the Pocket Option WebSocket stream. Zero latency."
     },
     {
       icon: <ShieldCheck className="w-6 h-6" />,
       title: "Risk Management",
-      description: "Risk Manager intégré pour une protection maximale du capital et profits constants."
+      description: "Integrated Risk Manager for maximum capital protection and consistent profits."
     },
     {
       icon: <Users className="w-6 h-6" />,
-      title: "Accès Exclusif",
-      description: "Espace Founders-Only avec monitoring en direct et analyses SMC détaillées."
+      title: "Exclusive Access",
+      description: "Founders-Only space with live monitoring and detailed SMC analysis."
     }
   ];
 
@@ -32,7 +32,7 @@ export default function TelegramPage() {
     { label: "Assistant Accuracy", value: "N/A", color: "text-green-400" },
     { label: "Latence", value: "< 150ms", color: "text-[#D4AF37]" },
     { label: "Active", value: "8 OTC Pairs", color: "text-indigo-400" },
-    { label: "Disponibilité", value: "24/7", color: "text-purple-400" }
+    { label: "Availability", value: "24/7", color: "text-purple-400" }
   ];
 
   return (
@@ -70,7 +70,7 @@ export default function TelegramPage() {
                   </h1>
                   <p className="text-lg text-gray-400 max-w-2xl font-medium leading-relaxed mb-6">
                     Connect to the most powerful signal stream on the market. 
-                    Real data, analyses institutionnelles et exécution instantanée.
+                    Real data, institutional analysis and instant execution.
                   </p>
                   <a
                     href="https://t.me/A2SniperBot"

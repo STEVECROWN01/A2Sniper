@@ -235,7 +235,7 @@ export default function AdminSignalsPage() {
               onClick={() => disconnectMarket()}
               className="px-3 py-2 bg-red-50 text-red-600 rounded-lg text-xs font-bold hover:bg-red-100 transition-colors border border-red-200"
             >
-              DÉCONNECTER
+              DISCONNECT
             </button>
           )}
 
@@ -276,7 +276,7 @@ export default function AdminSignalsPage() {
                 Market Login Pocket Option (ADMIN)
               </h2>
               <p className="text-gray-600 mb-6">
-                Pour générer des signaux sniper 100% réels, le système doit se connecter à votre session Pocket Option.
+                To generate 100% real sniper signals, the system must connect to your Pocket Option session.
               </p>
               
               <div className="space-y-4 mb-8">
@@ -284,15 +284,15 @@ export default function AdminSignalsPage() {
                 <ul className="space-y-3">
                   <li className="flex gap-3 text-sm text-gray-600">
                     <span className="flex-shrink-0 w-6 h-6 bg-blue-50 text-blue-600 rounded-full flex items-center justify-center font-bold text-xs">1</span>
-                    <span>Ouvrez votre compte sur <a href="https://pocketoption.com" target="_blank" rel="noopener noreferrer" className="text-blue-600 font-bold hover:underline">pocketoption.com</a></span>
+                    <span>Open your account on <a href="https://pocketoption.com" target="_blank" rel="noopener noreferrer" className="text-blue-600 font-bold hover:underline">pocketoption.com</a></span>
                   </li>
                   <li className="flex gap-3 text-sm text-gray-600">
                     <span className="flex-shrink-0 w-6 h-6 bg-blue-50 text-blue-600 rounded-full flex items-center justify-center font-bold text-xs">2</span>
-                    <span>Appuyez sur F12 (Inspecter) -&gt; onglet Network</span>
+                    <span>Press F12 (Inspect) -&gt; Network tab</span>
                   </li>
                   <li className="flex gap-3 text-sm text-gray-600">
                     <span className="flex-shrink-0 w-6 h-6 bg-blue-50 text-blue-600 rounded-full flex items-center justify-center font-bold text-xs">3</span>
-                    <span>Filter by Filtrez par &apos;WS&apos; et cherchez le message commençant par &apos;42[&quot;auth&quot;...&apos;apos;WSFiltrez par &apos;WS&apos; et cherchez le message commençant par &apos;42[&quot;auth&quot;...&apos;apos; and find the message starting with Filtrez par &apos;WS&apos; et cherchez le message commençant par &apos;42[&quot;auth&quot;...&apos;apos;42[Filtrez par &apos;WS&apos; et cherchez le message commençant par &apos;42[&quot;auth&quot;...&apos;quot;authFiltrez par &apos;WS&apos; et cherchez le message commençant par &apos;42[&quot;auth&quot;...&apos;quot;...Filtrez par &apos;WS&apos; et cherchez le message commençant par &apos;42[&quot;auth&quot;...&apos;apos;</span>
+                    <span>Filter by &apos;WS&apos; and find the message starting with &apos;42[&quot;auth&quot;...&apos;</span>
                   </li>
                   <li className="flex gap-3 text-sm text-gray-600">
                     <span className="flex-shrink-0 w-6 h-6 bg-blue-50 text-blue-600 rounded-full flex items-center justify-center font-bold text-xs">4</span>
@@ -303,7 +303,7 @@ export default function AdminSignalsPage() {
 
               <div className="flex items-center gap-4 p-4 bg-yellow-50 border border-yellow-200 rounded-xl text-yellow-800 text-sm">
                 <Target className="w-5 h-5 flex-shrink-0" />
-                <p>Votre SSID reste valide tant que vous ne vous déconnectez pas de votre compte Pocket Option.</p>
+                <p>Your SSID remains valid as long as you don't disconnect from your Pocket Option account.</p>
               </div>
             </div>
 

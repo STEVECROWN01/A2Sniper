@@ -17,13 +17,13 @@ export default function NotFound() {
           Page introuvable
         </h2>
         <p className="text-gray-400 mb-10 max-w-md mx-auto leading-relaxed">
-          La page que vous recherchez n&apos;existe pas ou a été déplacée.
+          The page you are looking for does not exist or has been moved.
         </p>
         <Link
           href="/login"
           className="inline-flex items-center justify-center bg-gradient-to-r from-[#D4AF37] to-[#C5A059] hover:from-[#c5a059] hover:to-[#D4AF37] text-black font-black uppercase tracking-[0.2em] text-xs px-10 py-5 rounded-xl transition-all duration-300 shadow-[0_0_20px_rgba(212,175,55,0.15)]"
         >
-          Retour à la connexion
+          Back to Login
         </Link>
       </div>
     </div>

@@ -113,21 +113,21 @@ export function validateSSID(ssid: string): SSIDValidationResult {
     if (trimmed.startsWith('42[')) {
       return {
         status: 'invalid',
-        message: 'La trame ne semble pas être une trame d\'authentification. Elle commence par 42[ mais pas par 42["auth". Assurez-vous de copier la trame "auth" depuis l\'onglet WS.',
+        message: 'This frame does not appear to be an authentication frame. It starts with 42[ but not 42["auth". Make sure to copy the "auth" frame from the WS tab.',
         normalized: trimmed
       };
     }
     if (trimmed.startsWith('40') || trimmed.startsWith('40[')) {
       return {
         status: 'invalid',
-        message: 'Ceci est une trame de connexion (40), pas d\'authentification. Cherchez la trame commençant par 42["auth",...] dans l\'onglet WS.',
+        message: 'This is a connection frame (40), not an authentication frame. Look for the frame starting with 42["auth",...] in the WS tab.',
         normalized: trimmed
       };
     }
     if (trimmed.includes('"session"') || trimmed.includes('"uid"')) {
       return {
         status: 'invalid',
-        message: 'La trame contient des données d\'authentification mais ne commence pas par 42["auth". Vérifiez que vous avez copié l\'intégralité du message depuis le début.',
+        message: 'The frame contains authentication data but does not start with 42["auth". Verify that you copied the entire message from the beginning.',
         normalized: trimmed
       };
     }
@@ -163,7 +163,7 @@ export function validateSSID(ssid: string): SSIDValidationResult {
       } catch {
         return {
           status: 'invalid',
-          message: `Impossible de lire le JSON de la trame. Vérifiez que vous avez copié le message exact depuis DevTools sans modification.`,
+          message: `Cannot read the JSON from the frame. Verify that you copied the exact message from DevTools without modification.`,
           normalized: trimmed
         };
       }
@@ -178,7 +178,7 @@ export function validateSSID(ssid: string): SSIDValidationResult {
     if (!hasSession) {
       return {
         status: 'invalid',
-        message: 'Format non supporté. La clé "session" est manquante dans la trame. Assurez-vous de copier la trame d\'authentification complète.',
+        message: 'Unsupported format. The "session" key is missing from the frame. Make sure to copy the complete authentication frame.',
         normalized: trimmed,
         details: { hasSession, hasUid, hasDemo, isDemoAccount }
       };
@@ -203,10 +203,10 @@ export function validateSSID(ssid: string): SSIDValidationResult {
     if (!hasUid || !hasDemo) {
       return {
         status: 'partial',
-        message: `Format détecté mais incomplet (clés manquantes: ${[
+        message: `Format detected but incomplete (missing keys: ${[
           !hasUid && '"uid"',
           !hasDemo && '"isDemo"'
-        ].filter(Boolean).join(', ')}). La connexion peut échouer si ces champs sont requis.`,
+        ].filter(Boolean).join(', ')}). Connection may fail if these fields are required.`,
         normalized: trimmed,
         details
       };
@@ -222,7 +222,7 @@ export function validateSSID(ssid: string): SSIDValidationResult {
   } catch (e) {
     return {
       status: 'invalid',
-      message: 'Erreur de lecture de la trame d\'authentification. Essayez de copier à nouveau depuis DevTools (F12 → Network → WS).',
+      message: 'Error reading the authentication frame. Try copying again from DevTools (F12 → Network → WS).',
       normalized: trimmed
     };
   }

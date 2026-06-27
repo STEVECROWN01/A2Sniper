@@ -87,7 +87,7 @@ export default function AnalyticsPage() {
 
   return (
     <div className="space-y-8">
-      {/* Header avec contrôles */}
+      {/* Header with controls */}
       <div className="mb-8 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <motion.div
           initial={{ opacity: 0, y: 20 }}
@@ -95,10 +95,10 @@ export default function AnalyticsPage() {
           transition={{ duration: 0.5 }}
         >
           <h1 className="text-2xl font-black text-white uppercase tracking-tight mb-2">
-            Analysiss Avancées
+            Advanced Analytics
           </h1>
           <p className="text-sm text-gray-400 font-bold">
-            Analysiss détaillées des performances et métriques
+            Detailed analysis of performance and metrics
           </p>
         </motion.div>
 

@@ -101,7 +101,7 @@ export function PerformanceChart({ data, title }: PerformanceChartProps) {
           <div className="text-2xl font-bold text-[#D4AF37]">
             ${data[data.length - 1]?.profit || 0}
           </div>
-          <div className="text-sm text-gray-600">Profit actuel</div>
+          <div className="text-sm text-gray-600">Current Profit</div>
         </div>
         <div>
           <div className="text-2xl font-bold text-green-600">
