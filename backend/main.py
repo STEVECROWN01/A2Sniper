@@ -2007,20 +2007,28 @@ async def get_signals(pair: str = None, limit: int = 100, credentials: HTTPAutho
                 # Ensure winrate is never 0 or null (minimum 70%)
                 sig_winrate = s.winrate if s.winrate and s.winrate > 0 else 70
 
+                # Extract analysis fields from analysis_details JSON if available
+                details = s.analysis_details or {}
                 d = {
                     "id": s.id,
                     "pair": s.pair,
                     "direction": s.direction,
-                    "entry_price": s.entry_price,
+                    "entry_price": float(s.entry_price) if s.entry_price else 0,
                     "expiration": s.expiration,
                     "winrate": sig_winrate,
-                    "score": getattr(s, 'score', None),
+                    "score": getattr(s, 'score', None) or details.get('score', 4),
                     "payout": s.payout,
-                    "classification": s.classification,
+                    "classification": s.classification or 'SIGNAL',
                     "timestamp": s.timestamp.isoformat() if s.timestamp else None,
                     "is_win": s.is_win,
                     "status": status,
-                    "hash_signature": s.hash_signature
+                    "hash_signature": s.hash_signature,
+                    # Analysis fields — stored in analysis_details JSON, not separate columns
+                    "smc_structure": details.get('smc_structure', 'Price Action'),
+                    "smc_zone": details.get('smc_zone', 'N/A'),
+                    "chart_pattern": details.get('chart_pattern', 'Momentum'),
+                    "fibonacci": details.get('fibonacci', 'N/A'),
+                    "rsi_status": details.get('rsi_status', 'N/A'),
                 }
                 output.append(d)
 
@@ -2050,16 +2058,22 @@ async def get_signals(pair: str = None, limit: int = 100, credentials: HTTPAutho
                     "id": s['id'],
                     "pair": s['pair'],
                     "direction": s['direction'],
-                    "entry_price": s['entry_price'],
+                    "entry_price": float(s['entry_price']) if s['entry_price'] else 0,
                     "expiration": s['expiration'],
-                    "winrate": s['winrate'],
-                    "score": s['score'],
-                    "payout": s['payout'],
-                    "classification": s.get('classification', 'N/A'),
+                    "winrate": s.get('winrate', 70) or 70,
+                    "score": s.get('score', 4),
+                    "payout": s.get('payout', 0),
+                    "classification": s.get('classification', 'SIGNAL'),
                     "timestamp": s['timestamp'],
                     "is_win": s.get('is_win'),
                     "status": status,
-                    "hash_signature": s.get('hash_signature', '')
+                    "hash_signature": s.get('hash_signature', ''),
+                    # Analysis fields from in-memory signal dict
+                    "smc_structure": s.get('smc_structure', 'Price Action'),
+                    "smc_zone": s.get('smc_zone', 'N/A'),
+                    "chart_pattern": s.get('chart_pattern', 'Momentum'),
+                    "fibonacci": s.get('fibonacci', 'N/A'),
+                    "rsi_status": s.get('rsi_status', 'N/A'),
                 }
                 output.append(d)
                 if len(output) >= limit:

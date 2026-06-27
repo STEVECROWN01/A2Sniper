@@ -248,8 +248,14 @@ export const useAppStore = create<AppState>((set, get) => ({
           return {
             ...s,
             status: s.is_win === true ? 'WON' : s.is_win === false ? 'LOST' : 'ACTIVE',
-            timestamp: new Date(tsStr || Date.now())
-          };
+            timestamp: new Date(tsStr || Date.now()),
+            // Ensure analysis fields are never undefined
+            smc_structure: (s.smc_structure as string) || 'Price Action',
+            smc_zone: (s.smc_zone as string) || 'N/A',
+            chart_pattern: (s.chart_pattern as string) || 'Momentum',
+            fibonacci: (s.fibonacci as string) || 'N/A',
+            rsi_status: (s.rsi_status as string) || 'N/A',
+          } as Signal;
         });
         set({ 
           signals: parsedSignals,
@@ -338,7 +344,13 @@ export const useAppStore = create<AppState>((set, get) => ({
         const parsedSignal = {
           ...data.signal,
           status: data.signal.is_win === true ? 'WON' : data.signal.is_win === false ? 'LOST' : 'ACTIVE',
-          timestamp: new Date(tsStr)
+          timestamp: new Date(tsStr),
+          // Ensure analysis fields are never undefined
+          smc_structure: data.signal.smc_structure || 'Price Action',
+          smc_zone: data.signal.smc_zone || 'N/A',
+          chart_pattern: data.signal.chart_pattern || 'Momentum',
+          fibonacci: data.signal.fibonacci || 'N/A',
+          rsi_status: data.signal.rsi_status || 'N/A',
         };
         set((state) => ({
           signals: [parsedSignal, ...state.signals.filter(s => s.id !== parsedSignal.id)]
