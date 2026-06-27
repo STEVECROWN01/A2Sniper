@@ -453,10 +453,11 @@ async def analyze_pair_instant(pair: str) -> dict:
 
     # Get raw tick data — this is the FAST path (no waiting for candles)
     ticks, asset_norm = po_scanner.get_tick_data(pair, max_ticks=300)
-    # Lowered from 15 to 5 ticks — even 5 ticks (2-5s of data) is enough
-    # to determine direction via linear regression. Better to produce a
-    # signal with lower confidence than no signal at all.
-    if len(ticks) < 5:
+    # Require at least 20 ticks for meaningful analysis.
+    # Previous threshold (5 ticks) produced 43% winrate — worse than random.
+    # With 20+ ticks (~10-20s of data), we have enough for reliable
+    # linear regression slope + consistency + volatility analysis.
+    if len(ticks) < 20:
         return None
 
     import numpy as np
@@ -613,13 +614,22 @@ async def analyze_pair_instant(pair: str) -> dict:
     if aligned_trend:
         score += 1
 
-    # Clamp to [4, 10] — minimum 4 (70% winrate), maximum 10 (95% winrate)
-    # Below 4 = rejected (insufficient confluence)
-    score = max(4, min(10, score))
+    # Clamp to [0, 10] — we do NOT force minimum 4 anymore.
+    # Previous code forced min score 4 (70% winrate) even for weak signals,
+    # which produced 43% actual winrate — dishonest and dangerous.
+    # Now we only emit signals with score >= 6 (80% winrate claim).
+    # Below 6 = rejected (insufficient confluence — return None).
+    score = min(10, score)
 
-    # Winrate mapping — same as quick-signal + extended for 90-95%
-    winrate_map = {4: 70, 5: 75, 6: 80, 7: 85, 8: 90, 9: 92, 10: 95}
-    winrate = winrate_map.get(score, 70)
+    # REJECT signals with low confidence — better to send no signal
+    # than a bad signal that loses the user's money.
+    # Score 0-5 = insufficient confluence, reject.
+    if score < 6:
+        return None
+
+    # Winrate mapping — only 80-95% (honest, high-confidence signals)
+    winrate_map = {6: 80, 7: 85, 8: 90, 9: 92, 10: 95}
+    winrate = winrate_map.get(score, 80)
 
     # ─── Dedup: 30s per pair (was 60s — shortened to allow more signals) ───
     now = datetime.now(timezone.utc)
@@ -806,12 +816,17 @@ async def analyze_pair_internal(pair: str, force: bool = False) -> dict:
             elif direction == 'PUT' and all(closes[i] > closes[i+1] for i in range(-5, -1)):
                 score += 1  # Perfect 5-candle downtrend
 
-        # Clamp to [4, 10] — minimum 4 (70%), maximum 10 (95%)
-        score = max(4, min(10, score))
+        # Do NOT force minimum score — only emit high-confidence signals.
+        # Score 0-5 = insufficient confluence, reject (return None).
+        # Previous code forced min 4 (70%) which produced 43% actual winrate.
+        score = min(10, score)
+        if score < 6:
+            logger.info(f"[QUICK-SIGNAL] pair={pair} score={score}/10 — REJECTED (below 6)")
+            return None
 
-        # Map score to winrate — extended range for 90-95%
-        winrate_map = {4: 70, 5: 75, 6: 80, 7: 85, 8: 90, 9: 92, 10: 95}
-        winrate = winrate_map.get(score, 70)
+        # Map score to winrate — only 80-95% (honest, high-confidence signals)
+        winrate_map = {6: 80, 7: 85, 8: 90, 9: 92, 10: 95}
+        winrate = winrate_map.get(score, 80)
 
         logger.info(
             f"[QUICK-SIGNAL] pair={pair} direction={direction} "
@@ -1806,162 +1821,22 @@ async def request_live_signal(request: Request, credentials: HTTPAuthorizationCr
         logger.info(f"[SIGNAL-REQUEST] ✅ Candle-based engine produced signal for {pair}")
         return {"status": "success", "signal": signal, "mode": "candle"}
 
-    logger.info(f"[SIGNAL-REQUEST] Both engines failed for {pair} — using guaranteed fallback")
-
-    # ═══ GUARANTEED SIGNAL FALLBACK ══════════════════════════════════
+    # ═══ NO SIGNAL AVAILABLE ════════════════════════════════════════
     # If both instant and candle-based analysis failed to produce a signal,
-    # but the user EXPLICITLY requested one, we MUST provide a signal.
-    # Use whatever tick data is available (even just 1-2 ticks) to determine
-    # direction. This ensures the user always gets a response when they click.
-    try:
-        ticks, asset_norm = po_scanner.get_tick_data(pair, max_ticks=100)
-
-        # If no tick data, try to get current price as a fallback
-        if not ticks or len(ticks) < 2:
-            try:
-                current_price = await po_scanner.get_current_price(pair)
-            except Exception as price_err:
-                logger.warning(f"[GUARANTEED-SIGNAL] get_current_price failed for {pair}: {price_err}")
-                current_price = None
-
-            if current_price is not None:
-                # Create minimal tick data from current price
-                # Use a slightly older price as "first" to determine direction
-                import time as _time
-                now_ts = _time.time()
-                ticks = [(now_ts - 1, current_price * 0.9999), (now_ts, current_price)]
-                logger.info(
-                    f"[GUARANTEED-SIGNAL] No tick data for {pair}, using current price "
-                    f"{current_price} as fallback"
-                )
-            else:
-                # Last resort: use a synthetic price based on payout (just to produce a signal)
-                # Direction will be CALL by default (slightly arbitrary, but better than no signal)
-                import time as _time
-                now_ts = _time.time()
-                synthetic_price = 1.0000  # Generic forex price
-                ticks = [(now_ts - 1, synthetic_price), (now_ts, synthetic_price * 1.0001)]
-                logger.warning(
-                    f"[GUARANTEED-SIGNAL] No tick data AND no current price for {pair} — "
-                    f"using synthetic price as last resort"
-                )
-
-        if ticks and len(ticks) >= 2:
-            import numpy as np
-            prices = np.array([p for _, p in ticks], dtype=float)
-            n = len(prices)
-            last_price = float(prices[-1])
-            first_price = float(prices[0])
-
-            # Direction: based on last vs first price
-            if last_price >= first_price:
-                direction = 'CALL'
-            else:
-                direction = 'PUT'
-
-            # Compute basic stats for the signal
-            if n >= 3:
-                try:
-                    slope = np.polyfit(np.arange(n, dtype=float), prices, 1)[0]
-                except Exception:
-                    slope = 0.0
-                avg_price = float(np.mean(prices))
-                momentum = abs(slope) / avg_price if avg_price > 0 else 0
-                # Score based on data availability
-                score = min(4 + (n // 10), 7)  # 4-7 based on tick count
-            else:
-                momentum = 0
-                score = 4  # Minimum score = 70% winrate
-
-            winrate_map = {4: 70, 5: 75, 6: 80, 7: 85}
-            winrate = winrate_map.get(score, 70)
-
-            # Expiration based on volatility (default 1m if can't compute)
-            expiration = 1
-            if n >= 2:
-                price_change = abs(prices[-1] - prices[-2]) / prices[-1] if prices[-1] > 0 else 0
-                if price_change > 0.001:
-                    expiration = 5
-                elif price_change > 0.0003:
-                    expiration = 3
-
-            now = datetime.now(timezone.utc)
-            guaranteed_signal = {
-                'id': f'SIG-{now.strftime("%Y%m%d")}-{uuid.uuid4().hex[:6].upper()}',
-                'pair': pair,
-                'direction': direction,
-                'time': now.strftime('%H:%M:%S'),
-                'timestamp': now.isoformat(),
-                'entry_price': last_price,
-                'expiration': expiration,
-                'winrate': winrate,
-                'score': score,
-                'raw_points': score,
-                'payout': real_payout,
-                'classification': 'GUARANTEED SIGNAL',
-                'smc_structure': f'Tick Direction ({direction})',
-                'smc_zone': f'{n} ticks analyzed',
-                'chart_pattern': 'Price Action',
-                'fibonacci': 'N/A',
-                'rsi_status': 'N/A',
-                'recommended_stake': 10,
-                'mtf_aligned': False,
-                'wyckoff': 'On-demand',
-                'divergences': [],
-            }
-
-            try:
-                guaranteed_signal['hash_signature'] = compliance.generate_immutable_log(guaranteed_signal)
-            except Exception:
-                guaranteed_signal['hash_signature'] = 'ERROR'
-
-            try:
-                async with AsyncSessionLocal() as session:
-                    db_signal = SignalRecord(
-                        id=guaranteed_signal['id'], pair=guaranteed_signal['pair'],
-                        direction=guaranteed_signal['direction'],
-                        entry_price=guaranteed_signal['entry_price'],
-                        expiration=guaranteed_signal['expiration'],
-                        winrate=guaranteed_signal['winrate'], score=guaranteed_signal['score'],
-                        payout=guaranteed_signal['payout'],
-                        classification=guaranteed_signal['classification'], timestamp=now,
-                        analysis_details={'mode': 'guaranteed_fallback', 'ticks': n, 'momentum': float(momentum)},
-                        hash_signature=guaranteed_signal['hash_signature']
-                    )
-                    session.add(db_signal)
-                    await session.commit()
-            except Exception as db_err:
-                logger.warning(f"[GUARANTEED-SIGNAL-DB-SAVE-ERROR] pair={pair} err={db_err}")
-
-            generated_signals.append(guaranteed_signal)
-            monitor.record_signal(guaranteed_signal['id'], pair, direction, winrate)
-
-            logger.info(
-                f"[GUARANTEED-SIGNAL] id={guaranteed_signal['id']} pair={pair} "
-                f"direction={direction} score={score}/10 winrate={winrate}% "
-                f"payout={real_payout}% ticks={n} (forced fallback for user request)"
-            )
-            return {"status": "success", "signal": guaranteed_signal, "mode": "guaranteed"}
-
-        # This should NEVER happen now (we always create synthetic ticks above)
-        # but keep as final safety net
-        logger.error(f"[GUARANTEED-SIGNAL] UNEXPECTED: no ticks after all fallbacks for {pair}")
-        raise HTTPException(
-            status_code=500,
-            detail=(
-                f"Erreur interne: impossible de générer un signal pour {pair}. "
-                f"Le scanner est connecté mais aucune donnée n'est disponible. "
-                f"Reconnectez votre SSID et réessayez."
-            )
+    # we do NOT generate a fake/guaranteed signal. That would be dishonest
+    # and would lose the user's money (43% winrate is worse than random).
+    #
+    # Instead, return an honest "no signal available" message.
+    # The user should try another pair or wait for more market data.
+    logger.info(f"[SIGNAL-REQUEST] ❌ No high-confidence signal available for {pair}")
+    raise HTTPException(
+        status_code=404,
+        detail=(
+            f"No high-confidence signal available for {pair} right now. "
+            f"The market conditions don't meet our analysis criteria. "
+            f"Try another pair or wait 30 seconds for more market data to accumulate."
         )
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"[GUARANTEED-SIGNAL-ERROR] pair={pair} err={e}", exc_info=True)
-        raise HTTPException(
-            status_code=500,
-            detail=f"Erreur lors de la génération du signal garanti: {str(e)}"
-        )
+    )
 
 
 @app.get("/api/signals")
