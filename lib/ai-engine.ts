@@ -51,16 +51,16 @@ export class AITradingEngine {
     HIGH: { maxRisk: 0.10, minWinrate: 75 }
   };
 
-  // Nouvelles méthodes pour conformité au document
+  // New methods for document compliance
   
-  // Collection de données market selon spécifications
+  // Market data collection per specifications
   async collectMarketData(): Promise<MarketData[]> {
     // Simulation de collecte multi-sources (Alpha Vantage, Yahoo Finance, Quandl)
     const sources = ['Alpha Vantage', 'Yahoo Finance', 'Quandl', 'WebSocket'];
     const data: MarketData[] = [];
     
     for (const source of sources) {
-      // Simulation de données haute fréquence (mise à jour toutes les secondes)
+      // High-frequency data simulation (updated every second)
       const sourceData = this.generateHighFrequencyData(source);
       data.push(...sourceData);
     }
@@ -68,12 +68,12 @@ export class AITradingEngine {
     return this.normalizeAndFilter(data);
   }
   
-  // Pipeline ETL selon spécifications
+  // ETL pipeline per specifications
   private normalizeAndFilter(rawData: MarketData[]): MarketData[] {
     // 1. Extraction (ETL)
     const extracted = rawData.filter(d => d.close > 0 && d.volume > 0);
     
-    // 2. Nettoyage (outliers, données manquantes)
+    // 2. Cleaning (outliers, missing data)
     const cleaned = extracted.filter(d => {
       const priceChange = Math.abs(d.high - d.low) / d.close;
       return priceChange < 0.1; // Suppression des outliers > 10%
@@ -85,12 +85,12 @@ export class AITradingEngine {
     return normalized;
   }
   
-  // Génération de données haute fréquence
+  // High-frequency data generation
   private generateHighFrequencyData(source: string): MarketData[] {
     const data: MarketData[] = [];
     const now = Date.now();
     
-    // Génération de 60 points (1 minute de données par seconde)
+    // Generating 60 points (1 minute of data per second)
     for (let i = 0; i < 60; i++) {
       const timestamp = new Date(now - (60 - i) * 1000);
       const basePrice = 1.0800 + Math.random() * 0.01;
@@ -114,7 +114,7 @@ export class AITradingEngine {
   
   // Alignement des timeframes
   private alignTimeframes(data: MarketData[]): MarketData[] {
-    // Agrégation par minute pour uniformiser les timeframes
+    // Per-minute aggregation to uniformize timeframes
     const minuteData = new Map<string, MarketData[]>();
     
     data.forEach(point => {
@@ -128,7 +128,7 @@ export class AITradingEngine {
       minuteData.get(key)!.push(point);
     });
     
-    // Création de bougies par minute
+    // Per-minute candle creation
     const aggregated: MarketData[] = [];
     minuteData.forEach((points, timeKey) => {
       if (points.length > 0) {
@@ -156,7 +156,7 @@ export class AITradingEngine {
     return aggregated.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
   }
   
-  // Génération de signaux selon format spécifié
+  // Signal generation per specified format
   generateFormattedSignal(signal: AISignal): string {
     const time = signal.timestamp.toLocaleTimeString('en-US');
     const direction = signal.direction;
@@ -168,7 +168,7 @@ export class AITradingEngine {
   
   private signalIntervalId: ReturnType<typeof setInterval> | null = null;
 
-  // Calcul de signaux toutes les minutes selon spécifications
+  // Signal calculation every minute per specifications
   startSignalGeneration(callback: (signal: string) => void): void {
     this.signalIntervalId = setInterval(async () => {
       try {
@@ -180,12 +180,12 @@ export class AITradingEngine {
           callback(formattedSignal);
         }
       } catch (error) {
-        console.error('Erreur génération signal:', error);
+        console.error('Signal generation error:', error);
       }
     }, 60000); // All les minutes
   }
 
-  // Stop de la génération de signaux
+  // Stop signal generation
   stopSignalGeneration(): void {
     if (this.signalIntervalId !== null) {
       clearInterval(this.signalIntervalId);
@@ -242,8 +242,8 @@ export class AITradingEngine {
     const bbRange = bbUpper - bbLower;
     const currentPrice = technicals.bollinger.middle;
     const bbPosition = bbRange > 0 ? (currentPrice - bbLower) / bbRange : 0.5;
-    if (bbPosition < 0.2) score += 0.1; // Proche de la bande inférieure
-    else if (bbPosition > 0.8) score -= 0.1; // Proche de la bande supérieure
+    if (bbPosition < 0.2) score += 0.1; // Near lower band
+    else if (bbPosition > 0.8) score -= 0.1; // Near upper band
     
     // Analysis ADX
     if (technicals.adx > 25) {
@@ -262,18 +262,18 @@ export class AITradingEngine {
     const recentPrices = marketHistory.slice(-10).map(d => d.close);
     const priceChanges = recentPrices.slice(1).map((price, i) => price - recentPrices[i]);
     
-    // Détection de tendance
+    // Trend detection
     const upMoves = priceChanges.filter(change => change > 0).length;
     const trendScore = upMoves / priceChanges.length;
     
-    // Analysis de la volatilité récente
+    // Recent volatility analysis
     const volatility = this.calculateVolatility(recentPrices);
     const volatilityScore = volatility < 0.02 ? 0.6 : 0.4;
     
     return (trendScore * 0.7) + (volatilityScore * 0.3);
   }
 
-  // Calcul de la volatilité
+  // Volatility calculation
   private calculateVolatility(prices: number[]): number {
     if (prices.length < 2) return 0;
     
@@ -305,7 +305,7 @@ export class AITradingEngine {
     const ema21 = TechnicalAnalysis.calculateEMA(recentPrices, 21);
     const trendStrength = (ema9 - ema21) / ema21;
     
-    // Support/Resistance simplifié
+    // Simplified Support/Resistance
     const highs = marketData.slice(-50).map(d => d.high);
     const lows = marketData.slice(-50).map(d => d.low);
     const resistance = Math.max(...highs);
@@ -330,7 +330,7 @@ export class AITradingEngine {
     };
   }
 
-  // Calcul du sentiment de market (déterministe, basé sur les indicateurs)
+  // Market sentiment calculation (deterministic, based on indicators)
   private calculateSentiment(priceChange1m: number, trendStrength: number): number {
     // Base sentiment from price momentum
     let sentiment = 0.5;
@@ -351,10 +351,10 @@ export class AITradingEngine {
     const hour = date.getHours();
     const day = date.getDay();
     
-    // Marché forex ouvert 24h/5j
+    // Forex market open 24h/5d
     if (day === 0 || day === 6) return false; // Weekend
     if (day === 1 && hour < 1) return false; // Lundi avant 1h
-    if (day === 5 && hour > 21) return false; // Vendredi après 21h
+    if (day === 5 && hour > 21) return false; // Friday after 21h
     
     return true;
   }
@@ -386,7 +386,7 @@ export class AITradingEngine {
     };
   }
 
-  // Génération des raisons du signal
+  // Signal reason generation
   private generateReasoning(technicals: TechnicalIndicators, features: MLFeatures, direction: 'CALL' | 'PUT'): string[] {
     const reasons: string[] = [];
     
@@ -406,24 +406,24 @@ export class AITradingEngine {
     
     // Analysis du volume
     if (features.volume_ratio > 1.5) {
-      reasons.push(`Volume élevé (${(features.volume_ratio * 100).toFixed(0)}% de la moyenne) - Confirmation du mouvement`);
+      reasons.push(`High volume (${(features.volume_ratio * 100).toFixed(0)}% of average) - Movement confirmation`);
     }
     
     // Analysis de tendance
     if (Math.abs(features.trend_strength) > 0.01) {
-      const trendDirection = features.trend_strength > 0 ? 'haussière' : 'baissière';
-      reasons.push(`Tendance ${trendDirection} confirmée par les EMA`);
+      const trendDirection = features.trend_strength > 0 ? 'bullish' : 'bearish';
+      reasons.push(`${trendDirection} trend confirmed by EMAs`);
     }
     
     // Analysis ADX
     if (technicals.adx > 25) {
-      reasons.push(`Force de tendance élevée (ADX: ${technicals.adx.toFixed(1)}) - Mouvement directionnel fort`);
+      reasons.push(`High trend strength (ADX: ${technicals.adx.toFixed(1)}) - Strong directional movement`);
     }
     
     return reasons;
   }
 
-  // Génération d'un signal AI complet
+  // Complete AI signal generation
   async generateSignal(pair: string, marketData: MarketData[]): Promise<AISignal | null> {
     try {
       // Extraction des features et indicateurs
@@ -462,7 +462,7 @@ export class AITradingEngine {
         return null;
       }
       
-      // Détermination de la direction
+      // Direction determination
       const direction: 'CALL' | 'PUT' = signalScore.base_probability > 0.5 ? 'CALL' : 'PUT';
       
       // Calcul des prix cibles
@@ -479,7 +479,7 @@ export class AITradingEngine {
         currentPrice * (1 - stopDistance) : 
         currentPrice * (1 + stopDistance);
       
-      // Génération du signal
+      // Signal generation
       const signal: AISignal = {
         id: `signal_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
         pair,
@@ -498,7 +498,7 @@ export class AITradingEngine {
       
       return signal;
     } catch (error) {
-      console.error('Erreur lors de la génération du signal:', error);
+      console.error('Error during signal generation:', error);
       return null;
     }
   }
@@ -536,10 +536,10 @@ export class AITradingEngine {
 
   // Calcul de l'expiration optimale
   private calculateExpiration(winrate: number): number {
-    if (winrate >= 95) return 1; // 1 minute pour haute précision
+    if (winrate >= 95) return 1; // 1 minute for high precision
     if (winrate >= 90) return 3; // 3 minutes
     if (winrate >= 85) return 5; // 5 minutes
-    return 5; // Par défaut
+    return 5; // Default
   }
 
   // Validation du signal
@@ -553,7 +553,7 @@ export class AITradingEngine {
     const riskConfig = this.riskLevels[signal.signal_score.risk_level];
     if (signal.winrate < riskConfig.minWinrate) return false;
     
-    // Verification de la cohérence des prix
+    // Price consistency verification
     const priceRange = Math.abs(signal.target_price - signal.entry_price) / signal.entry_price;
     if (priceRange > 0.1) return false; // Mouvement trop important
     

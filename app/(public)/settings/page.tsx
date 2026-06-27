@@ -632,7 +632,7 @@ export default function SettingsPage() {
 
                   <div className="space-y-6">
                     {[
-                      { key: 'signals' as const, title: 'Signaux de trading', desc: 'Recevoir les nouveaux signaux' },
+                      { key: 'signals' as const, title: 'Trading Signals', desc: 'Receive new signals' },
                       { key: 'performance' as const, title: 'Performance Reports', desc: 'Daily performance summary' },
                       { key: 'news' as const, title: 'Market News', desc: 'Important market information' },
                       { key: 'marketing' as const, title: 'Marketing Emails', desc: 'Offers and new features' }

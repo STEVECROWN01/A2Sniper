@@ -64,7 +64,7 @@ export function BacktestResults({ result, onClose }: BacktestResultsProps) {
       // Trades table
       if (result.trades.length > 0) {
         y = checkPageBreak(doc, y, 30);
-        y = drawSectionTitle(doc, 'Historique des trades', y);
+        y = drawSectionTitle(doc, 'Trade History', y);
         const headers = [
           { label: '#', width: 12 },
           { label: 'Pair', width: 28 },

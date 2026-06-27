@@ -124,7 +124,7 @@ export function SubscriptionPlans() {
             transition={{ duration: 0.5 }}
           >
             <h1 className="text-3xl md:text-4xl font-black text-white uppercase tracking-tight mb-4">
-              Abonnements <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#D4AF37] to-[#F3E5AB]">Founders</span>
+              Subscriptions <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#D4AF37] to-[#F3E5AB]">Founders</span>
             </h1>
             <p className="text-sm text-gray-400 font-bold max-w-2xl mx-auto mb-8">
               Unlock full access to the A2Sniper algorithmic stream and boost your performance.

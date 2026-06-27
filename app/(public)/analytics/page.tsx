@@ -51,11 +51,11 @@ export default function AnalyticsPage() {
     y = drawSectionTitle(doc, 'Resume de la periode', y);
     const cardW = 42;
     const gap = 3;
-    y = drawStatCard(doc, PAGE.marginL, y, cardW, 'Total Signaux', String(signals.length));
+    y = drawStatCard(doc, PAGE.marginL, y, cardW, 'Total Signals', String(signals.length));
     y = drawStatCard(doc, PAGE.marginL + cardW + gap, y - 21, cardW, 'Timeframe', selectedTimeframe, { valueColor: '#D4AF37' });
 
     y += 6;
-    y = drawSectionTitle(doc, 'Signaux', y);
+    y = drawSectionTitle(doc, 'Signals', y);
     if (signals.length > 0) {
       const headers = [
         { label: 'Pair', width: 30 },

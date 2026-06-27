@@ -142,12 +142,12 @@ export default function DashboardPage() {
     y = drawStatCard(doc, startX + (cardW + cardGap) * 2, y - 21, cardW, 'Win Rate', `${winRate.toFixed(1)}%`, { valueColor: '#D4AF37' });
     y = drawStatCard(doc, startX + (cardW + cardGap) * 3, y - 21, cardW, 'Active Signals', String(activeSignals), { valueColor: '#3B82F6' });
     y += 3;
-    y = drawStatCard(doc, startX, y, cardW, 'Profit Aujourd\'hui', `$${todayProfit.toFixed(2)}`, { valueColor: todayProfit >= 0 ? '#22C55E' : '#EF4444' });
+    y = drawStatCard(doc, startX, y, cardW, 'Today's Profit', `$${todayProfit.toFixed(2)}`, { valueColor: todayProfit >= 0 ? '#22C55E' : '#EF4444' });
     y = drawStatCard(doc, startX + cardW + cardGap, y - 21, cardW, 'Winrate Moyen', `${(avgWinrate || 0).toFixed(1)}%`, { valueColor: '#D4AF37' });
 
     // Signals Table
     y += 6;
-    y = drawSectionTitle(doc, 'Derniers Signaux', y);
+    y = drawSectionTitle(doc, 'Latest Signals', y);
     if (signals.length > 0) {
       const headers = [
         { label: 'Pair', width: 30 },
@@ -370,7 +370,7 @@ export default function DashboardPage() {
 
             {/* Recent Signals Summary */}
             <div className="bg-[#0a0a0c]/80 border border-white/5 p-8 rounded-3xl backdrop-blur-md">
-              <h2 className="text-lg font-black text-white uppercase tracking-wider mb-6">Flux de Signaux Sniper</h2>
+              <h2 className="text-lg font-black text-white uppercase tracking-wider mb-6">Sniper Signal Feed</h2>
               <div className="space-y-4">
                 {signals.length > 0 ? (
                   signals.slice(0, 5).map((signal, i) => (
@@ -444,7 +444,7 @@ export default function DashboardPage() {
                   </p>
                   {liveStatus === 'LIVE'
                     ? 'Secure WebSocket connection established.'
-                    : 'None connexion au flux de market. Connectez-vous via la page Signaux.'}
+                    : 'No connection to the market stream. Connect via the Signals page.'}
                 </div>
                 {systemStatus === 'offline' && (
                   <div className="p-3 border-l-2 border-red-500 bg-red-500/5 text-gray-400 rounded-r-xl">

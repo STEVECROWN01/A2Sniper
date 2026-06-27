@@ -1439,7 +1439,7 @@ function TradingJournalPanel({ onClose }: { onClose: () => void }) {
               </div>
             </div>
 
-            {/* Historique des Trades */}
+            {/* Trade History */}
             <div>
               <p className="text-xs font-black text-gray-400 uppercase tracking-widest mb-3">Detailed History</p>
               {validTrades.length === 0 ? (

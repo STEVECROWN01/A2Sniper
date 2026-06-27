@@ -111,7 +111,7 @@ export default function AdminSignalsPage() {
       userId: user?.id,
       avatarUrl: user?.avatar,
     };
-    const doc = createBrandedPDF('Admin - Signaux', 'Trading signals administration', pdfUser);
+    const doc = createBrandedPDF('Admin - Signals', 'Trading signals administration', pdfUser);
     let y = 58;
 
     // User info card

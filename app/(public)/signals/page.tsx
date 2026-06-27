@@ -420,7 +420,7 @@ export default function SignalsPage() {
               {/* Stats Bar */}
               <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
                 {[
-                  { label: 'Total Signaux', value: stats.total, color: 'text-gray-400 bg-white/[0.02]', icon: TrendingUp },
+                  { label: 'Total Signals', value: stats.total, color: 'text-gray-400 bg-white/[0.02]', icon: TrendingUp },
                   { label: 'Active', value: stats.active, color: 'text-[#D4AF37] bg-[#D4AF37]/10', icon: Clock },
                   { label: 'Won', value: stats.won, color: 'text-green-500 bg-green-500/10', icon: Target },
                   { label: 'Lost', value: stats.lost, color: 'text-red-500 bg-red-500/10', icon: TrendingUp }

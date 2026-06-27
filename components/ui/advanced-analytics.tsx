@@ -206,7 +206,7 @@ export function AdvancedAnalytics({ timeframe = '24H' }: AdvancedAnalyticsProps)
       y = drawSectionTitle(doc, 'Performance par heure', y);
       const headers = [
         { label: 'Heure', width: 30, align: 'center' as const },
-        { label: 'Signaux', width: 30, align: 'center' as const },
+        { label: 'Signals', width: 30, align: 'center' as const },
         { label: 'Win Rate', width: 30, align: 'center' as const },
         { label: 'Profit', width: 30, align: 'right' as const },
       ];
@@ -345,7 +345,7 @@ export function AdvancedAnalytics({ timeframe = '24H' }: AdvancedAnalyticsProps)
                 <XAxis dataKey="hour" tick={{ fill: '#6b7280', fontSize: 10, fontWeight: 700 }} axisLine={{ stroke: 'rgba(255,255,255,0.05)' }} />
                 <YAxis tick={{ fill: '#6b7280', fontSize: 10, fontWeight: 700 }} axisLine={{ stroke: 'rgba(255,255,255,0.05)' }} />
                 <Tooltip contentStyle={darkTooltipStyle} />
-                <Bar dataKey="signals" fill="#D4AF37" name="Signaux" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="signals" fill="#D4AF37" name="Signals" radius={[4, 4, 0, 0]} />
                 <Bar dataKey="accuracy" fill="#10B981" name="Accuracy %" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>

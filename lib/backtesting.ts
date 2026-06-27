@@ -196,7 +196,7 @@ export class BacktestEngine {
     
     const profitFactor = totalLoss > 0 ? totalProfit / totalLoss : totalProfit > 0 ? Infinity : 0;
     
-    // Sharpe ratio calculation (simplifié) — only from resolved trades
+    // Simplified Sharpe ratio calculation — only from resolved trades
     const returns = resolvedTrades.map(t => t.netProfit / initialBalance);
     const avgReturn = returns.length > 0 ? returns.reduce((sum, r) => sum + r, 0) / returns.length : 0;
     const returnStdDev = returns.length > 0 ? Math.sqrt(
@@ -204,7 +204,7 @@ export class BacktestEngine {
     ) : 0;
     const sharpeRatio = returnStdDev > 0 ? avgReturn / returnStdDev : 0;
     
-    // Calcul des séries consécutives — only from resolved trades
+    // Consecutive series calculation — only from resolved trades
     let currentWinStreak = 0;
     let currentLossStreak = 0;
     let maxWinStreak = 0;
@@ -243,7 +243,7 @@ export class BacktestEngine {
     };
   }
 
-  // Analysis de performance par période
+  // Performance analysis by period
   analyzePerformanceByPeriod(
     result: BacktestResult,
     period: 'daily' | 'weekly' | 'monthly'
@@ -288,7 +288,7 @@ export class BacktestEngine {
       periodData.trades.push(trade);
       periodData.profit += trade.netProfit;
       
-      // Calcul du drawdown pour la période
+      // Drawdown calculation for the period
       if (periodData.profit > periodData.peak) {
         periodData.peak = periodData.profit;
       } else if (periodData.peak > 0) {
@@ -309,7 +309,7 @@ export class BacktestEngine {
     }));
   }
 
-  // Optimisation des paramètres
+  // Parameter optimization
   async optimizeParameters(
     signals: AISignal[],
     baseConfig: BacktestConfig,
@@ -345,7 +345,7 @@ export class BacktestEngine {
             result
           });
           
-          // Évaluation basée sur le ratio de Sharpe et le profit net
+          // Evaluation based on Sharpe ratio and net profit
           const score = result.sharpeRatio * 0.6 + (result.netProfit / baseConfig.initialBalance) * 0.4;
           
           if (!bestResult || score > (bestResult.sharpeRatio * 0.6 + (bestResult.netProfit / baseConfig.initialBalance) * 0.4)) {
