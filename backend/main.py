@@ -824,6 +824,7 @@ async def analyze_pair_internal(pair: str, force: bool = False) -> dict:
         current_price = last_close
 
         # Expiration based on volatility
+        # Add pair-based variation so signals don't all have the same expiration
         if len(closes) >= 2:
             price_change = abs(closes[-1] - closes[-2]) / closes[-2]
             if price_change > 0.001:
@@ -834,6 +835,15 @@ async def analyze_pair_internal(pair: str, force: bool = False) -> dict:
                 expiration = 1  # Low volatility
         else:
             expiration = 5
+
+        # Add pair-based variation: use pair hash to sometimes pick a different expiration
+        # This ensures signals don't all have the same expiration at the same time
+        import hashlib
+        pair_hash = int(hashlib.md5(pair.encode()).hexdigest(), 16)
+        # 30% of pairs get a different expiration than what volatility suggests
+        if pair_hash % 10 < 3:
+            # Rotate: 1→3, 3→5, 5→1
+            expiration = {1: 3, 3: 5, 5: 1}.get(expiration, expiration)
 
         # Dedup check
         if not hasattr(analyze_pair_internal, '_last_signal_time'):
@@ -1188,6 +1198,15 @@ async def analyze_pair_internal(pair: str, force: bool = False) -> dict:
                 expiration = 1
         else:
             expiration = 5  # Default to 5min (safer)
+
+        # Add pair-based variation: use pair hash to sometimes pick a different expiration
+        # This ensures signals don't all have the same expiration at the same time
+        import hashlib
+        pair_hash = int(hashlib.md5(pair.encode()).hexdigest(), 16)
+        # 30% of pairs get a different expiration than what volatility suggests
+        if pair_hash % 10 < 3:
+            # Rotate: 1→3, 3→5, 5→1
+            expiration = {1: 3, 3: 5, 5: 1}.get(expiration, expiration)
 
         signal = {
             'id': f'SIG-{now.strftime("%Y%m%d")}-{uuid.uuid4().hex[:6].upper()}',
