@@ -8,7 +8,7 @@ export default function TelegramPage() {
   const features = [
     {
       icon: <Bot className="w-6 h-6" />,
-      title: "Moteur A2Sniper 3.0",
+      title: "A2Sniper 3.0 Engine",
       description: "Cutting-edge Assistant interface with multi-model consensus (LSTM/Transformer/XGBoost)."
     },
     {

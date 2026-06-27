@@ -126,7 +126,7 @@ export default function DashboardPage() {
       userId: user?.id,
       avatarUrl: user?.avatar,
     };
-    const doc = createBrandedPDF('Rapport Dashboard', 'Vue d\'ensemble des performances et signaux', pdfUser);
+    const doc = createBrandedPDF('Dashboard Report', 'Performance and signals overview', pdfUser);
     let y = 58;
 
     // User info card
@@ -143,7 +143,7 @@ export default function DashboardPage() {
     y = drawStatCard(doc, startX + (cardW + cardGap) * 3, y - 21, cardW, 'Active Signals', String(activeSignals), { valueColor: '#3B82F6' });
     y += 3;
     y = drawStatCard(doc, startX, y, cardW, 'Today's Profit', `$${todayProfit.toFixed(2)}`, { valueColor: todayProfit >= 0 ? '#22C55E' : '#EF4444' });
-    y = drawStatCard(doc, startX + cardW + cardGap, y - 21, cardW, 'Winrate Moyen', `${(avgWinrate || 0).toFixed(1)}%`, { valueColor: '#D4AF37' });
+    y = drawStatCard(doc, startX + cardW + cardGap, y - 21, cardW, 'Average Winrate', `${(avgWinrate || 0).toFixed(1)}%`, { valueColor: '#D4AF37' });
 
     // Signals Table
     y += 6;
@@ -175,7 +175,7 @@ export default function DashboardPage() {
     savePDF(doc, `a2sniper-dashboard-${dateStr}.pdf`, pdfUser);
     setJustExported(true);
     setTimeout(() => setJustExported(false), 2500);
-    toast.success('Rapport PDF exporte avec succes !');
+    toast.success('PDF report exported successfully!');
   };
 
   const TechnicalGauge = ({ value }: { value: number }) => {
@@ -226,7 +226,7 @@ export default function DashboardPage() {
         </div>
         <div className="mt-4 text-center">
           <div className="bg-[#D4AF37]/10 text-[#D4AF37] border border-[#D4AF37]/30 px-5 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest">
-            Signal Fort
+            Strong Signal
           </div>
         </div>
       </div>
@@ -284,7 +284,7 @@ export default function DashboardPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-10">
           <div>
             <h1 className="text-3xl font-black text-white uppercase tracking-tight">
-              Tableau de Bord
+              Dashboard
             </h1>
             <p className="text-sm text-gray-400 mt-1">Real-time monitoring of the neural signal stream.</p>
           </div>
@@ -313,7 +313,7 @@ export default function DashboardPage() {
           {[
             { label: 'Win Rate Global', value: winRate > 0 ? `${winRate.toFixed(1)}%` : 'N/A', icon: Target, color: 'text-[#D4AF37] bg-[#D4AF37]/10' },
             { label: 'Active Signals', value: activeSignals, icon: Zap, color: 'text-yellow-500 bg-yellow-500/10' },
-            { label: 'Profit Jour', value: `$${todayProfit.toFixed(0)}`, icon: DollarSign, color: 'text-green-500 bg-green-500/10' },
+            { label: 'Today's Profit', value: `$${todayProfit.toFixed(0)}`, icon: DollarSign, color: 'text-green-500 bg-green-500/10' },
             { label: 'Volume 24h', value: todaySignals.length, icon: BarChart3, color: 'text-purple-500 bg-purple-500/10' }
           ].map((stat, i) => (
             <motion.div
@@ -353,7 +353,7 @@ export default function DashboardPage() {
                   <TechnicalGauge value={gaugeValue} />
                   <div className="flex-1 space-y-6 w-full">
                     <div className="bg-[#050507] p-4 rounded-2xl border border-white/5">
-                      <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest mb-1">Winrate Moyen (Analysis)</p>
+                      <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest mb-1">Average Winrate (Analysis)</p>
                       <p className="text-md font-black text-transparent bg-clip-text bg-gradient-to-r from-[#D4AF37] to-[#F3E5AB]">
                         {avgWinrate > 0 ? `${avgWinrate.toFixed(1)}%` : 'Data insuffisantes'}
                       </p>
@@ -425,7 +425,7 @@ export default function DashboardPage() {
                    <span className="text-white">N/A</span>
                  </div>
                  <div className="flex justify-between text-xs font-bold text-gray-400">
-                   <span>Version Moteur:</span>
+                   <span>Engine Version:</span>
                    <span className="text-[#D4AF37]">N/A</span>
                  </div>
                </div>

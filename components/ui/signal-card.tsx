@@ -234,9 +234,9 @@ Timestamp: ${signal.timestamp.toLocaleString('en-US')}
           </div>
         </div>
 
-        {/* ─── Zone: Trade Now / Expire il y a ─── */}
+        {/* ─── Zone: Trade Now / Elapsed time ─── */}
         {/* Active signal → "Trade Now" button (replaces old duplicate result zone) */}
-        {/* Expired signal → "Expire il y a X" elapsed time */}
+        {/* Expired signal → "X ago" elapsed time */}
         {signal.status === 'ACTIVE' ? (
           <button
             onClick={(e) => {

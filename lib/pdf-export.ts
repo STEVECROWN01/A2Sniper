@@ -600,7 +600,7 @@ export function drawRiskBadge(
 ): number {
   const levelMap: Record<string, { color: string; label: string }> = {
     'Low': { color: BRAND.green, label: 'FAIBLE' },
-    'Medium': { color: BRAND.orange, label: 'MOYEN' },
+    'Medium': { color: BRAND.orange, label: 'MEDIUM' },
     'High': { color: BRAND.red, label: 'ELEVE' },
     'Critical': { color: '#DC2626', label: 'CRITIQUE' },
   };
