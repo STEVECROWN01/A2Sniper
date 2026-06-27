@@ -171,7 +171,7 @@ export const supportedAssets = {
   ],
 };
 
-// Métriques de performance — valeurs réalistes (N/A jusqu'à ce que les données réelles soient disponibles)
+// Metrics de performance — valeurs réalistes (N/A jusqu'à ce que les données réelles soient disponibles)
 export const performanceMetrics = {
   accuracy: 0, // À remplir par les données réelles de l'API
   verified_success_rate: 0, // À remplir par les données réelles de l'API

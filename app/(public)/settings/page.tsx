@@ -497,7 +497,7 @@ export default function SettingsPage() {
                   {/* Export & Delete Account */}
                   <div className="bg-[#0A0B0E] rounded-xl border border-[#1a1a2e] p-6">
                     <h2 className="text-lg font-semibold text-white mb-6">
-                      Données du compte
+                      Data du compte
                     </h2>
                     <div className="space-y-4">
                       <div className="flex items-center justify-between">
@@ -556,7 +556,7 @@ export default function SettingsPage() {
                           {deleteStep === 'CONFIRM' ? (
                             <>
                               <p className="text-sm text-gray-400 mb-6">
-                                Cette action est irréversible. Toutes vos données seront définitivement supprimées.
+                                Cette action est irréversible. All vos données seront définitivement supprimées.
                                 Tapez <span className="text-red-400 font-bold">SUPPRIMER</span> pour confirmer.
                               </p>
                               <input

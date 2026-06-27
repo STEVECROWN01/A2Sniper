@@ -182,7 +182,7 @@ export class AITradingEngine {
       } catch (error) {
         console.error('Erreur génération signal:', error);
       }
-    }, 60000); // Toutes les minutes
+    }, 60000); // All les minutes
   }
 
   // Arrêt de la génération de signaux
@@ -287,7 +287,7 @@ export class AITradingEngine {
   // Extraction des features ML
   private extractMLFeatures(marketData: MarketData[]): MLFeatures {
     if (marketData.length < 10) {
-      throw new Error('Données insuffisantes pour l\'analyse');
+      throw new Error('Data insuffisantes pour l\'analyse');
     }
 
     const latest = marketData[marketData.length - 1];

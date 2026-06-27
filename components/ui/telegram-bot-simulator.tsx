@@ -541,7 +541,7 @@ Zero Simulation. 100% Real-Market.`;
         addMessage("No signals available. The market is under surveillance. ⏳", 'bot');
       }
     } else if (userMessage.includes('/performance')) {
-      addMessage(`📈 REAL PERFORMANCE\n\n🎯 Win Rate: ${userStats.winRate.toFixed(2)}%\n📊 Signaux: ${userStats.todaySignals} aujourd'hui\n\nPure data. Zero simulation.`, 'bot', 'performance');
+      addMessage(`📈 REAL PERFORMANCE\n\n🎯 Win Rate: ${userStats.winRate.toFixed(2)}%\n📊 Signals: ${userStats.todaySignals} today'hui\n\nPure data. Zero simulation.`, 'bot', 'performance');
     } else if (userMessage.includes('/pairs') || userMessage.includes('/pairs')) {
       if (liveStatus !== 'LIVE') {
         addMessage("⚠️ Cannot list active pairs. No live market connection.", 'bot');
@@ -1116,7 +1116,7 @@ function RiskManagerPanel({ onClose }: { onClose: () => void }) {
       const headers = [
         { label: '#', width: 12 },
         { label: 'Resultat', width: 22, align: 'center' as const },
-        { label: 'Mise ($)', width: 28, align: 'right' as const },
+        { label: 'Stake ($)', width: 28, align: 'right' as const },
         { label: 'Retour ($)', width: 28, align: 'right' as const },
         { label: 'Balance ($)', width: 30, align: 'right' as const },
       ];
@@ -1403,14 +1403,14 @@ function TradingJournalPanel({ onClose }: { onClose: () => void }) {
           <div className="flex flex-col items-center justify-center h-full text-center space-y-4 opacity-50">
             <Info className="w-12 h-12 text-gray-500" />
             <p className="text-sm font-bold text-gray-400">No saved sessions.</p>
-            <p className="text-xs text-gray-500">Utilisez le Risk Manager pour planifier et sauvegarder vos trades.</p>
+            <p className="text-xs text-gray-500">Utilisez le Risk Manager to plan et sauvegarder vos trades.</p>
           </div>
         ) : (
           <>
             {/* Vue d'ensemble */}
             <div className="bg-gradient-to-br from-[#D4AF37]/10 to-[#C5A059]/10 border border-[#D4AF37]/20 p-5 rounded-2xl space-y-4">
               <div className="flex justify-between items-center border-b border-[#D4AF37]/20 pb-3">
-                <span className="text-xs font-black text-[#D4AF37] uppercase tracking-widest">Aperçu Global</span>
+                <span className="text-xs font-black text-[#D4AF37] uppercase tracking-widest">Global Overview</span>
                 <span className="text-[10px] font-bold text-gray-500">Session {sessionData.sessionCounter}</span>
               </div>
               <div className="grid grid-cols-2 gap-4">
@@ -1441,9 +1441,9 @@ function TradingJournalPanel({ onClose }: { onClose: () => void }) {
 
             {/* Historique des Trades */}
             <div>
-              <p className="text-xs font-black text-gray-400 uppercase tracking-widest mb-3">Historique Détaillé</p>
+              <p className="text-xs font-black text-gray-400 uppercase tracking-widest mb-3">Detailed History</p>
               {validTrades.length === 0 ? (
-                <p className="text-xs text-gray-500 italic text-center py-4 bg-[#121216] rounded-xl">Aucun trade enregistré dans cette session.</p>
+                <p className="text-xs text-gray-500 italic text-center py-4 bg-[#121216] rounded-xl">No trades recorded in this session.</p>
               ) : (
                 <div className="space-y-2">
                   {validTrades.map((t, idx: number) => {
@@ -1456,7 +1456,7 @@ function TradingJournalPanel({ onClose }: { onClose: () => void }) {
                             #{idx + 1}
                           </div>
                           <div>
-                            <p className="text-xs font-black text-white">Mise: ${t.amount}</p>
+                            <p className="text-xs font-black text-white">Stake: ${t.amount}</p>
                             <p className={`text-[10px] font-bold ${isWin ? 'text-green-500' : 'text-red-500'}`}>
                               {t.result}
                             </p>
@@ -1488,7 +1488,7 @@ function InfoModal({ type, onClose, stats }: { type: 'DISCLAIMER' | 'AIDE' | 'PE
       icon: <ShieldAlert className="w-8 h-8 text-red-500" />,
       body: (
         <div className="text-left space-y-4">
-          <p className="font-bold text-red-400 uppercase tracking-widest text-[10px]">Attention : Risque élevé</p>
+          <p className="font-bold text-red-400 uppercase tracking-widest text-[10px]">Warning: High Risk</p>
           <p>Trading binary options and Forex carries a very high level of risk and may not be suitable for all investors.</p>
           <ul className="list-disc pl-4 space-y-2 text-gray-300">
             <li>Leverage can work both in your favor and against you.</li>
@@ -1504,12 +1504,12 @@ function InfoModal({ type, onClose, stats }: { type: 'DISCLAIMER' | 'AIDE' | 'PE
       icon: <Info className="w-8 h-8 text-[#D4AF37]" />,
       body: (
         <div className="text-left space-y-4">
-          <p className="font-bold text-[#D4AF37] uppercase tracking-widest text-[10px]">Étapes de déploiement</p>
+          <p className="font-bold text-[#D4AF37] uppercase tracking-widest text-[10px]">Deployment Steps</p>
           <ol className="list-decimal pl-4 space-y-3 text-gray-300">
             <li><strong>Connectivité</strong> : Make sure you have provided a valid SSID and that the 'CONNECTED' indicator is green.</li>
             <li><strong>Analyze</strong>: Click on <span className="text-[#D4AF37]">Currency Pairs</span> to see current market opportunities.</li>
-            <li><strong>Exécution</strong> : Suivez la direction signalée (<span className="text-green-400">CALL</span> ou <span className="text-red-400">PUT</span>) et le temps d'expiration exact affiché.</li>
-            <li><strong>Gestion du risque</strong> : Utilisez l'outil <span className="text-red-400">Risk Manager</span> pour planifier vos sessions et protéger votre capital.</li>
+            <li><strong>Exécution</strong> : Follow the signaled direction (<span className="text-green-400">CALL</span> ou <span className="text-red-400">PUT</span>) et le temps d'expiration exact affiché.</li>
+            <li><strong>Risk Management</strong> : Use the <span className="text-red-400">Risk Manager</span> to plan vos sessions et protéger votre capital.</li>
             <li><strong>Stratégie</strong> : Our system uses a tripartite consensus validating SMC structures and institutional zones before delivering a signal.</li>
           </ol>
         </div>
@@ -1520,18 +1520,18 @@ function InfoModal({ type, onClose, stats }: { type: 'DISCLAIMER' | 'AIDE' | 'PE
       icon: <BarChart4 className="w-8 h-8 text-[#D4AF37]" />,
       body: (
         <div className="text-left space-y-4">
-          <p className="font-bold text-[#D4AF37] uppercase tracking-widest text-[10px]">Statistiques en temps réel</p>
+          <p className="font-bold text-[#D4AF37] uppercase tracking-widest text-[10px]">Real-time Statistics</p>
           <div className="bg-black/50 border border-gray-800 rounded-xl p-4 space-y-3">
             <div className="flex justify-between items-center">
               <span className="text-gray-400">Winrate Global</span>
               <span className="font-black text-green-400 text-lg">{stats.winRate.toFixed(2)}%</span>
             </div>
             <div className="flex justify-between items-center">
-              <span className="text-gray-400">Signaux du jour</span>
+              <span className="text-gray-400">Today's Signals</span>
               <span className="font-black text-white">{stats.todaySignals}</span>
             </div>
             <div className="flex justify-between items-center">
-              <span className="text-gray-400">Profit estimé (lot $10)</span>
+              <span className="text-gray-400">Estimated Profit ($10 lot)</span>
               <span className="font-black text-[#D4AF37]">+${(stats.todaySignals * 0.92 * 10 * (stats.winRate / 100)).toFixed(2)}</span>
             </div>
           </div>
@@ -1545,7 +1545,7 @@ function InfoModal({ type, onClose, stats }: { type: 'DISCLAIMER' | 'AIDE' | 'PE
               Execution Latency : &lt; 150ms
             </li>
           </ul>
-          <p className="text-[10px] text-gray-600 font-bold uppercase text-center mt-2">Données extraites directement du Kernel A2Sniper AI.</p>
+          <p className="text-[10px] text-gray-600 font-bold uppercase text-center mt-2">Data extracted directly from the A2Sniper AI Kernel.</p>
         </div>
       )
     }

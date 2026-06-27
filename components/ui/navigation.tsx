@@ -356,7 +356,7 @@ export function Navigation() {
                   className="flex items-center space-x-3 text-xs font-bold text-red-400 hover:text-red-300 w-full"
                 >
                   <LogOut className="w-4 h-4" />
-                  <span>Se déconnecter</span>
+                  <span>Logout</span>
                 </button>
               </div>
             </motion.div>

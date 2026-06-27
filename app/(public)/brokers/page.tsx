@@ -155,7 +155,7 @@ export default function BrokersPage() {
               <Shield className="w-12 h-12 mx-auto mb-4 text-[#D4AF37]" />
               <h3 className="text-xl font-black text-white uppercase tracking-wider mb-4">Sécurité et Conformité</h3>
               <p className="text-xs text-gray-400 font-bold mb-8 max-w-2xl mx-auto leading-relaxed">
-                Tous nos courtiers partenaires sont régulés et offrent une sécurité maximale pour vos fonds. 
+                All nos courtiers partenaires sont régulés et offrent une sécurité maximale pour vos fonds. 
                 A2Sniper ne stocke aucune information financière personnelle.
               </p>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-center">

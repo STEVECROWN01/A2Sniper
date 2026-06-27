@@ -48,7 +48,7 @@ const plans = [
     description: 'Pour les traders professionnels',
     features: [
       'Unlimited signals',
-      'Signaux Sniper Score 10/10 + alerte VIP',
+      'Sniper Signals Score 10/10 + VIP alert',
       'Backtesting sur 5 ans',
       'Full Access API access',
       'Personalized coaching (4h/month)',
@@ -262,18 +262,18 @@ export function SubscriptionPlans() {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8 text-center">
             <div className="flex flex-col items-center p-4">
               <Shield className="w-10 h-10 text-[#D4AF37] mb-4" />
-              <h3 className="text-sm font-bold text-white uppercase mb-2 tracking-wider">Garantie 30 jours</h3>
+              <h3 className="text-sm font-bold text-white uppercase mb-2 tracking-wider">30-day Guarantee</h3>
               <p className="text-xs text-gray-500 font-bold">Remboursement intégral si vous n&apos;êtes pas satisfait</p>
             </div>
             <div className="flex flex-col items-center p-4">
               <Zap className="w-10 h-10 text-[#D4AF37] mb-4" />
-              <h3 className="text-sm font-bold text-white uppercase mb-2 tracking-wider">Activation instantanée</h3>
-              <p className="text-xs text-gray-500 font-bold">Accès immédiat après confirmation de la blockchain ou banque</p>
+              <h3 className="text-sm font-bold text-white uppercase mb-2 tracking-wider">Instant Activation</h3>
+              <p className="text-xs text-gray-500 font-bold">Immediate access after blockchain or bank confirmation</p>
             </div>
             <div className="flex flex-col items-center p-4">
               <Crown className="w-10 h-10 text-[#D4AF37] mb-4" />
               <h3 className="text-sm font-bold text-white uppercase mb-2 tracking-wider">Support premium</h3>
-              <p className="text-xs text-gray-500 font-bold">Équipe dédiée en direct 24/7 sur le cockpit</p>
+              <p className="text-xs text-gray-500 font-bold">Dedicated live team 24/7 on the cockpit</p>
             </div>
           </div>
         </motion.div>
@@ -319,7 +319,7 @@ export function SubscriptionPlans() {
 
             {/* Coming Soon Banner */}
             <div className="bg-yellow-500/10 border border-yellow-500/20 rounded-xl p-4 mb-4 text-center">
-              <p className="text-yellow-500 text-xs font-bold uppercase tracking-wider mb-1">🚧 Paiement bientôt disponible</p>
+              <p className="text-yellow-500 text-xs font-bold uppercase tracking-wider mb-1">🚧 Payment coming soon</p>
               <p className="text-gray-400 text-[10px]">L&apos;intégration Stripe est en cours. Aucun paiement ne sera traité pour le moment.</p>
             </div>
 
@@ -352,7 +352,7 @@ export function SubscriptionPlans() {
                   ) : (
                     <>
                       <Clock className="w-3.5 h-3.5" />
-                      <span>Bientôt disponible</span>
+                      <span>Coming soon</span>
                     </>
                   )}
                 </button>

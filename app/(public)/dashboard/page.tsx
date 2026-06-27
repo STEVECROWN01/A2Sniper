@@ -301,7 +301,7 @@ export default function DashboardPage() {
             <button
               onClick={handleExport}
               className={`p-3 rounded-xl transition-all ${justExported ? 'bg-green-500 text-white' : 'bg-[#0a0a0c] border border-white/5 hover:bg-white/[0.03] text-gray-400 hover:text-white'}`}
-              title={justExported ? 'PDF exporté !' : 'Exporter en PDF'}
+              title={justExported ? 'PDF exported!' : 'Exporter en PDF'}
             >
               {justExported ? <Check className="w-5 h-5" /> : <Download className="w-5 h-5" />}
             </button>
@@ -327,7 +327,7 @@ export default function DashboardPage() {
                 <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${stat.color}`}>
                   <stat.icon className="w-5 h-5" />
                 </div>
-                <span className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Réel</span>
+                <span className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Real</span>
               </div>
               <p className="text-xs text-gray-400 font-bold uppercase tracking-wider">{stat.label}</p>
               <p className="text-2xl font-black text-white mt-1 tracking-tight">{stat.value}</p>
@@ -355,11 +355,11 @@ export default function DashboardPage() {
                     <div className="bg-[#050507] p-4 rounded-2xl border border-white/5">
                       <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest mb-1">Winrate Moyen (Analysis)</p>
                       <p className="text-md font-black text-transparent bg-clip-text bg-gradient-to-r from-[#D4AF37] to-[#F3E5AB]">
-                        {avgWinrate > 0 ? `${avgWinrate.toFixed(1)}%` : 'Données insuffisantes'}
+                        {avgWinrate > 0 ? `${avgWinrate.toFixed(1)}%` : 'Data insuffisantes'}
                       </p>
                     </div>
                     <div className="bg-[#050507] p-4 rounded-2xl border border-white/5">
-                      <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest mb-1">Intégrité des Données</p>
+                      <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest mb-1">Intégrité des Data</p>
                       <p className={`text-md font-black ${liveStatus === 'LIVE' ? 'text-green-500' : 'text-gray-500'}`}>
                         {liveStatus === 'LIVE' ? 'WebSocket Pocket Option Connecté' : 'WebSocket Déconnecté'}
                       </p>
@@ -407,8 +407,8 @@ export default function DashboardPage() {
                <div className="absolute top-0 right-0 p-8 opacity-[0.03] pointer-events-none">
                  <Zap className="w-64 h-64 text-white" />
                </div>
-               <h3 className="font-black text-lg uppercase tracking-wider mb-2 text-transparent bg-clip-text bg-gradient-to-r from-[#D4AF37] to-[#F3E5AB]">Compte Founders</h3>
-               <p className="text-xs text-gray-400 font-bold mb-6">Tous les moteurs de sniping sont pleinement opérationnels.</p>
+               <h3 className="font-black text-lg uppercase tracking-wider mb-2 text-transparent bg-clip-text bg-gradient-to-r from-[#D4AF37] to-[#F3E5AB]">Founders Account</h3>
+               <p className="text-xs text-gray-400 font-bold mb-6">All sniping engines are fully operational.</p>
                <div className="space-y-4">
                  <div className="flex justify-between text-xs font-bold text-gray-400">
                    <span>System Status:</span>
@@ -444,7 +444,7 @@ export default function DashboardPage() {
                   </p>
                   {liveStatus === 'LIVE'
                     ? 'Secure WebSocket connection established.'
-                    : 'Aucune connexion au flux de market. Connectez-vous via la page Signaux.'}
+                    : 'None connexion au flux de market. Connectez-vous via la page Signaux.'}
                 </div>
                 {systemStatus === 'offline' && (
                   <div className="p-3 border-l-2 border-red-500 bg-red-500/5 text-gray-400 rounded-r-xl">

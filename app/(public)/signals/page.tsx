@@ -105,7 +105,7 @@ export default function SignalsPage() {
     if (!result.success) {
       setConnectError(result.message);
     } else {
-      toast.success('Connecté au market Pocket Option !');
+      toast.success('Connected to Pocket Option market!');
     }
     // NOTE: We intentionally do NOT clear the SSID field on success or failure
     // so the user can see what they pasted and it survives a page refresh.
@@ -163,7 +163,7 @@ export default function SignalsPage() {
     y = drawStatCard(doc, PAGE.marginL, y, cardW, 'Total', String(stats.total));
     y = drawStatCard(doc, PAGE.marginL + cardW + gap, y - 21, cardW, 'Active', String(stats.active), { valueColor: '#3B82F6' });
     y = drawStatCard(doc, PAGE.marginL + (cardW + gap) * 2, y - 21, cardW, 'Gagnes', String(stats.won), { valueColor: '#22C55E' });
-    y = drawStatCard(doc, PAGE.marginL + (cardW + gap) * 3, y - 21, cardW, 'Perdus', String(stats.lost), { valueColor: '#EF4444' });
+    y = drawStatCard(doc, PAGE.marginL + (cardW + gap) * 3, y - 21, cardW, 'Losts', String(stats.lost), { valueColor: '#EF4444' });
     y += 6;
 
     // Signals table
@@ -212,7 +212,7 @@ export default function SignalsPage() {
             >
               <div>
                 <h1 className="text-2xl font-black text-white uppercase tracking-tight">
-                  Signaux de Trading A2Sniper
+                  A2Sniper Trading Signals
                 </h1>
                 <p className="text-gray-400 max-w-3xl text-xs font-bold leading-relaxed mt-1">
                   {liveStatus === 'LIVE' 
@@ -240,7 +240,7 @@ export default function SignalsPage() {
                     onClick={() => disconnectMarket()}
                     className="px-3 py-2 bg-red-500/10 text-red-500 rounded-xl text-[10px] font-black uppercase tracking-wider hover:bg-red-500 hover:text-white transition-all border border-red-500/20"
                   >
-                    Déconnecter
+                    Disconnect
                   </button>
                 )}
 
@@ -256,7 +256,7 @@ export default function SignalsPage() {
                 <button
                   onClick={handleExportSignals}
                   className={`p-2 rounded-xl transition-colors ${justExported ? 'bg-green-500 text-white border border-green-400' : 'bg-[#0a0a0c] text-green-500 border border-white/5 hover:bg-white/[0.03]'}`}
-                  title={justExported ? 'PDF exporté !' : 'Exporter les signaux'}
+                  title={justExported ? 'PDF exported!' : 'Export signals'}
                 >
                   {justExported ? <Check className="w-5 h-5" /> : <Download className="w-5 h-5" />}
                 </button>
@@ -281,7 +281,7 @@ export default function SignalsPage() {
                     <div className="w-10 h-10 bg-[#D4AF37]/10 border border-[#D4AF37]/20 rounded-xl flex items-center justify-center text-[#D4AF37]">
                       <Settings className="w-5 h-5" />
                     </div>
-                    Login au Marché
+                    Market Login
                   </h2>
                   <p className="text-xs text-gray-400 mb-6 font-bold leading-relaxed">
                     For A2Sniper 3.0 to analyze the Pocket Option WebSocket stream in real time, you must enter the active authentication string (SSID) below.
@@ -317,7 +317,7 @@ export default function SignalsPage() {
 
                 <div className="w-full lg:w-96 space-y-6">
                   <div className="bg-[#050507] p-6 rounded-2xl border border-white/5">
-                    <label className="block text-[10px] font-black text-gray-400 mb-2 uppercase tracking-widest">Chaîne SSID (Trame d'auth)</label>
+                    <label className="block text-[10px] font-black text-gray-400 mb-2 uppercase tracking-widest">SSID (Auth Frame)</label>
                     <textarea
                       value={ssid}
                       onChange={(e) => { setSsid(e.target.value); setConnectError(''); }}
@@ -378,7 +378,7 @@ export default function SignalsPage() {
                       ) : (
                         <>
                           <Zap className="w-4 h-4" />
-                          Connecter au Marché
+                          Connect to Market
                         </>
                       )}
                     </button>
@@ -390,7 +390,7 @@ export default function SignalsPage() {
                         className="w-full py-3 rounded-xl font-black uppercase tracking-[0.15em] text-[10px] transition-all flex items-center justify-center gap-2 bg-white/[0.03] text-gray-400 border border-white/5 hover:bg-white/[0.06] hover:text-white hover:border-[#D4AF37]/30"
                       >
                         <Wifi className="w-3.5 h-3.5" />
-                        Reconnecter avec le SSID sauvegardé
+                        Reconnect with saved SSID
                       </button>
                     )}
                     
@@ -473,10 +473,10 @@ export default function SignalsPage() {
                     onChange={(e) => setSelectedStatus(e.target.value)}
                     className="w-full px-4 py-2.5 bg-[#050507] border border-white/5 rounded-xl focus:outline-none focus:border-[#D4AF37] text-xs font-bold text-white"
                   >
-                    <option value="ALL">Tous les statuts</option>
+                    <option value="ALL">All Statuses</option>
                     <option value="ACTIVE">Active</option>
-                    <option value="WON">Gagné</option>
-                    <option value="LOST">Perdu</option>
+                    <option value="WON">Won</option>
+                    <option value="LOST">Lost</option>
                     <option value="EXPIRED">Expired</option>
                   </select>
 

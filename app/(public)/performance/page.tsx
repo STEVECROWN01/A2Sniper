@@ -64,7 +64,7 @@ export default function PerformancePage() {
     }).filter(stat => stat.totalTrades > 0);
   }, [filteredSignals]);
 
-  // Données pour le graphique (réelles)
+  // Data pour le graphique (réelles)
   const chartData = useMemo(() => {
     const dailyMap: Record<string, { winRate: number; total: number; profit: number }> = {};
     filteredSignals.forEach(s => {
@@ -234,7 +234,7 @@ export default function PerformancePage() {
         { label: 'Trades', width: 20, align: 'center' as const },
         { label: 'Win Rate', width: 25, align: 'center' as const },
         { label: 'Gagnes', width: 20, align: 'center' as const },
-        { label: 'Perdus', width: 20, align: 'center' as const },
+        { label: 'Losts', width: 20, align: 'center' as const },
         { label: 'Profit', width: 30, align: 'right' as const },
       ];
       const rows = pairStats.map(p => [
@@ -256,7 +256,7 @@ export default function PerformancePage() {
         { label: 'Mois', width: 35 },
         { label: 'Trades', width: 25, align: 'center' as const },
         { label: 'Gagnes', width: 25, align: 'center' as const },
-        { label: 'Perdus', width: 25, align: 'center' as const },
+        { label: 'Losts', width: 25, align: 'center' as const },
         { label: 'Win Rate', width: 25, align: 'center' as const },
         { label: 'Profit', width: 30, align: 'right' as const },
       ];
@@ -378,7 +378,7 @@ export default function PerformancePage() {
           <div className="mb-8">
             <PerformanceChart 
               data={chartData.length > 0 ? chartData : [{ date: new Date().toISOString().split('T')[0], winRate: 0, totalTrades: 0, profit: 0 }]}
-              title="Évolution de la performance (Données Réelles)"
+              title="Évolution de la performance (Data Realles)"
             />
           </div>
 
@@ -407,8 +407,8 @@ export default function PerformancePage() {
                     <th className="text-left py-3 px-4 font-medium text-white">Trades</th>
                     <th className="text-left py-3 px-4 font-medium text-white">Success Rate</th>
                     <th className="text-left py-3 px-4 font-medium text-white">Profit</th>
-                    <th className="text-left py-3 px-4 font-medium text-white">Gagnés</th>
-                    <th className="text-left py-3 px-4 font-medium text-white">Perdus</th>
+                    <th className="text-left py-3 px-4 font-medium text-white">Wons</th>
+                    <th className="text-left py-3 px-4 font-medium text-white">Losts</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -527,7 +527,7 @@ export default function PerformancePage() {
               className="bg-[#0A0B0E] rounded-xl border border-[#1a1a2e] p-6"
             >
               <h3 className="text-lg font-semibold text-white mb-4">
-                Métriques de risque
+                Metrics de risque
               </h3>
               {!riskMetrics ? (
                 <div className="text-center py-8">

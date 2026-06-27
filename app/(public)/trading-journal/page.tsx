@@ -165,7 +165,7 @@ export default function TradingJournalPage() {
     // Win/Loss Breakdown
     y = drawSectionTitle(doc, 'Répartition des Trades', y);
     y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Trades Réussis (WIN)', `${stats.wins}`, { valueColor: '#22C55E' });
-    y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Trades Perdus (LOSS)', `${stats.losses}`, { valueColor: '#EF4444' });
+    y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Trades Losts (LOSS)', `${stats.losses}`, { valueColor: '#EF4444' });
     y += 2;
 
     // Risk Level
@@ -177,12 +177,12 @@ export default function TradingJournalPage() {
     // Trades Table
     if (validTrades.length > 0) {
       y = checkPageBreak(doc, y, 30);
-      y = drawSectionTitle(doc, 'Historique Détaillé des Trades', y);
+      y = drawSectionTitle(doc, 'Detailed History des Trades', y);
 
       const headers = [
         { label: '#', width: 12 },
         { label: 'Result', width: 22, align: 'center' as const },
-        { label: 'Mise ($)', width: 28, align: 'right' as const },
+        { label: 'Stake ($)', width: 28, align: 'right' as const },
         { label: 'Profit / Perte ($)', width: 35, align: 'right' as const },
         { label: 'Cumul ($)', width: 28, align: 'right' as const },
       ];
@@ -250,7 +250,7 @@ export default function TradingJournalPage() {
           <div className="w-16 h-16 bg-white/[0.02] border border-white/5 rounded-2xl flex items-center justify-center mx-auto mb-6 text-gray-500">
             <Calendar className="w-8 h-8" />
           </div>
-          <h2 className="text-lg font-black text-white uppercase mb-2">Aucune session active</h2>
+          <h2 className="text-lg font-black text-white uppercase mb-2">None session active</h2>
           <p className="text-sm text-gray-400 font-bold mb-6 max-w-md mx-auto leading-relaxed">
             Pour voir vos statistiques et historique de trades, veuillez d&apos;abord configurer et sauvegarder une session dans le Risk Manager (via le Bot Telegram ou l&apos;onglet Risk Manager).
           </p>
@@ -305,7 +305,7 @@ export default function TradingJournalPage() {
                   <span className="text-green-500">{stats.wins}</span>
                 </div>
                 <div className="flex justify-between text-gray-400">
-                  <span>Trades Perdus (LOSS) :</span>
+                  <span>Trades Losts (LOSS) :</span>
                   <span className="text-red-500">{stats.losses}</span>
                 </div>
               </div>
@@ -321,7 +321,7 @@ export default function TradingJournalPage() {
 
           {/* Right panel: Detailed list */}
           <div className="lg:col-span-8 bg-[#0a0a0c]/80 border border-white/5 p-6 rounded-3xl backdrop-blur-md space-y-6">
-            <h3 className="text-sm font-black text-white uppercase tracking-wider">Historique Détaillé des Trades</h3>
+            <h3 className="text-sm font-black text-white uppercase tracking-wider">Detailed History des Trades</h3>
             {validTrades.length === 0 ? (
               <p className="text-xs text-gray-500 font-bold italic text-center py-12 bg-[#050507]/40 rounded-2xl border border-white/5">
                 Aucun trade enregistré dans cette session active.
@@ -348,7 +348,7 @@ export default function TradingJournalPage() {
                           #{idx + 1}
                         </div>
                         <div>
-                          <p className="text-xs font-black text-white">Mise: ${t.amount}</p>
+                          <p className="text-xs font-black text-white">Stake: ${t.amount}</p>
                           <p className={`text-[9px] font-black uppercase tracking-wider ${isWin ? 'text-green-500' : 'text-red-500'}`}>
                             {t.result}
                           </p>
@@ -394,7 +394,7 @@ export default function TradingJournalPage() {
                 <h3 className="text-lg font-bold text-white">Réinitialiser le journal</h3>
               </div>
               <p className="text-sm text-gray-400 mb-6 leading-relaxed">
-                Voulez-vous vraiment réinitialiser le journal de trading ? Toutes les données de session et l&apos;historique des trades seront définitivement effacés.
+                Voulez-vous vraiment réinitialiser le journal de trading ? All les données de session et l&apos;historique des trades seront définitivement effacés.
               </p>
               <div className="flex gap-3">
                 <button

@@ -14,7 +14,7 @@ export default function TelegramPage() {
     {
       icon: <Zap className="w-6 h-6" />,
       title: "Real-time Signals",
-      description: "Données extraites directement du flux WebSocket Pocket Option. Zéro latence."
+      description: "Data extraites directement du flux WebSocket Pocket Option. Zéro latence."
     },
     {
       icon: <ShieldCheck className="w-6 h-6" />,

@@ -158,7 +158,7 @@ export function AdvancedAnalytics({ timeframe = '24H' }: AdvancedAnalyticsProps)
       setData({ liveData, performanceByHour, timeframeDistribution, pairPerformance });
     } catch (err) {
       console.error('Failed to load analytics data', err);
-      setError('Impossible de charger les données analytiques. Vérifiez votre connexion.');
+      setError('Cannot load analytics data. Check your connection.');
     } finally {
       setIsLoading(false);
     }
@@ -170,7 +170,7 @@ export function AdvancedAnalytics({ timeframe = '24H' }: AdvancedAnalyticsProps)
 
   const handleRefresh = () => {
     loadAnalyticsData(true);
-    toast.success('Analytics rafraîchis !');
+    toast.success('Analytics refreshed!');
   };
 
   const handleExport = async () => {
@@ -194,7 +194,7 @@ export function AdvancedAnalytics({ timeframe = '24H' }: AdvancedAnalyticsProps)
     if (data.liveData) {
       const cardW = 42;
       const gap = 3;
-      y = drawStatCard(doc, PAGE.marginL, y, cardW, 'Signaux Generes', String(data.liveData.signalsGenerated || 0));
+      y = drawStatCard(doc, PAGE.marginL, y, cardW, 'Signals Generated', String(data.liveData.signalsGenerated || 0));
       y = drawStatCard(doc, PAGE.marginL + cardW + gap, y - 21, cardW, 'Precision IA', data.liveData.aiAccuracy > 0 ? `${data.liveData.aiAccuracy.toFixed(1)}%` : 'N/A', { valueColor: '#D4AF37' });
       y = drawStatCard(doc, PAGE.marginL + (cardW + gap) * 2, y - 21, cardW, 'Profit Moyen', data.liveData.avgProfit !== 0 ? `$${data.liveData.avgProfit.toFixed(2)}` : 'N/A', { valueColor: data.liveData.avgProfit >= 0 ? '#22C55E' : '#EF4444' });
       y += 6;
@@ -283,13 +283,13 @@ export function AdvancedAnalytics({ timeframe = '24H' }: AdvancedAnalyticsProps)
 
   return (
     <div className="space-y-8">
-      {/* Métriques */}
+      {/* Metrics */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
         {[
-          { label: 'Signaux Générés', value: data.liveData.signalsGenerated.toString(), sub: timeframe, icon: TrendingUp, color: 'text-[#D4AF37] bg-[#D4AF37]/10' },
+          { label: 'Signals Generated', value: data.liveData.signalsGenerated.toString(), sub: timeframe, icon: TrendingUp, color: 'text-[#D4AF37] bg-[#D4AF37]/10' },
           { label: 'Accuracy', value: data.liveData.aiAccuracy > 0 ? `${data.liveData.aiAccuracy.toFixed(1)}%` : 'N/A', sub: 'Real data', icon: Zap, color: 'text-green-400 bg-green-500/10' },
           { label: 'Profit Moyen', value: data.liveData.avgProfit !== 0 ? `$${data.liveData.avgProfit.toFixed(2)}` : 'N/A', sub: 'Par signal', icon: Target, color: 'text-purple-400 bg-purple-500/10' },
-          { label: 'Temps Exécution', value: data.liveData.avgExecutionTime > 0 ? `${data.liveData.avgExecutionTime.toFixed(0)}s` : 'N/A', sub: 'Moyenne', icon: Clock, color: 'text-[#D4AF37] bg-[#D4AF37]/10' },
+          { label: 'Execution Time', value: data.liveData.avgExecutionTime > 0 ? `${data.liveData.avgExecutionTime.toFixed(0)}s` : 'N/A', sub: 'Moyenne', icon: Clock, color: 'text-[#D4AF37] bg-[#D4AF37]/10' },
         ].map((metric, i) => (
           <motion.div
             key={i}
@@ -407,7 +407,7 @@ export function AdvancedAnalytics({ timeframe = '24H' }: AdvancedAnalyticsProps)
                 <tr className="border-b border-white/5">
                   <th className="text-left py-3 px-4 text-[10px] font-bold text-gray-500 uppercase tracking-wider">Pair</th>
                   <th className="text-left py-3 px-4 text-[10px] font-bold text-gray-500 uppercase tracking-wider">Trades</th>
-                  <th className="text-left py-3 px-4 text-[10px] font-bold text-gray-500 uppercase tracking-wider">Taux Réussite</th>
+                  <th className="text-left py-3 px-4 text-[10px] font-bold text-gray-500 uppercase tracking-wider">Success Rate</th>
                   <th className="text-left py-3 px-4 text-[10px] font-bold text-gray-500 uppercase tracking-wider">Profit</th>
                   <th className="text-left py-3 px-4 text-[10px] font-bold text-gray-500 uppercase tracking-wider">Tendance</th>
                 </tr>

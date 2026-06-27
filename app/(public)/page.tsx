@@ -444,7 +444,7 @@ export default function HomePage() {
           </div>
           
           <div className="border-t border-white/5 mt-12 pt-8 text-center text-xs text-gray-600 font-bold uppercase tracking-widest">
-            <p>&copy; 2024-2026 A2Sniper. Tous droits réservés.</p>
+            <p>&copy; 2024-2026 A2Sniper. All droits réservés.</p>
           </div>
         </div>
       </footer>

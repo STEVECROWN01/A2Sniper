@@ -268,7 +268,7 @@ export default function RiskManagerPage() {
       const headers = [
         { label: '#', width: 12 },
         { label: 'Resultat', width: 22, align: 'center' as const },
-        { label: 'Mise ($)', width: 28, align: 'right' as const },
+        { label: 'Stake ($)', width: 28, align: 'right' as const },
         { label: 'Retour ($)', width: 28, align: 'right' as const },
         { label: 'Balance ($)', width: 30, align: 'right' as const },
       ];
@@ -547,7 +547,7 @@ export default function RiskManagerPage() {
                         : riskLevel === 'High'
                         ? 'Votre winrate ou votre gain est négatif. Réduisez la taille des mises et respectez le plan de gestion du risque.'
                         : riskLevel === 'Medium'
-                        ? 'Données insuffisantes ou performances mitigées. La discipline est essentielle — ne dépassez pas 5% du capital par trade.'
+                        ? 'Data insuffisantes ou performances mitigées. La discipline est essentielle — ne dépassez pas 5% du capital par trade.'
                         : 'Ne dépassez jamais 10% de votre capital sur un seul trade, même avec une précision sniper. La discipline est la clé du succès.'
                       }
                     </p>
@@ -580,7 +580,7 @@ export default function RiskManagerPage() {
                     <h3 className="text-lg font-bold text-white">Réinitialiser la session</h3>
                   </div>
                   <p className="text-sm text-gray-400 mb-6">
-                    Voulez-vous vraiment réinitialiser la session actuelle ? Toutes les données de trading seront effacées.
+                    Voulez-vous vraiment réinitialiser la session actuelle ? All les données de trading seront effacées.
                   </p>
                   <div className="flex gap-3">
                     <button
