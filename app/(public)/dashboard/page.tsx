@@ -142,7 +142,7 @@ export default function DashboardPage() {
     y = drawStatCard(doc, startX + (cardW + cardGap) * 2, y - 21, cardW, 'Win Rate', `${winRate.toFixed(1)}%`, { valueColor: '#D4AF37' });
     y = drawStatCard(doc, startX + (cardW + cardGap) * 3, y - 21, cardW, 'Active Signals', String(activeSignals), { valueColor: '#3B82F6' });
     y += 3;
-    y = drawStatCard(doc, startX, y, cardW, 'Today's Profit', `$${todayProfit.toFixed(2)}`, { valueColor: todayProfit >= 0 ? '#22C55E' : '#EF4444' });
+    y = drawStatCard(doc, startX, y, cardW, "Today's Profit", `$${todayProfit.toFixed(2)}`, { valueColor: todayProfit >= 0 ? '#22C55E' : '#EF4444' });
     y = drawStatCard(doc, startX + cardW + cardGap, y - 21, cardW, 'Average Winrate', `${(avgWinrate || 0).toFixed(1)}%`, { valueColor: '#D4AF37' });
 
     // Signals Table
@@ -313,7 +313,7 @@ export default function DashboardPage() {
           {[
             { label: 'Win Rate Global', value: winRate > 0 ? `${winRate.toFixed(1)}%` : 'N/A', icon: Target, color: 'text-[#D4AF37] bg-[#D4AF37]/10' },
             { label: 'Active Signals', value: activeSignals, icon: Zap, color: 'text-yellow-500 bg-yellow-500/10' },
-            { label: 'Today's Profit', value: `$${todayProfit.toFixed(0)}`, icon: DollarSign, color: 'text-green-500 bg-green-500/10' },
+            { label: "Today's Profit", value: `$${todayProfit.toFixed(0)}`, icon: DollarSign, color: 'text-green-500 bg-green-500/10' },
             { label: 'Volume 24h', value: todaySignals.length, icon: BarChart3, color: 'text-purple-500 bg-purple-500/10' }
           ].map((stat, i) => (
             <motion.div
