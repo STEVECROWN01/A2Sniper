@@ -288,6 +288,10 @@ export function TelegramBotSimulator() {
   // Track which signal messages have expired (by message id) — used to stop
   // the pulse animation when the signal expires.
   const [expiredSignalIds, setExpiredSignalIds] = useState<Set<string>>(new Set());
+  // Scroll position tracking for scroll-to-top / scroll-to-bottom buttons
+  const [isAtTop, setIsAtTop] = useState(true);
+  const [isAtBottom, setIsAtBottom] = useState(true);
+  const [showScrollButtons, setShowScrollButtons] = useState(false);
 
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const initializedRef = useRef(false);
@@ -446,9 +450,30 @@ export function TelegramBotSimulator() {
     if (scrollContainerRef.current) {
       scrollContainerRef.current.scrollTo({
         top: scrollContainerRef.current.scrollHeight,
-        behavior: 'smooth'
+        behavior: 'smooth',
       });
     }
+  };
+
+  const scrollToTop = () => {
+    if (scrollContainerRef.current) {
+      scrollContainerRef.current.scrollTo({
+        top: 0,
+        behavior: 'smooth',
+      });
+    }
+  };
+
+  // Track scroll position to enable/disable scroll buttons
+  const handleScroll = () => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    const atTop = el.scrollTop <= 5;
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight <= 5;
+    setIsAtTop(atTop);
+    setIsAtBottom(atBottom);
+    // Show scroll buttons when user has scrolled (not at both top and bottom)
+    setShowScrollButtons(!(atTop && atBottom));
   };
 
   // Message ID counter to avoid collisions
@@ -660,7 +685,7 @@ Zero Simulation. 100% Real-Market.`;
       </div>
 
       {/* Messages Area */}
-      <div ref={scrollContainerRef} className="flex-1 overflow-y-auto p-4 space-y-3 z-10 no-scrollbar scrollbar-hide relative">
+      <div ref={scrollContainerRef} onScroll={handleScroll} className="flex-1 overflow-y-auto p-4 space-y-3 z-10 no-scrollbar scrollbar-hide relative">
         <AnimatePresence>
           {messages.map((message) => (
             <motion.div
@@ -869,6 +894,36 @@ Zero Simulation. 100% Real-Market.`;
           </div>
         )}
       </div>
+
+      {/* Scroll-to-top / Scroll-to-bottom buttons (stacked vertically, right side) */}
+      {showScrollButtons && (
+        <div className="absolute right-3 bottom-24 z-30 flex flex-col gap-1.5">
+          <button
+            onClick={scrollToTop}
+            disabled={isAtTop}
+            className={`w-9 h-9 rounded-lg flex items-center justify-center border transition-all shadow-lg ${
+              isAtTop
+                ? 'bg-gray-800/30 border-gray-700/30 text-gray-600 cursor-not-allowed opacity-50'
+                : 'bg-[#1a1a1e]/90 border-[#D4AF37]/30 text-[#D4AF37] hover:bg-[#D4AF37]/20 hover:border-[#D4AF37]/50 active:scale-95'
+            }`}
+            title="Scroll to top"
+          >
+            <ChevronLeft className="w-4 h-4 rotate-90" />
+          </button>
+          <button
+            onClick={scrollToBottom}
+            disabled={isAtBottom}
+            className={`w-9 h-9 rounded-lg flex items-center justify-center border transition-all shadow-lg ${
+              isAtBottom
+                ? 'bg-gray-800/30 border-gray-700/30 text-gray-600 cursor-not-allowed opacity-50'
+                : 'bg-[#1a1a1e]/90 border-[#D4AF37]/30 text-[#D4AF37] hover:bg-[#D4AF37]/20 hover:border-[#D4AF37]/50 active:scale-95'
+            }`}
+            title="Scroll to bottom"
+          >
+            <ChevronRight className="w-4 h-4 rotate-90" />
+          </button>
+        </div>
+      )}
 
       {/* Removed bottom SSID input form as it is now inline in the chat */}
 
