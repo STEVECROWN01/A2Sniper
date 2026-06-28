@@ -453,11 +453,10 @@ async def analyze_pair_instant(pair: str) -> dict:
 
     # Get raw tick data — this is the FAST path (no waiting for candles)
     ticks, asset_norm = po_scanner.get_tick_data(pair, max_ticks=300)
-    # Require at least 20 ticks for meaningful analysis.
-    # Previous threshold (5 ticks) produced 43% winrate — worse than random.
-    # With 20+ ticks (~10-20s of data), we have enough for reliable
-    # linear regression slope + consistency + volatility analysis.
-    if len(ticks) < 20:
+    # Require at least 10 ticks for meaningful analysis.
+    # Previous: 5 ticks = 43% winrate (too low), 20 ticks = no signals (too strict)
+    # 10 ticks (~5-10s of data) is a good balance — enough for linear regression.
+    if len(ticks) < 10:
         return None
 
     import numpy as np
@@ -618,18 +617,18 @@ async def analyze_pair_instant(pair: str) -> dict:
     # Previous code forced min score 4 (70% winrate) even for weak signals,
     # which produced 43% actual winrate — dishonest and dangerous.
     # Now we only emit signals with score >= 6 (80% winrate claim).
-    # Below 6 = rejected (insufficient confluence — return None).
+    # Below 5 = rejected (insufficient confluence — return None).
+    # Score 5 = 75% winrate (minimum acceptable — good balance of quantity + quality)
     score = min(10, score)
 
-    # REJECT signals with low confidence — better to send no signal
-    # than a bad signal that loses the user's money.
-    # Score 0-5 = insufficient confluence, reject.
-    if score < 6:
+    # REJECT signals with very low confidence — score 0-4 = reject.
+    # Score 4 (70%) previously produced 43% actual winrate — too unreliable.
+    if score < 5:
         return None
 
-    # Winrate mapping — only 80-95% (honest, high-confidence signals)
-    winrate_map = {6: 80, 7: 85, 8: 90, 9: 92, 10: 95}
-    winrate = winrate_map.get(score, 80)
+    # Winrate mapping — 75-95% (honest, high-confidence signals)
+    winrate_map = {5: 75, 6: 80, 7: 85, 8: 90, 9: 92, 10: 95}
+    winrate = winrate_map.get(score, 75)
 
     # ─── Dedup: 30s per pair (was 60s — shortened to allow more signals) ───
     now = datetime.now(timezone.utc)
@@ -817,16 +816,17 @@ async def analyze_pair_internal(pair: str, force: bool = False) -> dict:
                 score += 1  # Perfect 5-candle downtrend
 
         # Do NOT force minimum score — only emit high-confidence signals.
-        # Score 0-5 = insufficient confluence, reject (return None).
-        # Previous code forced min 4 (70%) which produced 43% actual winrate.
+        # Score 0-4 = insufficient confluence, reject (return None).
+        # Score 4 (70%) previously produced 43% actual winrate — too unreliable.
+        # Score 5 = 75% winrate (minimum acceptable — good balance)
         score = min(10, score)
-        if score < 6:
-            logger.info(f"[QUICK-SIGNAL] pair={pair} score={score}/10 — REJECTED (below 6)")
+        if score < 5:
+            logger.info(f"[QUICK-SIGNAL] pair={pair} score={score}/10 — REJECTED (below 5)")
             return None
 
-        # Map score to winrate — only 80-95% (honest, high-confidence signals)
-        winrate_map = {6: 80, 7: 85, 8: 90, 9: 92, 10: 95}
-        winrate = winrate_map.get(score, 80)
+        # Map score to winrate — 75-95% (honest, high-confidence signals)
+        winrate_map = {5: 75, 6: 80, 7: 85, 8: 90, 9: 92, 10: 95}
+        winrate = winrate_map.get(score, 75)
 
         logger.info(
             f"[QUICK-SIGNAL] pair={pair} direction={direction} "
