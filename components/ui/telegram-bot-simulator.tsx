@@ -897,7 +897,7 @@ Zero Simulation. 100% Real-Market.`;
 
       {/* Scroll-to-top / Scroll-to-bottom buttons (stacked vertically, right side) */}
       {showScrollButtons && (
-        <div className="absolute right-3 bottom-24 z-30 flex flex-col gap-1.5">
+        <div className="absolute right-3 bottom-44 z-30 flex flex-col gap-1.5">
           <button
             onClick={scrollToTop}
             disabled={isAtTop}
