@@ -58,7 +58,7 @@ export default function SignalsPage() {
     if (selectedStatus === 'ACTIVE' || selectedStatus === 'ALL') {
       const latest12 = result
         .sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime())
-        .slice(0, 12);
+        .slice(0, 50);
       
       return latest12.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
     }

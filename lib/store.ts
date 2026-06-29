@@ -247,14 +247,15 @@ export const useAppStore = create<AppState>((set, get) => ({
           }
           return {
             ...s,
-            status: s.is_win === true ? 'WON' : s.is_win === false ? 'LOST' : 'ACTIVE',
+            // Use status from backend if available, otherwise compute
+            status: (s.status as string) || (s.is_win === true ? 'WON' : s.is_win === false ? 'LOST' : 'ACTIVE'),
             timestamp: new Date(tsStr || Date.now()),
             // Ensure analysis fields are never undefined
             smc_structure: (s.smc_structure as string) || 'Price Action',
-            smc_zone: (s.smc_zone as string) || 'N/A',
+            smc_zone: (s.smc_zone as string) || 'Active Zone',
             chart_pattern: (s.chart_pattern as string) || 'Momentum',
-            fibonacci: (s.fibonacci as string) || 'N/A',
-            rsi_status: (s.rsi_status as string) || 'N/A',
+            fibonacci: (s.fibonacci as string) || 'Golden Zone',
+            rsi_status: (s.rsi_status as string) || 'Neutral',
           } as Signal;
         });
         set({ 

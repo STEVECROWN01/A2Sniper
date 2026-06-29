@@ -1834,22 +1834,52 @@ async def request_live_signal(request: Request, credentials: HTTPAuthorizationCr
 
 
 @app.get("/api/signals")
-async def get_signals(pair: str = None, limit: int = 100, credentials: HTTPAuthorizationCredentials = Security(security)):
+async def get_signals(pair: str = None, limit: int = 200, credentials: HTTPAuthorizationCredentials = Security(security)):
     # Validate token type and check revocation
     payload = decode_access_token(credentials.credentials)
     _jti = payload.get("jti")
     if _jti and await is_token_revoked(_jti):
         raise HTTPException(status_code=401, detail="Token has been revoked")
 
-    # Validate and clamp limit to prevent memory exhaustion
+    # Validate and clamp limit — allow up to 500 for full history
     limit = max(1, min(limit, 500))
 
     # Build the output list — try DB first, fall back to in-memory deque
     output = []
     now = datetime.now(timezone.utc)
 
+    # Get total count from DB (not limited by the query limit)
+    total_in_db = 0
+    active_count = 0
+    won_count = 0
+    lost_count = 0
+
     try:
         async with AsyncSessionLocal() as session:
+            # First, get ALL signals to count them properly
+            count_query = select(SignalRecord)
+            if pair:
+                count_query = count_query.where(SignalRecord.pair == pair)
+            count_result = await session.execute(count_query)
+            all_db_signals = count_result.scalars().all()
+            total_in_db = len(all_db_signals)
+
+            # Count by status
+            for s in all_db_signals:
+                sig_time = s.timestamp
+                if sig_time and sig_time.tzinfo is None:
+                    sig_time = sig_time.replace(tzinfo=timezone.utc)
+                expiration_seconds = (s.expiration or 5) * 60
+                age_seconds = (now - sig_time).total_seconds() if sig_time else 999
+
+                if s.is_win is True:
+                    won_count += 1
+                elif s.is_win is False:
+                    lost_count += 1
+                elif age_seconds < expiration_seconds:
+                    active_count += 1
+
+            # Now get the limited set for display (most recent first)
             query = select(SignalRecord).order_by(SignalRecord.timestamp.desc()).limit(limit)
             if pair:
                 query = query.where(SignalRecord.pair == pair)
@@ -1950,7 +1980,10 @@ async def get_signals(pair: str = None, limit: int = 100, credentials: HTTPAutho
 
         return {
             "signals": output,
-            "total": len(output),
+            "total": total_in_db if total_in_db > 0 else len(output),
+            "active_count": active_count,
+            "won_count": won_count,
+            "lost_count": lost_count,
             "live_status": "LIVE" if po_scanner.is_connected else "DISCONNECTED"
         }
 

@@ -26,16 +26,12 @@ export function SignalCard({ signal }: SignalCardProps) {
         const clockOffset = useAppStore.getState().clockOffset || 0;
         const now = Date.now() + clockOffset;
         
-        // Find the next candle boundary after signal creation
-        const signalTime = signal.timestamp.getTime();
-        const minutes = signal.timestamp.getMinutes();
-        const minutesToBoundary = signal.expiration - (minutes % signal.expiration);
-        
-        const boundaryDate = new Date(signal.timestamp);
-        boundaryDate.setSeconds(0, 0);
-        boundaryDate.setMinutes(boundaryDate.getMinutes() + minutesToBoundary);
-        
-        const remaining = boundaryDate.getTime() - now;
+        // Expiry = signal timestamp + expiration minutes
+        // Each signal expires at its OWN time — different countdown per signal
+        const expMinutes = Number(signal.expiration) || 1;
+        const expiryTime = signal.timestamp.getTime() + (expMinutes * 60 * 1000);
+
+        const remaining = expiryTime - now;
         return remaining <= 0 ? 0 : remaining;
       };
 
@@ -367,6 +363,16 @@ Timestamp: ${signal.timestamp.toLocaleString('en-US')}
                   <p className="text-[9px] text-gray-500 font-bold uppercase tracking-wider mb-1">Sniper Entry Price</p>
                   <p className="text-md font-mono font-black text-white">{signal.entry_price.toFixed(5)}</p>
                 </div>
+
+                {/* Countdown Timer — real-time remaining for active signals */}
+                {signal.status === 'ACTIVE' && (
+                  <div className="p-3 bg-[#050507] rounded-xl border border-[#D4AF37]/20">
+                    <p className="text-[9px] text-gray-500 font-bold uppercase tracking-wider mb-1">Time Remaining</p>
+                    <p className={`text-lg font-black font-mono ${timeLeft < 30000 ? 'text-[#D4AF37] animate-pulse' : 'text-white'}`}>
+                      {formatTime(timeLeft)}
+                    </p>
+                  </div>
+                )}
 
                 {/* Algorithmic Details */}
                 <div className="p-4 bg-[#050507] border border-white/5 rounded-xl space-y-2.5 font-bold text-xs">
