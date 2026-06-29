@@ -2050,6 +2050,46 @@ class PocketOptionScanner:
 
         asyncio.create_task(_subscribe_all_forex())
 
+        # ═══ PREFETCH HISTORICAL CANDLES VIA REST API ════════════════
+        # Fetch 100 one-minute candles for each forex pair via PO's REST API.
+        # This gives us IMMEDIATE candle data for technical analysis (RSI,
+        # EMA, MACD, Bollinger) without waiting for ticks to build candles.
+        #
+        # With 100 candles available instantly, the trading loop can run
+        # full CDC analysis (RSI, EMA, MACD, Bollinger) within 5-10 seconds
+        # of connecting — producing real, high-confidence signals.
+        async def _prefetch_candles_rest():
+            try:
+                # Wait for asset list to arrive (updateAssets)
+                await asyncio.sleep(3)
+                forex_pairs = [
+                    sym for sym, entry in self._payouts.items()
+                    if entry.get("is_active", True) and _FOREX_FILTER_AVAILABLE and _is_forex_pair(sym)
+                ]
+                if not forex_pairs:
+                    logger.warning("[SCANNER] No forex pairs found for REST candle prefetch")
+                    return
+
+                logger.info(f"[SCANNER] Prefetching 100 candles via REST API for {len(forex_pairs)} forex pairs...")
+                fetched = 0
+                for i, symbol in enumerate(forex_pairs):
+                    try:
+                        df = await self._fetch_candles_http(symbol, 60, 100)
+                        if df is not None and not df.empty:
+                            cache_key = f"{symbol}_1m"
+                            self._candles_cache[cache_key] = df
+                            fetched += 1
+                            if i < 3 or i % 20 == 0:
+                                logger.info(f"[SCANNER] REST candles fetched: {symbol} ({len(df)} bars) — {i+1}/{len(forex_pairs)}")
+                        # No delay — REST API can handle parallel requests
+                    except Exception:
+                        pass
+                logger.info(f"[SCANNER] ✅ REST candle prefetch complete: {fetched}/{len(forex_pairs)} pairs have historical data")
+            except Exception as e:
+                logger.warning(f"[SCANNER] REST candle prefetch error: {e}")
+
+        asyncio.create_task(_prefetch_candles_rest())
+
     # ═══════════ MARKET DATA ═══════════
 
     def get_asset_symbol(self, pair: str) -> str:
@@ -2060,26 +2100,16 @@ class PocketOptionScanner:
         return symbol
 
     async def get_candles(self, pair: str, timeframe: str = "1m", count: int = 100) -> pd.DataFrame:
-        """
-        Récupère les bougies OHLCV du marché.
-        Tente via WebSocket, fallback sur l'API REST de Pocket Option.
-        """
-        if not self._is_authenticated or not self._ws:
-            # Even without WS auth, the HTTP fallback is a public endpoint
-            # and may still return data — try it before giving up.
-            asset = self.get_asset_symbol(pair)
-            tf_seconds = {
-                "1m": 60, "5m": 300, "15m": 900, "30m": 1800,
-                "1h": 3600, "4h": 14400, "1d": 86400,
-            }
-            tf_sec = tf_seconds.get(timeframe, 60)
-            df = await self._fetch_candles_http(asset, tf_sec, count)
-            if not df.empty:
-                return df
-            return pd.DataFrame()
+        """Fetch OHLCV candles — checks REST-prefetched cache FIRST.
 
+        Priority:
+        1. REST-prefetched cache (instant — 100 candles available within 3s of connect)
+        2. WebSocket loadHistoryPeriod (async — arrives after changeSymbol)
+        3. REST API direct fetch (fallback)
+        4. Tick-aggregated candles (last resort — slow, needs 1+ minutes)
+        """
         asset = self.get_asset_symbol(pair)
-        
+
         # Map timeframe to seconds
         tf_seconds = {
             "1m": 60, "5m": 300, "15m": 900, "30m": 1800,
@@ -2087,6 +2117,17 @@ class PocketOptionScanner:
         }
         tf_sec = tf_seconds.get(timeframe, 60)
 
+        # ═══ 1. CHECK REST-PREFETCHED CACHE FIRST ══════════════════
+        # This is the FAST path — candles were fetched via REST API on connect.
+        # With 100 candles available instantly, we can run full CDC analysis
+        # (RSI, EMA, MACD, Bollinger) within 5 seconds of connecting.
+        cache_key = f"{asset}_1m"
+        cached_df = self._candles_cache.get(cache_key)
+        if cached_df is not None and not cached_df.empty:
+            logger.info(f"[SCANNER-CANDLE-HIT] asset={asset} tf={timeframe} bars={len(cached_df)} (REST cache)")
+            return cached_df.copy()
+
+        # ═══ 2. TRY WEBSOCKET changeSymbol / loadHistoryPeriod ══════
         try:
             cache_key = f"{asset}_{timeframe}"
 
