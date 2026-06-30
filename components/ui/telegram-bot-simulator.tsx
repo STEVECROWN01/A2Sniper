@@ -880,7 +880,25 @@ Zero Simulation. 100% Real-Market.`;
                 )}
 
                 <div className={`text-[8px] mt-2 font-black tracking-[0.2em] uppercase ${message.sender === 'user' ? 'text-[#D4AF37]/60' : 'text-gray-600'}`}>
-                  {message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} • SENT
+                  {(() => {
+                    const msgDate = new Date(message.timestamp);
+                    const now = new Date();
+                    const isSameDay = (d1: Date, d2: Date) =>
+                      d1.getFullYear() === d2.getFullYear() &&
+                      d1.getMonth() === d2.getMonth() &&
+                      d1.getDate() === d2.getDate();
+                    const yesterday = new Date(now);
+                    yesterday.setDate(yesterday.getDate() - 1);
+                    const timeStr = msgDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                    if (isSameDay(msgDate, now)) {
+                      return `TODAY ${timeStr} • SENT`;
+                    } else if (isSameDay(msgDate, yesterday)) {
+                      return `YESTERDAY ${timeStr} • SENT`;
+                    } else {
+                      const dateStr = `${String(msgDate.getMonth() + 1).padStart(2, '0')}/${String(msgDate.getDate()).padStart(2, '0')}/${msgDate.getFullYear()}`;
+                      return `${dateStr} ${timeStr} • SENT`;
+                    }
+                  })()}
                 </div>
               </div>
             </motion.div>
