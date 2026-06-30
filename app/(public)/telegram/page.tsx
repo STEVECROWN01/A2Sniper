@@ -67,7 +67,7 @@ export default function TelegramPage() {
               </div>
 
               {/* Features Grid — only Real-time Signals and Risk Management */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-16">
                 {features.map((feature, index) => (
                   <motion.div
                     key={index}
