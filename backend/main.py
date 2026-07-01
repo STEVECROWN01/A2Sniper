@@ -749,26 +749,15 @@ async def analyze_pair_internal(pair: str, force: bool = False) -> dict:
 
         # MEAN REVERSION: price moved down → expect bounce → CALL
         #                 price moved up → expect pullback → PUT
-        if price_change < -0.0003:  # Price dropped → CALL (expect bounce)
+        # Lowered threshold from 0.0003 to 0.0001 — generate more signals
+        if price_change < -0.0001:  # Price dropped → CALL (expect bounce)
             direction = 'CALL'
             momentum = abs(price_change)
-        elif price_change > 0.0003:  # Price rose → PUT (expect pullback)
+        elif price_change > 0.0001:  # Price rose → PUT (expect pullback)
             direction = 'PUT'
             momentum = abs(price_change)
         else:
             return None  # Not enough movement — skip
-
-        # Confirmation: last candle should show signs of reversal
-        if len(closes) >= 3:
-            # For CALL (price dropped): last candle should be bullish (close > open)
-            # or at least close higher than previous close
-            if direction == 'CALL' and closes[-1] < closes[-2] * 0.9999:
-                # Still dropping — skip (wait for actual reversal)
-                return None
-            # For PUT (price rose): last candle should be bearish
-            if direction == 'PUT' and closes[-1] > closes[-2] * 1.0001:
-                # Still rising — skip (wait for actual reversal)
-                return None
 
         # ─── Enhanced Quick-Signal Scoring (0-10, allows up to 10 = 95%) ───
         # Multiple factors can boost score beyond 7 → enables 90-95% winrates
