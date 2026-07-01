@@ -732,33 +732,43 @@ async def analyze_pair_internal(pair: str, force: bool = False) -> dict:
         return None
 
     # ═══ QUICK-SIGNAL MODE (3-14 candles) ═══════════════════════════
-    # When we have fewer than 15 candles, the full CDC 10-factor scoring
-    # can't work (RSI needs 14, Bollinger needs 20, etc.). Use a simpler
-    # analysis based on price action + momentum to produce signals FAST.
+    # MEAN REVERSION strategy for binary options (1-5 min expiration).
+    # Unlike trend following ("price went up → CALL"), mean reversion
+    # bets that price will RETURN to its average — which is the proven
+    # approach for short-term binary options.
+    #
+    # Strategy: If price moved significantly DOWN recently → CALL (bounce up)
+    #           If price moved significantly UP recently → PUT (drop back)
     if len(df_m1) < 15:
-        # Simple price-action analysis
         closes = df_m1['close'].values
         last_close = float(closes[-1])
         first_close = float(closes[0])
 
-        # Direction: uptrend if price rising, downtrend if falling
-        if last_close > first_close:
-            direction = 'CALL'
-            momentum = (last_close - first_close) / first_close
-        elif last_close < first_close:
-            direction = 'PUT'
-            momentum = (first_close - last_close) / first_close
-        else:
-            return None  # No movement — skip
+        # Calculate how far price moved (as percentage)
+        price_change = (last_close - first_close) / first_close if first_close > 0 else 0
 
-        # Check last 2 candles for confirmation
+        # MEAN REVERSION: price moved down → expect bounce → CALL
+        #                 price moved up → expect pullback → PUT
+        if price_change < -0.0003:  # Price dropped → CALL (expect bounce)
+            direction = 'CALL'
+            momentum = abs(price_change)
+        elif price_change > 0.0003:  # Price rose → PUT (expect pullback)
+            direction = 'PUT'
+            momentum = abs(price_change)
+        else:
+            return None  # Not enough movement — skip
+
+        # Confirmation: last candle should show signs of reversal
         if len(closes) >= 3:
-            last3_bullish = closes[-1] > closes[-2] > closes[-3]
-            last3_bearish = closes[-1] < closes[-2] < closes[-3]
-            if direction == 'CALL' and not (last3_bullish or closes[-1] > closes[-2]):
-                return None  # No confirmation
-            if direction == 'PUT' and not (last3_bearish or closes[-1] < closes[-2]):
-                return None  # No confirmation
+            # For CALL (price dropped): last candle should be bullish (close > open)
+            # or at least close higher than previous close
+            if direction == 'CALL' and closes[-1] < closes[-2] * 0.9999:
+                # Still dropping — skip (wait for actual reversal)
+                return None
+            # For PUT (price rose): last candle should be bearish
+            if direction == 'PUT' and closes[-1] > closes[-2] * 1.0001:
+                # Still rising — skip (wait for actual reversal)
+                return None
 
         # ─── Enhanced Quick-Signal Scoring (0-10, allows up to 10 = 95%) ───
         # Multiple factors can boost score beyond 7 → enables 90-95% winrates
@@ -991,11 +1001,38 @@ async def analyze_pair_internal(pair: str, force: bool = False) -> dict:
     last_row = df_m1.iloc[-1]
     ema9 = float(last_row.get('EMA_9', 0))
     ema21 = float(last_row.get('EMA_21', 0))
+
+    # ═══ RSI-BASED MEAN REVERSION (KEY for binary options) ═════════
+    # RSI < 30 = oversold → price likely to bounce UP → CALL
+    # RSI > 70 = overbought → price likely to drop → PUT
+    # This is the MOST reliable predictor for 1-5 minute binary options.
+    rsi = float(last_row.get('RSI_14', 50))
+    if rsi < 30:
+        call_score += 5  # Strong oversold → CALL signal
+    elif rsi < 40:
+        call_score += 2  # Mild oversold → slight CALL bias
+    elif rsi > 70:
+        put_score += 5  # Strong overbought → PUT signal
+    elif rsi > 60:
+        put_score += 2  # Mild overbought → slight PUT bias
+
+    # ═══ BOLLINGER BAND MEAN REVERSION ════════════════════════════
+    # Price below lower band → oversold → CALL
+    # Price above upper band → overbought → PUT
+    bb_lower = float(last_row.get('BBL_20_2.0', 0))
+    bb_upper = float(last_row.get('BBU_20_2.0', 0))
+    current_close = float(last_row.get('close', 0))
+    if bb_lower > 0 and current_close < bb_lower:
+        call_score += 4  # Price below lower Bollinger Band → CALL
+    if bb_upper > 0 and current_close > bb_upper:
+        put_score += 4  # Price above upper Bollinger Band → PUT
+
+    # EMA cross (trend following — lower weight than mean reversion)
     ema_cross = 'CALL' if ema9 > ema21 else 'PUT'
     if ema_cross == 'CALL':
-        call_score += 1.5
+        call_score += 1
     else:
-        put_score += 1.5
+        put_score += 1
 
     for d in divs.get('divergences', []):
         if d['direction'] == 'CALL':
@@ -1493,9 +1530,9 @@ async def resolution_loop():
                 
                 for s in active_signals:
                     s_timestamp = s.timestamp.replace(tzinfo=timezone.utc) if s.timestamp.tzinfo is None else s.timestamp
-                    # Next candle boundary of s.expiration minutes
-                    minutes_to_add = s.expiration - (s_timestamp.minute % s.expiration)
-                    expiry_time = s_timestamp.replace(second=0, microsecond=0) + timedelta(minutes=minutes_to_add)
+                    # Expiry = signal timestamp + expiration minutes (NOT candle boundary)
+                    # Each signal expires at its own time based on when it was generated.
+                    expiry_time = s_timestamp + timedelta(minutes=s.expiration or 1)
                     
                     if now >= expiry_time:
                         current_price = await po_scanner.get_current_price(s.pair)
