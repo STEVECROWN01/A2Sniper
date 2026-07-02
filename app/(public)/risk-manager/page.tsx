@@ -186,7 +186,7 @@ export default function RiskManagerPage() {
     window.dispatchEvent(new StorageEvent('storage', { key: 'a2sniper_risk_session' }));
   };
 
-  // Load all sessions on mount
+  // Load all sessions on mount — but DON'T overwrite if user already has data
   useEffect(() => {
     const savedAll = localStorage.getItem('a2sniper_risk_sessions');
     if (savedAll) {
@@ -195,11 +195,17 @@ export default function RiskManagerPage() {
         if (Array.isArray(parsed) && parsed.length > 0) {
           setAllSessions(parsed);
           setCurrentEditingIdx(parsed.length - 1);
-          const last = parsed[parsed.length - 1];
-          setInitialCapital(last.initialCapital || 1000);
-          setPayout(last.payout || 92);
-          setTrades(last.trades || Array(10).fill({ result: '', amount: 0, return: 0 }));
-          setSessionCounter(last.sessionCounter || 0);
+          // Only load session data if the current trades are empty
+          // (don't overwrite trades the user already loaded from individual keys)
+          const currentTrades = localStorage.getItem('a2sniper_risk_trades');
+          const hasCurrentTrades = currentTrades && JSON.parse(currentTrades).some((t: any) => t.result && t.amount > 0);
+          if (!hasCurrentTrades) {
+            const last = parsed[parsed.length - 1];
+            setInitialCapital(last.initialCapital || 1000);
+            setPayout(last.payout || 92);
+            setTrades(last.trades || Array(10).fill({ result: '', amount: 0, return: 0 }));
+            setSessionCounter(last.sessionCounter || 0);
+          }
         }
       } catch {}
     }
