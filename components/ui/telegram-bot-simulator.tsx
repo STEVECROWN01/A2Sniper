@@ -1425,14 +1425,14 @@ function RiskManagerPanel({ onClose }: { onClose: () => void }) {
       </div>
 
       <div className="p-4 bg-[#0a0a0c] border-t border-gray-800 grid grid-cols-3 gap-2">
-        <button onClick={handleExportPDF} className={`py-2 rounded-2xl text-[10px] font-black text-black flex items-center justify-center gap-1.5 transition-all ${justExported ? 'bg-green-500 shadow-lg shadow-green-500/20' : 'bg-[#D4AF37] hover:bg-[#c5a059] shadow-lg shadow-[#D4AF37]/20'}`}>
-          {justExported ? <Check className="w-3.5 h-3.5" /> : <Download className="w-3.5 h-3.5 text-black" />} {justExported ? 'EXPORTED!' : 'EXPORT PDF'}
-        </button>
         <button onClick={handleNewSession} className="py-3 bg-[#1a1a1e] border border-[#D4AF37]/30 rounded-2xl text-[10px] font-black text-[#D4AF37] flex items-center justify-center gap-1.5 hover:bg-[#D4AF37]/10 transition-all">
           <Plus className="w-3.5 h-3.5" /> NEW SESSION
         </button>
         <button onClick={handleSave} className="py-3 bg-[#1a1a1e] border border-gray-800 rounded-2xl text-[10px] font-black text-white flex items-center justify-center gap-1.5 hover:bg-[#25252b] transition-all">
           <Save className={`w-3.5 h-3.5 ${isDirty ? 'text-yellow-500 animate-pulse' : 'text-[#D4AF37]'}`} /> SAVE
+        </button>
+        <button onClick={handleExportPDF} className={`py-2 rounded-2xl text-[10px] font-black text-black flex items-center justify-center gap-1.5 transition-all ${justExported ? 'bg-green-500 shadow-lg shadow-green-500/20' : 'bg-[#D4AF37] hover:bg-[#c5a059] shadow-lg shadow-[#D4AF37]/20'}`}>
+          {justExported ? <Check className="w-3.5 h-3.5" /> : <Download className="w-3.5 h-3.5 text-black" />} {justExported ? 'EXPORTED!' : 'EXPORT PDF'}
         </button>
       </div>
 

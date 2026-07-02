@@ -392,19 +392,6 @@ export default function RiskManagerPage() {
                 </div>
               )}
               <button
-                onClick={clearSession}
-                className="px-3 py-2 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 rounded-xl text-xs font-black text-red-400 flex items-center gap-1.5 transition-all"
-              >
-                <RefreshCw className="w-3.5 h-3.5" /> RESET
-              </button>
-              <button
-                onClick={handleExportPDF}
-                className={`px-4 py-2 rounded-xl text-xs font-black flex items-center gap-1.5 transition-all ${justExported ? 'bg-green-500 shadow-lg shadow-green-500/20' : 'bg-[#D4AF37] hover:bg-[#c5a059] shadow-lg shadow-[#D4AF37]/20'} text-black`}
-              >
-                {justExported ? <Check className="w-3.5 h-3.5" /> : <Download className="w-3.5 h-3.5 text-black" />}
-                {justExported ? 'EXPORTED!' : 'EXPORT PDF'}
-              </button>
-              <button
                 onClick={handleNewSession}
                 className="px-3 py-2 bg-[#121216] hover:bg-[#1a1a1f] border border-[#D4AF37]/30 rounded-xl text-xs font-black text-[#D4AF37] flex items-center gap-1.5 transition-all"
               >
@@ -417,6 +404,19 @@ export default function RiskManagerPage() {
               >
                 {isSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : justSaved ? <Check className="w-3.5 h-3.5" /> : <Save className="w-3.5 h-3.5 text-[#D4AF37]" />}
                 {isSaving ? 'Saving...' : justSaved ? 'Saved!' : 'SAVE'}
+              </button>
+              <button
+                onClick={handleExportPDF}
+                className={`px-4 py-2 rounded-xl text-xs font-black flex items-center gap-1.5 transition-all ${justExported ? 'bg-green-500 shadow-lg shadow-green-500/20' : 'bg-[#D4AF37] hover:bg-[#c5a059] shadow-lg shadow-[#D4AF37]/20'} text-black`}
+              >
+                {justExported ? <Check className="w-3.5 h-3.5" /> : <Download className="w-3.5 h-3.5 text-black" />}
+                {justExported ? 'EXPORTED!' : 'EXPORT PDF'}
+              </button>
+              <button
+                onClick={clearSession}
+                className="px-3 py-2 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 rounded-xl text-xs font-black text-red-400 flex items-center gap-1.5 transition-all"
+              >
+                <RefreshCw className="w-3.5 h-3.5" /> RESET
               </button>
             </div>
           </div>
