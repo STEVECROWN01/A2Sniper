@@ -211,35 +211,25 @@ export default function TradingJournalPage() {
 
   return (
     <div className="space-y-8">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <div>
-          <h1 className="text-3xl font-black text-white uppercase tracking-tight">
-            Trading Journal
-          </h1>
-          <p className="text-sm text-gray-400 mt-1">
-            Analyze your performance and trading journal based on your active session.
-          </p>
+      {/* Header removed per user request — just show action buttons if session exists */}
+      {sessionData && (
+        <div className="flex justify-end items-center gap-3">
+          <button
+            onClick={handleExportPDF}
+            className={`px-6 py-2.5 rounded-xl text-xs font-black flex items-center gap-2 transition-all ${justExported ? 'bg-green-500 shadow-lg shadow-green-500/20' : 'bg-[#D4AF37] hover:bg-[#c5a059] shadow-lg shadow-[#D4AF37]/20'} text-black`}
+          >
+            {justExported ? <Check className="w-4 h-4" /> : <Download className="w-4 h-4 text-black" />}
+            {justExported ? 'EXPORTED!' : 'EXPORT PDF'}
+          </button>
+          <button
+            onClick={handleResetJournal}
+            className="flex items-center gap-2 px-4 py-2.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 hover:text-red-300 rounded-xl text-xs font-black uppercase tracking-wider transition-all border border-red-500/20 active:scale-95"
+          >
+            <Trash2 className="w-4 h-4" />
+            Reset
+          </button>
         </div>
-        {sessionData && (
-          <div className="flex items-center gap-3">
-            <button
-              onClick={handleExportPDF}
-              className={`px-6 py-2.5 rounded-xl text-xs font-black flex items-center gap-2 transition-all ${justExported ? 'bg-green-500 shadow-lg shadow-green-500/20' : 'bg-[#D4AF37] hover:bg-[#c5a059] shadow-lg shadow-[#D4AF37]/20'} text-black`}
-            >
-              {justExported ? <Check className="w-4 h-4" /> : <Download className="w-4 h-4 text-black" />}
-              {justExported ? 'EXPORTED!' : 'EXPORTER PDF'}
-            </button>
-            <button
-              onClick={handleResetJournal}
-              className="flex items-center gap-2 px-4 py-2.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 hover:text-red-300 rounded-xl text-xs font-black uppercase tracking-wider transition-all border border-red-500/20 active:scale-95"
-            >
-              <Trash2 className="w-4 h-4" />
-              Reset
-            </button>
-          </div>
-        )}
-      </div>
+      )}
 
       {!sessionData ? (
         <motion.div
