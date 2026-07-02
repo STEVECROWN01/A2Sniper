@@ -1161,6 +1161,21 @@ function RiskManagerPanel({ onClose }: { onClose: () => void }) {
       toast.error("Please record at least 1 trade before saving.", { duration: 3000 });
       return;
     }
+
+    // Session counter validation for NEW sessions
+    if (currentEditingIdx < 0) {
+      const savedCounters = allSessions.map(s => s.sessionCounter || 0);
+      const expectedNext = savedCounters.length > 0 ? Math.max(...savedCounters) + 1 : 1;
+      if (savedCounters.includes(sessionCounter)) {
+        toast.error(`Session ${sessionCounter} already exists. Use Session ${expectedNext}.`, { duration: 4000 });
+        return;
+      }
+      if (sessionCounter !== expectedNext) {
+        toast.error(`Session counter should be ${expectedNext}, not ${sessionCounter}.`, { duration: 4000 });
+        return;
+      }
+    }
+
     const dataToSave = { initialCapital, payout, trades, sessionCounter, savedAt: new Date().toISOString() };
     const updated = [...allSessions];
     if (currentEditingIdx >= 0 && currentEditingIdx < updated.length) {
@@ -1295,11 +1310,25 @@ function RiskManagerPanel({ onClose }: { onClose: () => void }) {
   };
 
   const handleReset = () => {
+    // Reset ONLY the current session — remove from saved sessions too
     setTrades(Array(10).fill({ result: '', amount: 0, return: 0 }));
     setSessionCounter(0);
+    setInitialCapital(1000);
+    setPayout(92);
     setIsDirty(false);
-    localStorage.removeItem('a2sniper_risk_session');
-    toast.success("Session reset.", { duration: 3000 });
+    setCurrentEditingIdx(-1);
+
+    // Remove current session from allSessions array if it was saved
+    if (currentEditingIdx >= 0 && currentEditingIdx < allSessions.length) {
+      const updated = allSessions.filter((_, i) => i !== currentEditingIdx);
+      setAllSessions(updated);
+      localStorage.setItem('a2sniper_risk_sessions', JSON.stringify(updated));
+    }
+
+    // Clear and sync to Trading Journal
+    const emptySession = { trades: Array(10).fill({ result: '', amount: 0, return: 0 }), payout: 92, initialCapital: 1000, sessionCounter: 0 };
+    localStorage.setItem('a2sniper_risk_session', JSON.stringify(emptySession));
+    toast.success("Current session reset and removed from Trading Journal.", { duration: 3000 });
   };
 
   const handleCloseAttempt = () => {

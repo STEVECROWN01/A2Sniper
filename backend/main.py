@@ -4056,6 +4056,7 @@ async def get_market_status(credentials: HTTPAuthorizationCredentials = Security
             "ssid_preview": po_scanner.ssid[:5] + "..." if po_scanner.ssid else None,
             "is_demo": po_scanner.is_demo,
             "uid": po_scanner._uid,
+            "account_balance": po_scanner._balance,
             # Only includes pairs that are active AND payout ≥ 70%
             "payouts": default_payouts,
             "pair_status": default_pair_status,

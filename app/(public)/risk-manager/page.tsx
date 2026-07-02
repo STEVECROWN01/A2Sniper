@@ -89,13 +89,28 @@ export default function RiskManagerPage() {
   // Check if there are unsaved changes
   const hasUnsavedChanges = justSaved === false && hasRecordedTrades;
 
-  // Fetch performance data for real winrate
+  // Fetch performance data for real winrate + auto-fill balance from PO
   useEffect(() => {
     const loadData = async () => {
       try {
         await fetchPerformance();
         if (userStats?.winRate && userStats.winRate > 0) {
           setApiWinRate(userStats.winRate);
+        }
+        // Auto-fill initial capital from Pocket Option account balance
+        const apiUrl = getApiUrl();
+        const res = await fetch(`${apiUrl}/api/market/status`, { credentials: 'include' });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.account_balance && data.account_balance > 0) {
+            // Only auto-fill if the current capital is the default (1000) or empty
+            // Don't overwrite if user already set a custom value
+            const currentCap = localStorage.getItem('a2sniper_risk_capital');
+            if (!currentCap || currentCap === '1000') {
+              setInitialCapital(data.account_balance);
+              localStorage.setItem('a2sniper_risk_capital', String(data.account_balance));
+            }
+          }
         }
       } catch {}
     };
@@ -164,13 +179,33 @@ export default function RiskManagerPage() {
   };
 
   const confirmClearSession = () => {
+    // Reset ONLY the current session — remove from saved sessions array too
     const emptyTrades = Array(10).fill({ result: '', amount: 0, return: 0 });
     setTrades(emptyTrades);
     setSessionCounter(0);
+    setInitialCapital(1000);
+    setPayout(92);
+    setCurrentEditingIdx(-1);
+    setIsDirty(false);
+
+    // Remove current session from allSessions array if it was saved
+    if (currentEditingIdx >= 0 && currentEditingIdx < allSessions.length) {
+      const updated = allSessions.filter((_, i) => i !== currentEditingIdx);
+      setAllSessions(updated);
+      localStorage.setItem('a2sniper_risk_sessions', JSON.stringify(updated));
+    }
+
+    // Clear individual keys
     localStorage.removeItem('a2sniper_risk_trades');
     localStorage.removeItem('a2sniper_risk_session');
+
+    // Sync empty session to Trading Journal
+    const emptySession = { trades: emptyTrades, payout: 92, initialCapital: 1000, sessionCounter: 0 };
+    localStorage.setItem('a2sniper_risk_session', JSON.stringify(emptySession));
+    window.dispatchEvent(new StorageEvent('storage', { key: 'a2sniper_risk_session' }));
+
     setShowResetConfirm(false);
-    toast.success("Session reset");
+    toast.success("Current session reset and removed from Trading Journal.");
   };
 
   // Sync session data to localStorage so Trading Journal can read it
@@ -275,6 +310,23 @@ export default function RiskManagerPage() {
       toast.error("Please record at least 1 trade before saving.", { duration: 3000 });
       return;
     }
+
+    // Session counter validation for NEW sessions (not editing existing)
+    if (currentEditingIdx < 0) {
+      // Get all saved session counters
+      const savedCounters = allSessions.map(s => s.sessionCounter || 0);
+      const expectedNext = savedCounters.length > 0 ? Math.max(...savedCounters) + 1 : 1;
+
+      if (savedCounters.includes(sessionCounter)) {
+        toast.error(`Session ${sessionCounter} already exists. Please use Session ${expectedNext}.`, { duration: 4000 });
+        return;
+      }
+      if (sessionCounter !== expectedNext) {
+        toast.error(`Session counter should be ${expectedNext}, not ${sessionCounter}. Please correct it.`, { duration: 4000 });
+        return;
+      }
+    }
+
     setIsSaving(true);
     // Save to sessions array (multi-session support)
     const dataToSave = { initialCapital, payout, trades, sessionCounter, savedAt: new Date().toISOString() };
@@ -673,10 +725,10 @@ export default function RiskManagerPage() {
                 >
                   <div className="flex items-center gap-3 mb-4">
                     <AlertTriangle className="w-6 h-6 text-red-500" />
-                    <h3 className="text-lg font-bold text-white">Reset la session</h3>
+                    <h3 className="text-lg font-bold text-white">Reset Current Session</h3>
                   </div>
                   <p className="text-sm text-gray-400 mb-6">
-                    Do you really want to reset the current session? All trading data will be erased.
+                    This will reset the current session and remove it from the Trading Journal. Other saved sessions will be kept. Are you sure?
                   </p>
                   <div className="flex gap-3">
                     <button
