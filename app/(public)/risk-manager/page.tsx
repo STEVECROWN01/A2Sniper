@@ -414,30 +414,6 @@ export default function RiskManagerPage() {
             </motion.div>
 
             <div className="flex items-center gap-2 flex-wrap">
-              {/* Saved sessions navigation */}
-              {allSessions.length > 0 && (
-                <div className="flex items-center gap-1.5 bg-[#121216] px-3 py-2 rounded-xl border border-[#D4AF37]/20 mr-2">
-                  <button
-                    onClick={() => handleLoadSession(Math.max(0, currentEditingIdx - 1))}
-                    disabled={currentEditingIdx <= 0}
-                    className={`w-6 h-6 rounded-md flex items-center justify-center border transition-all ${currentEditingIdx <= 0 ? 'bg-gray-800/30 border-gray-700/30 text-gray-600 cursor-not-allowed opacity-50' : 'bg-[#1a1a1e] border-[#D4AF37]/30 text-[#D4AF37] hover:bg-[#D4AF37]/20'}`}
-                    title="Previous saved session"
-                  >
-                    <ChevronLeft className="w-3.5 h-3.5" />
-                  </button>
-                  <span className="text-[10px] font-bold text-gray-500 min-w-[70px] text-center">
-                    {currentEditingIdx >= 0 ? `Sess ${currentEditingIdx + 1}/${allSessions.length}` : `New (${allSessions.length + 1})`}
-                  </span>
-                  <button
-                    onClick={() => handleLoadSession(Math.min(allSessions.length - 1, currentEditingIdx + 1))}
-                    disabled={currentEditingIdx >= allSessions.length - 1 || currentEditingIdx < 0}
-                    className={`w-6 h-6 rounded-md flex items-center justify-center border transition-all ${currentEditingIdx >= allSessions.length - 1 || currentEditingIdx < 0 ? 'bg-gray-800/30 border-gray-700/30 text-gray-600 cursor-not-allowed opacity-50' : 'bg-[#1a1a1e] border-[#D4AF37]/30 text-[#D4AF37] hover:bg-[#D4AF37]/20'}`}
-                    title="Next saved session"
-                  >
-                    <ChevronRight className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              )}
               <button
                 onClick={handleNewSession}
                 className="px-3 py-2 bg-[#121216] hover:bg-[#1a1a1f] border border-[#D4AF37]/30 rounded-xl text-xs font-black text-[#D4AF37] flex items-center gap-1.5 transition-all"
@@ -515,15 +491,6 @@ export default function RiskManagerPage() {
 
               {/* Trade Table */}
               <div className="bg-[#0a0a0c] rounded-[2rem] border border-gray-800/50 overflow-hidden">
-                <div className="p-6 border-b border-gray-800/50 flex justify-end items-center bg-[#0d0d0f]">
-                  <button
-                    onClick={addTradeRow}
-                    className="p-2 bg-[#D4AF37]/10 hover:bg-[#D4AF37]/20 border border-[#D4AF37]/20 rounded-lg text-[#D4AF37] transition-all"
-                  >
-                    <Plus className="w-5 h-5" />
-                  </button>
-                </div>
-
                 <div className="overflow-x-auto">
                   <table className="w-full text-left border-collapse">
                     <thead>
