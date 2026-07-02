@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Calendar, BarChart3, Target, DollarSign, Info, Trash2, ArrowUpRight, ArrowDownRight, AlertTriangle, Loader2, Download, Check } from 'lucide-react';
+import { Calendar, BarChart3, Target, DollarSign, Info, Trash2, ArrowUpRight, ArrowDownRight, AlertTriangle, Loader2, Download, Check, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useAuth } from '@/hooks/use-auth';
 import { useAppStore } from '@/lib/store';
 import { toast } from 'sonner';
@@ -34,43 +34,64 @@ interface Stats {
 export default function TradingJournalPage() {
   useAuth();
   const { user } = useAppStore();
-  const [sessionData, setSessionData] = useState<SessionData | null>(null);
+  const [allSessions, setAllSessions] = useState<SessionData[]>([]);
+  const [currentSessionIdx, setCurrentSessionIdx] = useState(0);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
   const [justExported, setJustExported] = useState(false);
 
-  const loadSession = () => {
+  const loadSessions = () => {
+    // Load ALL sessions from the array
+    const savedAll = localStorage.getItem('a2sniper_risk_sessions');
+    if (savedAll) {
+      try {
+        const parsed = JSON.parse(savedAll);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setAllSessions(parsed);
+          // Keep current index if valid, otherwise show last
+          setCurrentSessionIdx(prev => prev < parsed.length ? prev : parsed.length - 1);
+          return;
+        }
+      } catch (e) {
+        console.error('Failed to parse trading journal sessions', e);
+      }
+    }
+    // Fallback: try legacy single session key
     const saved = localStorage.getItem('a2sniper_risk_session');
     if (saved) {
       try {
-        setSessionData(JSON.parse(saved));
+        const parsed = JSON.parse(saved);
+        setAllSessions([parsed]);
+        setCurrentSessionIdx(0);
+        return;
       } catch (e) {
         console.error('Failed to parse trading journal session data', e);
       }
-    } else {
-      setSessionData(null);
     }
+    setAllSessions([]);
   };
 
   useEffect(() => {
-    loadSession();
+    loadSessions();
     // Listen to cross-tab localStorage changes
-    window.addEventListener('storage', loadSession);
+    window.addEventListener('storage', loadSessions);
     // Also listen for same-tab custom dispatches from Risk Manager
     const handleCustomStorage = (e: StorageEvent) => {
-      if (e.key === 'a2sniper_risk_session') {
-        loadSession();
+      if (e.key === 'a2sniper_risk_session' || e.key === 'a2sniper_risk_sessions') {
+        loadSessions();
       }
     };
     window.addEventListener('storage', handleCustomStorage);
     // Poll every 2s as a fallback for same-tab updates
-    const interval = setInterval(loadSession, 2000);
+    const interval = setInterval(loadSessions, 2000);
     return () => {
-      window.removeEventListener('storage', loadSession);
+      window.removeEventListener('storage', loadSessions);
       window.removeEventListener('storage', handleCustomStorage);
       clearInterval(interval);
     };
   }, []);
+
+  const sessionData = allSessions[currentSessionIdx] || null;
 
   const getStats = (): Stats => {
     if (!sessionData) return { wins: 0, losses: 0, profit: 0, balance: 0, capital: 0, totalTrades: 0, winRate: 0 };
@@ -112,12 +133,24 @@ export default function TradingJournalPage() {
   const confirmResetJournal = () => {
     setIsResetting(true);
     setTimeout(() => {
-      localStorage.removeItem('a2sniper_risk_session');
-      localStorage.removeItem('a2sniper_risk_trades');
-      setSessionData(null);
+      // Remove current session from the sessions array
+      if (currentSessionIdx >= 0 && currentSessionIdx < allSessions.length) {
+        const updated = allSessions.filter((_, i) => i !== currentSessionIdx);
+        setAllSessions(updated);
+        localStorage.setItem('a2sniper_risk_sessions', JSON.stringify(updated));
+        // Update legacy key
+        if (updated.length > 0) {
+          localStorage.setItem('a2sniper_risk_session', JSON.stringify(updated[updated.length - 1]));
+        } else {
+          localStorage.removeItem('a2sniper_risk_session');
+        }
+        setCurrentSessionIdx(Math.max(0, updated.length - 1));
+      } else {
+        localStorage.removeItem('a2sniper_risk_session');
+      }
       setIsResetting(false);
       setShowResetConfirm(false);
-      toast.success("Trading Journal reset successfully.", { duration: 3000 });
+      toast.success("Session removed from Trading Journal.", { duration: 3000 });
     }, 800);
   };
 
@@ -211,23 +244,57 @@ export default function TradingJournalPage() {
 
   return (
     <div className="space-y-8">
-      {/* Header removed per user request — just show action buttons if session exists */}
+      {/* Session navigation + action buttons */}
       {sessionData && (
-        <div className="flex justify-end items-center gap-3">
-          <button
-            onClick={handleExportPDF}
-            className={`px-6 py-2.5 rounded-xl text-xs font-black flex items-center gap-2 transition-all ${justExported ? 'bg-green-500 shadow-lg shadow-green-500/20' : 'bg-[#D4AF37] hover:bg-[#c5a059] shadow-lg shadow-[#D4AF37]/20'} text-black`}
-          >
-            {justExported ? <Check className="w-4 h-4" /> : <Download className="w-4 h-4 text-black" />}
-            {justExported ? 'EXPORTED!' : 'EXPORT PDF'}
-          </button>
-          <button
-            onClick={handleResetJournal}
-            className="flex items-center gap-2 px-4 py-2.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 hover:text-red-300 rounded-xl text-xs font-black uppercase tracking-wider transition-all border border-red-500/20 active:scale-95"
-          >
-            <Trash2 className="w-4 h-4" />
-            Reset
-          </button>
+        <div className="flex justify-between items-center gap-3 flex-wrap">
+          {/* Session navigation arrows */}
+          {allSessions.length > 1 && (
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setCurrentSessionIdx(Math.max(0, currentSessionIdx - 1))}
+                disabled={currentSessionIdx === 0}
+                className={`w-8 h-8 rounded-lg flex items-center justify-center border transition-all ${
+                  currentSessionIdx === 0
+                    ? 'bg-gray-800/30 border-gray-700/30 text-gray-600 cursor-not-allowed opacity-50'
+                    : 'bg-[#1a1a1e] border-[#D4AF37]/30 text-[#D4AF37] hover:bg-[#D4AF37]/20 active:scale-95'
+                }`}
+                title="Previous session"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+              <span className="text-xs font-bold text-gray-500 min-w-[80px] text-center">
+                Session {currentSessionIdx + 1} / {allSessions.length}
+              </span>
+              <button
+                onClick={() => setCurrentSessionIdx(Math.min(allSessions.length - 1, currentSessionIdx + 1))}
+                disabled={currentSessionIdx === allSessions.length - 1}
+                className={`w-8 h-8 rounded-lg flex items-center justify-center border transition-all ${
+                  currentSessionIdx === allSessions.length - 1
+                    ? 'bg-gray-800/30 border-gray-700/30 text-gray-600 cursor-not-allowed opacity-50'
+                    : 'bg-[#1a1a1e] border-[#D4AF37]/30 text-[#D4AF37] hover:bg-[#D4AF37]/20 active:scale-95'
+                }`}
+                title="Next session"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
+          )}
+          <div className="flex items-center gap-3 ml-auto">
+            <button
+              onClick={handleExportPDF}
+              className={`px-6 py-2.5 rounded-xl text-xs font-black flex items-center gap-2 transition-all ${justExported ? 'bg-green-500 shadow-lg shadow-green-500/20' : 'bg-[#D4AF37] hover:bg-[#c5a059] shadow-lg shadow-[#D4AF37]/20'} text-black`}
+            >
+              {justExported ? <Check className="w-4 h-4" /> : <Download className="w-4 h-4 text-black" />}
+              {justExported ? 'EXPORTED!' : 'EXPORT PDF'}
+            </button>
+            <button
+              onClick={handleResetJournal}
+              className="flex items-center gap-2 px-4 py-2.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 hover:text-red-300 rounded-xl text-xs font-black uppercase tracking-wider transition-all border border-red-500/20 active:scale-95"
+            >
+              <Trash2 className="w-4 h-4" />
+              Reset
+            </button>
+          </div>
         </div>
       )}
 
