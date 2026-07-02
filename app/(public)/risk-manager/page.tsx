@@ -515,11 +515,7 @@ export default function RiskManagerPage() {
 
               {/* Trade Table */}
               <div className="bg-[#0a0a0c] rounded-[2rem] border border-gray-800/50 overflow-hidden">
-                <div className="p-6 border-b border-gray-800/50 flex justify-between items-center bg-[#0d0d0f]">
-                  <h3 className="text-sm font-black text-white uppercase tracking-widest flex items-center gap-2">
-                    <TrendingUp className="w-4 h-4 text-[#D4AF37]" />
-                    Trading Journal
-                  </h3>
+                <div className="p-6 border-b border-gray-800/50 flex justify-end items-center bg-[#0d0d0f]">
                   <button
                     onClick={addTradeRow}
                     className="p-2 bg-[#D4AF37]/10 hover:bg-[#D4AF37]/20 border border-[#D4AF37]/20 rounded-lg text-[#D4AF37] transition-all"
