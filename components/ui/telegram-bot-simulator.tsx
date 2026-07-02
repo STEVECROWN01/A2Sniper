@@ -1086,6 +1086,10 @@ function RiskManagerPanel({ onClose }: { onClose: () => void }) {
   const [trades, setTrades] = useState<any[]>(Array(10).fill({ result: '', amount: 0, return: 0 }));
   const [sessionCounter, setSessionCounter] = useState(0);
 
+  // Multi-session support
+  const [allSessions, setAllSessions] = useState<any[]>([]);
+  const [currentEditingIdx, setCurrentEditingIdx] = useState(-1); // -1 = new session
+
   const [isDirty, setIsDirty] = useState(false);
   const [justExported, setJustExported] = useState(false);
   const [showUnsavedModal, setShowUnsavedModal] = useState(false);
@@ -1094,13 +1098,16 @@ function RiskManagerPanel({ onClose }: { onClose: () => void }) {
     const savedAll = localStorage.getItem('a2sniper_risk_sessions');
     if (savedAll) {
       try {
-        const allSessions = JSON.parse(savedAll);
-        if (Array.isArray(allSessions) && allSessions.length > 0) {
-          const last = allSessions[allSessions.length - 1];
+        const parsed = JSON.parse(savedAll);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setAllSessions(parsed);
+          // Load the last saved session for editing
+          const last = parsed[parsed.length - 1];
           setInitialCapital(last.initialCapital || 1000);
           setPayout(last.payout || 92);
           setTrades(last.trades || Array(10).fill({ result: '', amount: 0, return: 0 }));
           setSessionCounter(last.sessionCounter || 0);
+          setCurrentEditingIdx(parsed.length - 1);
         }
       } catch (e) {
         console.error("Failed to load risk sessions", e);
@@ -1145,10 +1152,42 @@ function RiskManagerPanel({ onClose }: { onClose: () => void }) {
   };
 
   const handleSave = () => {
-    const dataToSave = { initialCapital, payout, trades, sessionCounter };
+    const dataToSave = { initialCapital, payout, trades, sessionCounter, savedAt: new Date().toISOString() };
+    const updated = [...allSessions];
+    if (currentEditingIdx >= 0 && currentEditingIdx < updated.length) {
+      // Update existing session
+      updated[currentEditingIdx] = dataToSave;
+    } else {
+      // New session — append
+      updated.push(dataToSave);
+      setCurrentEditingIdx(updated.length - 1);
+    }
+    setAllSessions(updated);
+    localStorage.setItem('a2sniper_risk_sessions', JSON.stringify(updated));
     localStorage.setItem('a2sniper_risk_session', JSON.stringify(dataToSave));
     setIsDirty(false);
-    toast.success("Session saved successfully!", { duration: 3000 });
+    toast.success("Session saved!", { duration: 3000 });
+  };
+
+  const handleNewSession = () => {
+    setInitialCapital(1000);
+    setPayout(92);
+    setTrades(Array(10).fill({ result: '', amount: 0, return: 0 }));
+    setSessionCounter(sessionCounter + 1);
+    setCurrentEditingIdx(-1); // -1 = new session
+    setIsDirty(true);
+    toast.info("New session — fill in your trades and save.", { duration: 3000 });
+  };
+
+  const handleLoadSession = (idx: number) => {
+    if (idx < 0 || idx >= allSessions.length) return;
+    const s = allSessions[idx];
+    setInitialCapital(s.initialCapital || 1000);
+    setPayout(s.payout || 92);
+    setTrades(s.trades || Array(10).fill({ result: '', amount: 0, return: 0 }));
+    setSessionCounter(s.sessionCounter || 0);
+    setCurrentEditingIdx(idx);
+    setIsDirty(false);
   };
 
   const handleExportPDF = async () => {
@@ -1334,6 +1373,38 @@ function RiskManagerPanel({ onClose }: { onClose: () => void }) {
 
         {/* Session Controls */}
         <div className="bg-[#121216] p-6 rounded-2xl border border-gray-800 flex flex-col items-center gap-4">
+          {/* Saved sessions navigation — switch between saved sessions to re-edit */}
+          {allSessions.length > 0 && (
+            <div className="flex items-center gap-2 bg-[#0a0a0c] px-3 py-2 rounded-xl border border-[#D4AF37]/20 w-full justify-center">
+              <button
+                onClick={() => handleLoadSession(Math.max(0, currentEditingIdx - 1))}
+                disabled={currentEditingIdx <= 0}
+                className={`w-7 h-7 rounded-lg flex items-center justify-center border transition-all ${
+                  currentEditingIdx <= 0
+                    ? 'bg-gray-800/30 border-gray-700/30 text-gray-600 cursor-not-allowed opacity-50'
+                    : 'bg-[#1a1a1e] border-[#D4AF37]/30 text-[#D4AF37] hover:bg-[#D4AF37]/20 active:scale-95'
+                }`}
+                title="Previous saved session"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+              <span className="text-[10px] font-bold text-gray-500 min-w-[80px] text-center">
+                {currentEditingIdx >= 0 ? `Editing Session ${currentEditingIdx + 1}/${allSessions.length}` : `New Session (${allSessions.length + 1})`}
+              </span>
+              <button
+                onClick={() => handleLoadSession(Math.min(allSessions.length - 1, currentEditingIdx + 1))}
+                disabled={currentEditingIdx >= allSessions.length - 1 || currentEditingIdx < 0}
+                className={`w-7 h-7 rounded-lg flex items-center justify-center border transition-all ${
+                  currentEditingIdx >= allSessions.length - 1 || currentEditingIdx < 0
+                    ? 'bg-gray-800/30 border-gray-700/30 text-gray-600 cursor-not-allowed opacity-50'
+                    : 'bg-[#1a1a1e] border-[#D4AF37]/30 text-[#D4AF37] hover:bg-[#D4AF37]/20 active:scale-95'
+                }`}
+                title="Next saved session"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
+          )}
           <p className="text-[10px] font-black text-gray-500 uppercase tracking-[0.2em]">Session Counter</p>
           <div className="flex items-center gap-8">
             <button onClick={() => { setSessionCounter(Math.max(0, sessionCounter - 1)); setIsDirty(true); }} className="p-3 bg-gray-800 rounded-full hover:bg-gray-700 transition-colors">
@@ -1353,12 +1424,15 @@ function RiskManagerPanel({ onClose }: { onClose: () => void }) {
         </div>
       </div>
 
-      <div className="p-4 bg-[#0a0a0c] border-t border-gray-800 grid grid-cols-2 gap-3">
-        <button onClick={handleSave} className="py-3 bg-[#1a1a1e] border border-gray-800 rounded-2xl text-[10px] font-black text-white flex items-center justify-center gap-2 hover:bg-[#25252b] transition-all">
-          <Save className={`w-4 h-4 ${isDirty ? 'text-yellow-500 animate-pulse' : 'text-[#D4AF37]'}`} /> SAVE
+      <div className="p-4 bg-[#0a0a0c] border-t border-gray-800 grid grid-cols-3 gap-2">
+        <button onClick={handleSave} className="py-3 bg-[#1a1a1e] border border-gray-800 rounded-2xl text-[10px] font-black text-white flex items-center justify-center gap-1.5 hover:bg-[#25252b] transition-all">
+          <Save className={`w-3.5 h-3.5 ${isDirty ? 'text-yellow-500 animate-pulse' : 'text-[#D4AF37]'}`} /> SAVE
         </button>
-        <button onClick={handleExportPDF} className={`py-2 rounded-2xl text-[10px] font-black text-black flex items-center justify-center gap-2 transition-all ${justExported ? 'bg-green-500 shadow-lg shadow-green-500/20' : 'bg-[#D4AF37] hover:bg-[#c5a059] shadow-lg shadow-[#D4AF37]/20'}`}>
-          {justExported ? <Check className="w-4 h-4" /> : <Download className="w-4 h-4 text-black" />} {justExported ? 'EXPORTED!' : 'EXPORT TO PDF'}
+        <button onClick={handleNewSession} className="py-3 bg-[#1a1a1e] border border-[#D4AF37]/30 rounded-2xl text-[10px] font-black text-[#D4AF37] flex items-center justify-center gap-1.5 hover:bg-[#D4AF37]/10 transition-all">
+          <RefreshCw className="w-3.5 h-3.5" /> NEW SESSION
+        </button>
+        <button onClick={handleExportPDF} className={`py-2 rounded-2xl text-[10px] font-black text-black flex items-center justify-center gap-1.5 transition-all ${justExported ? 'bg-green-500 shadow-lg shadow-green-500/20' : 'bg-[#D4AF37] hover:bg-[#c5a059] shadow-lg shadow-[#D4AF37]/20'}`}>
+          {justExported ? <Check className="w-3.5 h-3.5" /> : <Download className="w-3.5 h-3.5 text-black" />} {justExported ? 'EXPORTED!' : 'EXPORT PDF'}
         </button>
       </div>
 
@@ -1382,7 +1456,7 @@ function RiskManagerPanel({ onClose }: { onClose: () => void }) {
                   }}
                   className="flex-1 py-3 bg-[#D4AF37] hover:bg-[#c5a059] text-black font-black text-[11px] rounded-xl transition-all shadow-[0_0_20px_rgba(212,175,55,0.4)] uppercase tracking-wider leading-tight"
                 >
-                  Sauvegarder & Fermer
+                  Save & Close
                 </button>
                 <button 
                   onClick={() => {
@@ -1487,7 +1561,15 @@ function TradingJournalPanel({ onClose }: { onClose: () => void }) {
             <div className="bg-gradient-to-br from-[#D4AF37]/10 to-[#C5A059]/10 border border-[#D4AF37]/20 p-5 rounded-2xl space-y-4">
               <div className="flex justify-between items-center border-b border-[#D4AF37]/20 pb-3">
                 <span className="text-xs font-black text-[#D4AF37] uppercase tracking-widest">Global Overview</span>
-                <span className="text-[10px] font-bold text-gray-500">Session {sessionData.sessionCounter}</span>
+                <div className="flex items-center gap-2">
+                  <button onClick={() => setCurrentSessionIdx(Math.max(0, currentSessionIdx - 1))} disabled={currentSessionIdx === 0} className={`w-7 h-7 rounded-lg flex items-center justify-center border transition-all ${currentSessionIdx === 0 ? 'bg-gray-800/30 border-gray-700/30 text-gray-600 cursor-not-allowed opacity-50' : 'bg-[#1a1a1e] border-[#D4AF37]/30 text-[#D4AF37] hover:bg-[#D4AF37]/20 active:scale-95'}`} title="Previous session">
+                    <ChevronLeft className="w-4 h-4" />
+                  </button>
+                  <span className="text-[10px] font-bold text-gray-500 min-w-[60px] text-center">Session {currentSessionIdx + 1}/{allSessions.length}</span>
+                  <button onClick={() => setCurrentSessionIdx(Math.min(allSessions.length - 1, currentSessionIdx + 1))} disabled={currentSessionIdx === allSessions.length - 1} className={`w-7 h-7 rounded-lg flex items-center justify-center border transition-all ${currentSessionIdx === allSessions.length - 1 ? 'bg-gray-800/30 border-gray-700/30 text-gray-600 cursor-not-allowed opacity-50' : 'bg-[#1a1a1e] border-[#D4AF37]/30 text-[#D4AF37] hover:bg-[#D4AF37]/20 active:scale-95'}`} title="Next session">
+                    <ChevronRight className="w-4 h-4" />
+                  </button>
+                </div>
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
