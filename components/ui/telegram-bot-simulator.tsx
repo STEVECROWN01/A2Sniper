@@ -1091,16 +1091,19 @@ function RiskManagerPanel({ onClose }: { onClose: () => void }) {
   const [showUnsavedModal, setShowUnsavedModal] = useState(false);
 
   useEffect(() => {
-    const saved = localStorage.getItem('a2sniper_risk_session');
-    if (saved) {
+    const savedAll = localStorage.getItem('a2sniper_risk_sessions');
+    if (savedAll) {
       try {
-        const parsed = JSON.parse(saved);
-        setInitialCapital(parsed.initialCapital || 1000);
-        setPayout(parsed.payout || 92);
-        setTrades(parsed.trades || Array(10).fill({ result: '', amount: 0, return: 0 }));
-        setSessionCounter(parsed.sessionCounter || 0);
+        const allSessions = JSON.parse(savedAll);
+        if (Array.isArray(allSessions) && allSessions.length > 0) {
+          const last = allSessions[allSessions.length - 1];
+          setInitialCapital(last.initialCapital || 1000);
+          setPayout(last.payout || 92);
+          setTrades(last.trades || Array(10).fill({ result: '', amount: 0, return: 0 }));
+          setSessionCounter(last.sessionCounter || 0);
+        }
       } catch (e) {
-        console.error("Failed to load risk session", e);
+        console.error("Failed to load risk sessions", e);
       }
     }
   }, []);
@@ -1167,7 +1170,7 @@ function RiskManagerPanel({ onClose }: { onClose: () => void }) {
 
     // Configuration
     y = drawSectionTitle(doc, 'Configuration', y);
-    y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Capital Initial', `$${initialCapital.toFixed(2)}`);
+    y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Initial Capital', `$${initialCapital.toFixed(2)}`);
     y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Payout', `${payout}%`, { valueColor: '#D4AF37' });
     y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Session', `#${sessionCounter}`);
     y += 2;
@@ -1251,7 +1254,7 @@ function RiskManagerPanel({ onClose }: { onClose: () => void }) {
         {/* Config Panel */}
         <div className="grid grid-cols-2 gap-3">
           <div className="bg-[#121216] p-4 rounded-2xl border border-gray-800">
-            <p className="text-[10px] font-black text-gray-500 uppercase mb-2">Capital Initial ($)</p>
+            <p className="text-[10px] font-black text-gray-500 uppercase mb-2">Initial Capital ($)</p>
             <input 
               type="number" 
               value={initialCapital} 
@@ -1401,29 +1404,29 @@ function RiskManagerPanel({ onClose }: { onClose: () => void }) {
 
 // Composant Trading Journal
 function TradingJournalPanel({ onClose }: { onClose: () => void }) {
-  interface TradeEntry {
-    result: string;
-    amount: number;
-    return: number;
-    balance?: string | number;
-  }
-
-  interface SessionData {
-    trades: TradeEntry[];
-    payout: number;
-    initialCapital: number;
-    sessionCounter: number;
-  }
-  const [sessionData, setSessionData] = useState<SessionData | null>(null);
+  interface TradeEntry { result: string; amount: number; return: number; balance?: string | number; }
+  interface SessionData { trades: TradeEntry[]; payout: number; initialCapital: number; sessionCounter: number; savedAt?: string; }
+  const [allSessions, setAllSessions] = useState<SessionData[]>([]);
+  const [currentSessionIdx, setCurrentSessionIdx] = useState(0);
 
   useEffect(() => {
-    const saved = localStorage.getItem('a2sniper_risk_session');
-    if (saved) {
+    const savedAll = localStorage.getItem('a2sniper_risk_sessions');
+    if (savedAll) {
       try {
-        setSessionData(JSON.parse(saved));
+        const parsed = JSON.parse(savedAll);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setAllSessions(parsed);
+          setCurrentSessionIdx(parsed.length - 1);
+        }
       } catch (e) {}
     }
+    if (allSessions.length === 0) {
+      const saved = localStorage.getItem('a2sniper_risk_session');
+      if (saved) { try { setAllSessions([JSON.parse(saved)]); setCurrentSessionIdx(0); } catch (e) {} }
+    }
   }, []);
+
+  const sessionData = allSessions[currentSessionIdx] || null;
 
   const getStats = () => {
     if (!sessionData) return { wins: 0, losses: 0, profit: 0, balance: 0, capital: 0 };
@@ -1488,11 +1491,11 @@ function TradingJournalPanel({ onClose }: { onClose: () => void }) {
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <p className="text-[10px] text-gray-400 font-bold uppercase mb-1">Capital Initial</p>
+                  <p className="text-[10px] text-gray-400 font-bold uppercase mb-1">Initial Capital</p>
                   <p className="text-lg font-black text-white">${stats.capital.toFixed(2)}</p>
                 </div>
                 <div>
-                  <p className="text-[10px] text-gray-400 font-bold uppercase mb-1">Balance Actuelle</p>
+                  <p className="text-[10px] text-gray-400 font-bold uppercase mb-1">Current Balance</p>
                   <p className="text-lg font-black text-[#D4AF37]">${stats.balance.toFixed(2)}</p>
                 </div>
                 <div>
