@@ -4,20 +4,21 @@ import { getApiUrl } from '@/lib/api-config';
 import { useState, useMemo, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 
-import { 
-  Calculator, 
-  TrendingUp, 
-  TrendingDown, 
-  RefreshCw, 
-  Save, 
-  Download, 
-  Target, 
-  ShieldAlert, 
-  Plus, 
-  Trash2, 
-  ArrowUpRight, 
+import {
+  Calculator,
+  TrendingUp,
+  TrendingDown,
+  RefreshCw,
+  Save,
+  Download,
+  Target,
+  ShieldAlert,
+  Plus,
+  Trash2,
+  ArrowUpRight,
   ArrowDownRight,
   ChevronRight,
+  ChevronLeft,
   Zap,
   DollarSign,
   Loader2,
@@ -77,6 +78,10 @@ export default function RiskManagerPage() {
   const [justExported, setJustExported] = useState(false);
   const [justSaved, setJustSaved] = useState(false);
   const [apiWinRate, setApiWinRate] = useState<number | null>(null);
+
+  // Multi-session support
+  const [allSessions, setAllSessions] = useState<any[]>([]);
+  const [currentEditingIdx, setCurrentEditingIdx] = useState(-1);
 
   // Fetch performance data for real winrate
   useEffect(() => {
@@ -169,10 +174,50 @@ export default function RiskManagerPage() {
       payout,
       initialCapital,
       sessionCounter,
+      savedAt: new Date().toISOString(),
     };
     localStorage.setItem('a2sniper_risk_session', JSON.stringify(sessionData));
-    // Also dispatch a storage event so other tabs/components pick it up
     window.dispatchEvent(new StorageEvent('storage', { key: 'a2sniper_risk_session' }));
+  };
+
+  // Load all sessions on mount
+  useEffect(() => {
+    const savedAll = localStorage.getItem('a2sniper_risk_sessions');
+    if (savedAll) {
+      try {
+        const parsed = JSON.parse(savedAll);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setAllSessions(parsed);
+          setCurrentEditingIdx(parsed.length - 1);
+          const last = parsed[parsed.length - 1];
+          setInitialCapital(last.initialCapital || 1000);
+          setPayout(last.payout || 92);
+          setTrades(last.trades || Array(10).fill({ result: '', amount: 0, return: 0 }));
+          setSessionCounter(last.sessionCounter || 0);
+        }
+      } catch {}
+    }
+  }, []);
+
+  const handleNewSession = () => {
+    setInitialCapital(1000);
+    setPayout(92);
+    setTrades(Array(10).fill({ result: '', amount: 0, return: 0 }));
+    setSessionCounter(sessionCounter + 1);
+    setCurrentEditingIdx(-1);
+    setJustSaved(false);
+    toast.info("New session — fill in your trades and save.", { duration: 3000 });
+  };
+
+  const handleLoadSession = (idx: number) => {
+    if (idx < 0 || idx >= allSessions.length) return;
+    const s = allSessions[idx];
+    setInitialCapital(s.initialCapital || 1000);
+    setPayout(s.payout || 92);
+    setTrades(s.trades || Array(10).fill({ result: '', amount: 0, return: 0 }));
+    setSessionCounter(s.sessionCounter || 0);
+    setCurrentEditingIdx(idx);
+    setJustSaved(false);
   };
 
   // Auto-sync whenever trades, capital, payout, or sessionCounter change
@@ -184,11 +229,22 @@ export default function RiskManagerPage() {
 
   const handleSave = async () => {
     setIsSaving(true);
-    // Always save locally first (immediate feedback)
+    // Save to sessions array (multi-session support)
+    const dataToSave = { initialCapital, payout, trades, sessionCounter, savedAt: new Date().toISOString() };
+    const updated = [...allSessions];
+    if (currentEditingIdx >= 0 && currentEditingIdx < updated.length) {
+      updated[currentEditingIdx] = dataToSave;
+    } else {
+      updated.push(dataToSave);
+      setCurrentEditingIdx(updated.length - 1);
+    }
+    setAllSessions(updated);
+    localStorage.setItem('a2sniper_risk_sessions', JSON.stringify(updated));
+
+    // Also save individual keys for backward compat
     localStorage.setItem('a2sniper_risk_capital', String(initialCapital));
     localStorage.setItem('a2sniper_risk_payout', String(payout));
     localStorage.setItem('a2sniper_risk_trades', JSON.stringify(trades));
-    // Sync session for Trading Journal
     syncSessionToJournal();
 
     try {
@@ -310,27 +366,57 @@ export default function RiskManagerPage() {
               <p className="text-gray-400 font-medium">Gestionnaire de capital professionnel A2Sniper 3.0</p>
             </motion.div>
 
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 flex-wrap">
+              {/* Saved sessions navigation */}
+              {allSessions.length > 0 && (
+                <div className="flex items-center gap-1.5 bg-[#121216] px-3 py-2 rounded-xl border border-[#D4AF37]/20 mr-2">
+                  <button
+                    onClick={() => handleLoadSession(Math.max(0, currentEditingIdx - 1))}
+                    disabled={currentEditingIdx <= 0}
+                    className={`w-6 h-6 rounded-md flex items-center justify-center border transition-all ${currentEditingIdx <= 0 ? 'bg-gray-800/30 border-gray-700/30 text-gray-600 cursor-not-allowed opacity-50' : 'bg-[#1a1a1e] border-[#D4AF37]/30 text-[#D4AF37] hover:bg-[#D4AF37]/20'}`}
+                    title="Previous saved session"
+                  >
+                    <ChevronLeft className="w-3.5 h-3.5" />
+                  </button>
+                  <span className="text-[10px] font-bold text-gray-500 min-w-[70px] text-center">
+                    {currentEditingIdx >= 0 ? `Sess ${currentEditingIdx + 1}/${allSessions.length}` : `New (${allSessions.length + 1})`}
+                  </span>
+                  <button
+                    onClick={() => handleLoadSession(Math.min(allSessions.length - 1, currentEditingIdx + 1))}
+                    disabled={currentEditingIdx >= allSessions.length - 1 || currentEditingIdx < 0}
+                    className={`w-6 h-6 rounded-md flex items-center justify-center border transition-all ${currentEditingIdx >= allSessions.length - 1 || currentEditingIdx < 0 ? 'bg-gray-800/30 border-gray-700/30 text-gray-600 cursor-not-allowed opacity-50' : 'bg-[#1a1a1e] border-[#D4AF37]/30 text-[#D4AF37] hover:bg-[#D4AF37]/20'}`}
+                    title="Next saved session"
+                  >
+                    <ChevronRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
               <button
                 onClick={clearSession}
-                className="px-4 py-2 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 rounded-xl text-xs font-black text-red-400 flex items-center gap-2 transition-all"
+                className="px-3 py-2 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 rounded-xl text-xs font-black text-red-400 flex items-center gap-1.5 transition-all"
               >
-                <RefreshCw className="w-4 h-4" /> RESET
+                <RefreshCw className="w-3.5 h-3.5" /> RESET
+              </button>
+              <button
+                onClick={handleExportPDF}
+                className={`px-4 py-2 rounded-xl text-xs font-black flex items-center gap-1.5 transition-all ${justExported ? 'bg-green-500 shadow-lg shadow-green-500/20' : 'bg-[#D4AF37] hover:bg-[#c5a059] shadow-lg shadow-[#D4AF37]/20'} text-black`}
+              >
+                {justExported ? <Check className="w-3.5 h-3.5" /> : <Download className="w-3.5 h-3.5 text-black" />}
+                {justExported ? 'EXPORTED!' : 'EXPORT PDF'}
+              </button>
+              <button
+                onClick={handleNewSession}
+                className="px-3 py-2 bg-[#121216] hover:bg-[#1a1a1f] border border-[#D4AF37]/30 rounded-xl text-xs font-black text-[#D4AF37] flex items-center gap-1.5 transition-all"
+              >
+                <Plus className="w-3.5 h-3.5" /> NEW SESSION
               </button>
               <button
                 onClick={handleSave}
                 disabled={isSaving}
-                className={`px-4 py-2 border rounded-xl text-xs font-black flex items-center gap-2 transition-all disabled:opacity-50 ${justSaved ? 'bg-green-500/10 border-green-500/30 text-green-400' : 'bg-[#121216] hover:bg-[#1a1a1f] border-gray-800 text-white'}`}
+                className={`px-4 py-2 border rounded-xl text-xs font-black flex items-center gap-1.5 transition-all disabled:opacity-50 ${justSaved ? 'bg-green-500/10 border-green-500/30 text-green-400' : 'bg-[#121216] hover:bg-[#1a1a1f] border-gray-800 text-white'}`}
               >
-                {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : justSaved ? <Check className="w-4 h-4" /> : <Save className="w-4 h-4 text-[#D4AF37]" />}
+                {isSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : justSaved ? <Check className="w-3.5 h-3.5" /> : <Save className="w-3.5 h-3.5 text-[#D4AF37]" />}
                 {isSaving ? 'Saving...' : justSaved ? 'Saved!' : 'SAVE'}
-              </button>
-              <button
-                onClick={handleExportPDF}
-                className={`px-6 py-2 rounded-xl text-xs font-black flex items-center gap-2 transition-all ${justExported ? 'bg-green-500 shadow-lg shadow-green-500/20' : 'bg-[#D4AF37] hover:bg-[#c5a059] shadow-lg shadow-[#D4AF37]/20'} text-black`}
-              >
-                {justExported ? <Check className="w-4 h-4" /> : <Download className="w-4 h-4 text-black" />}
-                {justExported ? 'EXPORTED!' : 'EXPORTER PDF'}
               </button>
             </div>
           </div>
