@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Bot, Zap, TrendingUp, TrendingDown, ChevronRight, ChevronLeft, ShieldAlert, Info, BarChart4, Calculator, X, Play, RefreshCw, Trash2, Save, Download, Send, Check, Plus } from 'lucide-react';
+import { Bot, Zap, TrendingUp, TrendingDown, ChevronRight, ChevronLeft, ShieldAlert, Info, BarChart4, Calculator, X, Play, RefreshCw, Trash2, Save, Download, Send, Check, Plus, AlertTriangle } from 'lucide-react';
 import { useAppStore } from '@/lib/store';
 import { toast } from 'sonner';
 import { tradingPairs, Signal, UserStats } from '@/lib/mock-data';
@@ -1093,6 +1093,10 @@ function RiskManagerPanel({ onClose }: { onClose: () => void }) {
   const [isDirty, setIsDirty] = useState(false);
   const [justExported, setJustExported] = useState(false);
   const [showUnsavedModal, setShowUnsavedModal] = useState(false);
+  const [showNewSessionModal, setShowNewSessionModal] = useState(false);
+
+  // Check if any trades are recorded (at least 1 with result + amount)
+  const hasRecordedTrades = trades.some(t => t.result && t.amount > 0);
 
   useEffect(() => {
     const savedAll = localStorage.getItem('a2sniper_risk_sessions');
@@ -1152,13 +1156,16 @@ function RiskManagerPanel({ onClose }: { onClose: () => void }) {
   };
 
   const handleSave = () => {
+    // Validation: can't save without at least 1 recorded trade
+    if (!hasRecordedTrades) {
+      toast.error("Please record at least 1 trade before saving.", { duration: 3000 });
+      return;
+    }
     const dataToSave = { initialCapital, payout, trades, sessionCounter, savedAt: new Date().toISOString() };
     const updated = [...allSessions];
     if (currentEditingIdx >= 0 && currentEditingIdx < updated.length) {
-      // Update existing session
       updated[currentEditingIdx] = dataToSave;
     } else {
-      // New session — append
       updated.push(dataToSave);
       setCurrentEditingIdx(updated.length - 1);
     }
@@ -1170,13 +1177,45 @@ function RiskManagerPanel({ onClose }: { onClose: () => void }) {
   };
 
   const handleNewSession = () => {
+    // If there are unsaved changes (isDirty) or recorded trades not saved, show confirmation
+    if (isDirty && hasRecordedTrades) {
+      setShowNewSessionModal(true);
+      return;
+    }
+    // If no trades recorded, just open a new session (nothing to lose)
+    doNewSession();
+  };
+
+  const doNewSession = () => {
     setInitialCapital(1000);
     setPayout(92);
     setTrades(Array(10).fill({ result: '', amount: 0, return: 0 }));
     setSessionCounter(sessionCounter + 1);
-    setCurrentEditingIdx(-1); // -1 = new session
-    setIsDirty(true);
+    setCurrentEditingIdx(-1);
+    setIsDirty(false);
+    setShowNewSessionModal(false);
     toast.info("New session — fill in your trades and save.", { duration: 3000 });
+  };
+
+  const saveAndNewSession = () => {
+    // Save current session first, then open new one
+    if (!hasRecordedTrades) {
+      toast.error("Please record at least 1 trade before saving.", { duration: 3000 });
+      return;
+    }
+    const dataToSave = { initialCapital, payout, trades, sessionCounter, savedAt: new Date().toISOString() };
+    const updated = [...allSessions];
+    if (currentEditingIdx >= 0 && currentEditingIdx < updated.length) {
+      updated[currentEditingIdx] = dataToSave;
+    } else {
+      updated.push(dataToSave);
+    }
+    setAllSessions(updated);
+    localStorage.setItem('a2sniper_risk_sessions', JSON.stringify(updated));
+    localStorage.setItem('a2sniper_risk_session', JSON.stringify(dataToSave));
+    toast.success("Session saved! Opening new session...", { duration: 2000 });
+    // Open new session after short delay so toast is visible
+    setTimeout(() => doNewSession(), 500);
   };
 
   const handleLoadSession = (idx: number) => {
@@ -1435,6 +1474,48 @@ function RiskManagerPanel({ onClose }: { onClose: () => void }) {
           {justExported ? <Check className="w-3.5 h-3.5" /> : <Download className="w-3.5 h-3.5 text-black" />} {justExported ? 'EXPORTED!' : 'EXPORT PDF'}
         </button>
       </div>
+
+      {/* New Session Confirmation Modal */}
+      <AnimatePresence>
+        {showNewSessionModal && (
+          <div className="absolute inset-0 z-[60] bg-black/80 backdrop-blur-sm flex items-center justify-center p-6">
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-[#121216] border border-[#D4AF37]/30 rounded-2xl p-6 max-w-sm w-full space-y-4"
+            >
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="w-5 h-5 text-[#D4AF37]" />
+                <h3 className="text-white font-black text-sm uppercase tracking-widest">Unsaved Session</h3>
+              </div>
+              <p className="text-xs text-gray-400 leading-relaxed">
+                Your current session has unsaved trades. Do you want to save this session before starting a new one, or reset it?
+              </p>
+              <div className="grid grid-cols-2 gap-3 pt-2">
+                <button
+                  onClick={() => { doNewSession(); }}
+                  className="py-3 bg-red-500/10 border border-red-500/30 rounded-xl text-[10px] font-black text-red-400 hover:bg-red-500/20 transition-all"
+                >
+                  Reset Session
+                </button>
+                <button
+                  onClick={saveAndNewSession}
+                  className="py-3 bg-[#D4AF37] border border-[#D4AF37] rounded-xl text-[10px] font-black text-black hover:bg-[#c5a059] transition-all flex items-center justify-center gap-1.5"
+                >
+                  <Plus className="w-3.5 h-3.5" /> Save & New
+                </button>
+              </div>
+              <button
+                onClick={() => setShowNewSessionModal(false)}
+                className="w-full text-[10px] text-gray-500 hover:text-white transition-colors py-1"
+              >
+                Cancel
+              </button>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       {/* Unsaved Changes Confirmation Modal */}
       <AnimatePresence>

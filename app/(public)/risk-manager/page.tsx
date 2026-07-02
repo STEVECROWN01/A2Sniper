@@ -78,10 +78,16 @@ export default function RiskManagerPage() {
   const [justExported, setJustExported] = useState(false);
   const [justSaved, setJustSaved] = useState(false);
   const [apiWinRate, setApiWinRate] = useState<number | null>(null);
+  const [showNewSessionModal, setShowNewSessionModal] = useState(false);
 
   // Multi-session support
   const [allSessions, setAllSessions] = useState<any[]>([]);
   const [currentEditingIdx, setCurrentEditingIdx] = useState(-1);
+
+  // Check if any trades are recorded
+  const hasRecordedTrades = trades.some(t => t.result && t.amount > 0);
+  // Check if there are unsaved changes
+  const hasUnsavedChanges = justSaved === false && hasRecordedTrades;
 
   // Fetch performance data for real winrate
   useEffect(() => {
@@ -200,13 +206,43 @@ export default function RiskManagerPage() {
   }, []);
 
   const handleNewSession = () => {
+    // If there are unsaved changes with recorded trades, show confirmation
+    if (hasUnsavedChanges) {
+      setShowNewSessionModal(true);
+      return;
+    }
+    doNewSession();
+  };
+
+  const doNewSession = () => {
     setInitialCapital(1000);
     setPayout(92);
     setTrades(Array(10).fill({ result: '', amount: 0, return: 0 }));
     setSessionCounter(sessionCounter + 1);
     setCurrentEditingIdx(-1);
     setJustSaved(false);
+    setShowNewSessionModal(false);
     toast.info("New session — fill in your trades and save.", { duration: 3000 });
+  };
+
+  const saveAndNewSession = async () => {
+    if (!hasRecordedTrades) {
+      toast.error("Please record at least 1 trade before saving.", { duration: 3000 });
+      return;
+    }
+    // Save current session
+    const dataToSave = { initialCapital, payout, trades, sessionCounter, savedAt: new Date().toISOString() };
+    const updated = [...allSessions];
+    if (currentEditingIdx >= 0 && currentEditingIdx < updated.length) {
+      updated[currentEditingIdx] = dataToSave;
+    } else {
+      updated.push(dataToSave);
+    }
+    setAllSessions(updated);
+    localStorage.setItem('a2sniper_risk_sessions', JSON.stringify(updated));
+    syncSessionToJournal();
+    toast.success("Session saved! Opening new session...", { duration: 2000 });
+    setTimeout(() => doNewSession(), 500);
   };
 
   const handleLoadSession = (idx: number) => {
@@ -228,6 +264,11 @@ export default function RiskManagerPage() {
   }, [trades, initialCapital, payout, sessionCounter]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSave = async () => {
+    // Validation: can't save without at least 1 recorded trade
+    if (!hasRecordedTrades) {
+      toast.error("Please record at least 1 trade before saving.", { duration: 3000 });
+      return;
+    }
     setIsSaving(true);
     // Save to sessions array (multi-session support)
     const dataToSave = { initialCapital, payout, trades, sessionCounter, savedAt: new Date().toISOString() };
@@ -263,7 +304,7 @@ export default function RiskManagerPage() {
         }),
       });
       if (res.ok) {
-        toast.success('Settings saved successfully!');
+        toast.success('Session saved successfully!');
       } else {
         toast.success('Saved locally.');
       }
@@ -682,6 +723,53 @@ export default function RiskManagerPage() {
                       Annuler
                     </button>
                   </div>
+                </motion.div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* New Session Confirmation Modal */}
+          <AnimatePresence>
+            {showNewSessionModal && (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-6"
+              >
+                <motion.div
+                  initial={{ scale: 0.9, opacity: 0 }}
+                  animate={{ scale: 1, opacity: 1 }}
+                  exit={{ scale: 0.9, opacity: 0 }}
+                  className="bg-[#121216] border border-[#D4AF37]/30 rounded-2xl p-6 max-w-sm w-full space-y-4"
+                >
+                  <div className="flex items-center gap-2">
+                    <AlertTriangle className="w-5 h-5 text-[#D4AF37]" />
+                    <h3 className="text-white font-black text-sm uppercase tracking-widest">Unsaved Session</h3>
+                  </div>
+                  <p className="text-xs text-gray-400 leading-relaxed">
+                    Your current session has unsaved trades. Do you want to save this session before starting a new one, or reset it?
+                  </p>
+                  <div className="grid grid-cols-2 gap-3 pt-2">
+                    <button
+                      onClick={() => doNewSession()}
+                      className="py-3 bg-red-500/10 border border-red-500/30 rounded-xl text-[10px] font-black text-red-400 hover:bg-red-500/20 transition-all"
+                    >
+                      Reset Session
+                    </button>
+                    <button
+                      onClick={saveAndNewSession}
+                      className="py-3 bg-[#D4AF37] border border-[#D4AF37] rounded-xl text-[10px] font-black text-black hover:bg-[#c5a059] transition-all flex items-center justify-center gap-1.5"
+                    >
+                      <Plus className="w-3.5 h-3.5" /> Save & New
+                    </button>
+                  </div>
+                  <button
+                    onClick={() => setShowNewSessionModal(false)}
+                    className="w-full text-[10px] text-gray-500 hover:text-white transition-colors py-1"
+                  >
+                    Cancel
+                  </button>
                 </motion.div>
               </motion.div>
             )}
