@@ -1619,7 +1619,11 @@ function TradingJournalPanel({ onClose }: { onClose: () => void }) {
       transition={{ type: 'spring', damping: 25, stiffness: 200 }}
       className="absolute inset-0 z-50 bg-[#050507] flex flex-col"
     >
-      <div className="p-4 border-b border-gray-800 flex items-center justify-end bg-[#0a0a0c]">
+      <div className="p-4 border-b border-gray-800 flex items-center justify-between bg-[#0a0a0c]">
+        <div className="flex items-center gap-3">
+          <BarChart4 className="w-5 h-5 text-[#D4AF37]" />
+          <h3 className="text-white font-black text-sm uppercase tracking-widest">Trading Journal</h3>
+        </div>
         <button onClick={onClose} className="p-2 hover:bg-gray-800 rounded-xl transition-colors">
           <X className="w-5 h-5 text-gray-400" />
         </button>
