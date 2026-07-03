@@ -41,33 +41,67 @@ export default function TradingJournalPage() {
   const [justExported, setJustExported] = useState(false);
 
   const loadSessions = () => {
-    // Load ALL sessions from the array
+    // Load ALL saved sessions from the array
     const savedAll = localStorage.getItem('a2sniper_risk_sessions');
+    let arraySessions: SessionData[] = [];
     if (savedAll) {
       try {
         const parsed = JSON.parse(savedAll);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          setAllSessions(parsed);
-          // Keep current index if valid, otherwise show last
-          setCurrentSessionIdx(prev => prev < parsed.length ? prev : parsed.length - 1);
-          return;
+          arraySessions = parsed;
         }
       } catch (e) {
         console.error('Failed to parse trading journal sessions', e);
       }
     }
-    // Fallback: try legacy single session key
-    const saved = localStorage.getItem('a2sniper_risk_session');
-    if (saved) {
+
+    // Also check the singular key for live (possibly unsaved) data from Risk Manager
+    const savedSingle = localStorage.getItem('a2sniper_risk_session');
+    let liveSession: SessionData | null = null;
+    if (savedSingle) {
       try {
-        const parsed = JSON.parse(saved);
-        setAllSessions([parsed]);
-        setCurrentSessionIdx(0);
-        return;
+        liveSession = JSON.parse(savedSingle);
       } catch (e) {
-        console.error('Failed to parse trading journal session data', e);
+        console.error('Failed to parse live session data', e);
       }
     }
+
+    // If we have both, merge: use array sessions + check if live session is different from last saved
+    if (arraySessions.length > 0 && liveSession) {
+      // Check if live session matches the last saved session
+      const lastSaved = arraySessions[arraySessions.length - 1];
+      const isSame = lastSaved.sessionCounter === liveSession.sessionCounter &&
+                     lastSaved.initialCapital === liveSession.initialCapital;
+      if (isSame) {
+        // Replace last saved with live data (has latest trade changes)
+        arraySessions[arraySessions.length - 1] = liveSession;
+      } else {
+        // Live session is a NEW unsaved session — append it as a preview
+        // But only if it has recorded trades
+        const hasTrades = liveSession.trades && liveSession.trades.some((t: TradeEntry) => t.result && t.amount > 0);
+        if (hasTrades) {
+          arraySessions.push(liveSession);
+        }
+      }
+      setAllSessions(arraySessions);
+      setCurrentSessionIdx(prev => prev < arraySessions.length ? prev : arraySessions.length - 1);
+      return;
+    }
+
+    // Only array sessions
+    if (arraySessions.length > 0) {
+      setAllSessions(arraySessions);
+      setCurrentSessionIdx(prev => prev < arraySessions.length ? prev : arraySessions.length - 1);
+      return;
+    }
+
+    // Only live session (no saved sessions)
+    if (liveSession) {
+      setAllSessions([liveSession]);
+      setCurrentSessionIdx(0);
+      return;
+    }
+
     setAllSessions([]);
   };
 

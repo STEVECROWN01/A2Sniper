@@ -73,7 +73,7 @@ export default function RiskManagerPage() {
     }
     return Array(10).fill({ result: '', amount: 0, return: 0 });
   });
-  const [sessionCounter, setSessionCounter] = useState(0);
+  const [sessionCounter, setSessionCounter] = useState(1);
   const [isSaving, setIsSaving] = useState(false);
   const [justExported, setJustExported] = useState(false);
   const [justSaved, setJustSaved] = useState(false);
@@ -183,7 +183,7 @@ export default function RiskManagerPage() {
     // Reset ONLY the current session — remove from saved sessions array too
     const emptyTrades = Array(10).fill({ result: '', amount: 0, return: 0 });
     setTrades(emptyTrades);
-    setSessionCounter(0);
+    setSessionCounter(1);
     setInitialCapital(1000);
     setPayout(92);
     setCurrentEditingIdx(-1);
@@ -201,7 +201,7 @@ export default function RiskManagerPage() {
     localStorage.removeItem('a2sniper_risk_session');
 
     // Sync empty session to Trading Journal
-    const emptySession = { trades: emptyTrades, payout: 92, initialCapital: 1000, sessionCounter: 0 };
+    const emptySession = { trades: emptyTrades, payout: 92, initialCapital: 1000, sessionCounter: 1 };
     localStorage.setItem('a2sniper_risk_session', JSON.stringify(emptySession));
     window.dispatchEvent(new StorageEvent('storage', { key: 'a2sniper_risk_session' }));
 
@@ -209,7 +209,8 @@ export default function RiskManagerPage() {
     toast.success("Current session reset and removed from Trading Journal.");
   };
 
-  // Sync session data to localStorage so Trading Journal can read it
+  // Sync CURRENT (possibly unsaved) session to localStorage for Trading Journal live preview
+  // This writes ONLY to the singular key — the plural array is only modified by SAVE/RESET/NEW SESSION
   const syncSessionToJournal = () => {
     const sessionData = {
       trades,
@@ -218,17 +219,8 @@ export default function RiskManagerPage() {
       sessionCounter,
       savedAt: new Date().toISOString(),
     };
-    // Write to BOTH keys so Trading Journal can read from either
     localStorage.setItem('a2sniper_risk_session', JSON.stringify(sessionData));
-    // Also update the current session in the sessions array
-    if (currentEditingIdx >= 0 && currentEditingIdx < allSessions.length) {
-      const updated = [...allSessions];
-      updated[currentEditingIdx] = sessionData;
-      setAllSessions(updated);
-      localStorage.setItem('a2sniper_risk_sessions', JSON.stringify(updated));
-    }
     window.dispatchEvent(new StorageEvent('storage', { key: 'a2sniper_risk_session' }));
-    window.dispatchEvent(new StorageEvent('storage', { key: 'a2sniper_risk_sessions' }));
   };
 
   // Load all sessions on mount — but DON'T overwrite if user already has data
@@ -658,7 +650,7 @@ export default function RiskManagerPage() {
                   <div className="flex items-center justify-between mb-4">
                     <span className="text-xs font-bold text-gray-400">Session Counter</span>
                     <div className="flex items-center gap-4 bg-black/40 p-1.5 rounded-xl border border-gray-800">
-                      <button onClick={() => setSessionCounter(Math.max(0, sessionCounter - 1))} className="p-1 hover:bg-gray-800 rounded-lg text-gray-500 hover:text-white transition-colors">
+                      <button onClick={() => setSessionCounter(Math.max(1, sessionCounter - 1))} className="p-1 hover:bg-gray-800 rounded-lg text-gray-500 hover:text-white transition-colors">
                         <ChevronRight className="w-4 h-4 rotate-180" />
                       </button>
                       <span className="text-sm font-black text-white w-4 text-center">{sessionCounter}</span>

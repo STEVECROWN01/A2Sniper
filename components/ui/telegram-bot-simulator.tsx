@@ -1084,7 +1084,7 @@ function RiskManagerPanel({ onClose }: { onClose: () => void }) {
   const [initialCapital, setInitialCapital] = useState(1000);
   const [payout, setPayout] = useState(92);
   const [trades, setTrades] = useState<any[]>(Array(10).fill({ result: '', amount: 0, return: 0 }));
-  const [sessionCounter, setSessionCounter] = useState(0);
+  const [sessionCounter, setSessionCounter] = useState(1);
 
   // Multi-session support
   const [allSessions, setAllSessions] = useState<any[]>([]);
@@ -1312,7 +1312,7 @@ function RiskManagerPanel({ onClose }: { onClose: () => void }) {
   const handleReset = () => {
     // Reset ONLY the current session — remove from saved sessions too
     setTrades(Array(10).fill({ result: '', amount: 0, return: 0 }));
-    setSessionCounter(0);
+    setSessionCounter(1);
     setInitialCapital(1000);
     setPayout(92);
     setIsDirty(false);
@@ -1475,7 +1475,7 @@ function RiskManagerPanel({ onClose }: { onClose: () => void }) {
           )}
           <p className="text-[10px] font-black text-gray-500 uppercase tracking-[0.2em]">Session Counter</p>
           <div className="flex items-center gap-8">
-            <button onClick={() => { setSessionCounter(Math.max(0, sessionCounter - 1)); setIsDirty(true); }} className="p-3 bg-gray-800 rounded-full hover:bg-gray-700 transition-colors">
+            <button onClick={() => { setSessionCounter(Math.max(1, sessionCounter - 1)); setIsDirty(true); }} className="p-3 bg-gray-800 rounded-full hover:bg-gray-700 transition-colors">
               <ChevronLeft className="w-6 h-6 text-white" />
             </button>
             <span className="text-5xl font-black text-white tabular-nums drop-shadow-[0_0_20px_rgba(255,255,255,0.2)]">{sessionCounter}</span>
