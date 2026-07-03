@@ -688,7 +688,18 @@ class PocketOptionScanner:
                         if not self._is_authenticated:
                             self._is_authenticated = True
                             self._auth_event.set()
-                            logger.info(f"[SCANNER] ✅ Authentification réussie (via binary event: {event_name})")
+                            logger.info(f"[SCANNER] ✅ Authentication successful (via binary event: {event_name})")
+                        # Try to extract balance from binary auth/updateBalance event
+                        try:
+                            if event_data and isinstance(event_data[0], dict):
+                                bal = event_data[0]
+                                for key in ('balance', 'account_balance', 'amount', 'balance_amount'):
+                                    if key in bal and isinstance(bal[key], (int, float)):
+                                        self._balance = float(bal[key])
+                                        logger.info(f"[SCANNER] Balance from binary {event_name}: {self._balance}")
+                                        break
+                        except Exception:
+                            pass
                     elif event_name in ("NotAuthorized", "notAuthorized"):
                         self._is_authenticated = False
                         self._auth_event.set()
@@ -1040,7 +1051,18 @@ class PocketOptionScanner:
         if event_name == "successauth":
             self._is_authenticated = True
             self._auth_event.set()
-            logger.info("[SCANNER] ✅ Authentification réussie (via event)")
+            logger.info("[SCANNER] ✅ Authentication successful (via event)")
+            # Try to extract balance from auth response
+            try:
+                if event_data and isinstance(event_data[0], dict):
+                    bal = event_data[0]
+                    for key in ('balance', 'account_balance', 'amount', 'balance_amount'):
+                        if key in bal and isinstance(bal[key], (int, float)):
+                            self._balance = float(bal[key])
+                            logger.info(f"[SCANNER] Balance from auth: {self._balance}")
+                            break
+            except Exception:
+                pass
             return
 
         # Auth failure event
@@ -1136,10 +1158,23 @@ class PocketOptionScanner:
         if event_name == "balance":
             try:
                 if event_data and isinstance(event_data[0], dict):
-                    self._balance = event_data[0]
-                    logger.info(f"[SCANNER] Balance: {event_data[0]}")
-            except Exception:
-                pass
+                    bal = event_data[0]
+                    # Balance can be in different fields depending on PO version
+                    if 'balance' in bal:
+                        self._balance = float(bal['balance'])
+                    elif 'account_balance' in bal:
+                        self._balance = float(bal['account_balance'])
+                    elif 'amount' in bal:
+                        self._balance = float(bal['amount'])
+                    else:
+                        # Try to find any numeric value in the dict
+                        for v in bal.values():
+                            if isinstance(v, (int, float)) and v > 0:
+                                self._balance = float(v)
+                                break
+                    logger.info(f"[SCANNER] Balance updated: {self._balance} (raw: {bal})")
+            except Exception as e:
+                logger.warning(f"[SCANNER] Balance parse error: {e}")
             return
 
         # updateStream — PO's LIVE TICK STREAM. This is how PO's modern API
