@@ -178,9 +178,9 @@ export default function TradingJournalPage() {
     y = drawUserInfoCard(doc, y, pdfUser);
 
     // Session Info Section
-    y = drawSectionTitle(doc, 'Informations Session', y);
+    y = drawSectionTitle(doc, 'Session Information', y);
     y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Session', `#${sessionData.sessionCounter}`);
-    y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Capital Initial', `$${sessionData.initialCapital.toFixed(2)}`);
+    y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Initial Capital', `$${sessionData.initialCapital.toFixed(2)}`);
     y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Payout', `${sessionData.payout}%`, { valueColor: '#D4AF37' });
     y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Total Trades', `${stats.totalTrades}`);
     y += 2;
@@ -189,8 +189,8 @@ export default function TradingJournalPage() {
     y = drawSectionTitle(doc, 'Performances', y);
     const cardW = 42;
     const gap = 3;
-    y = drawStatCard(doc, PAGE.marginL, y, cardW, 'Capital Initial', `$${stats.capital.toFixed(2)}`);
-    y = drawStatCard(doc, PAGE.marginL + cardW + gap, y - 21, cardW, 'Balance Actuelle', `$${stats.balance.toFixed(2)}`, { valueColor: '#D4AF37' });
+    y = drawStatCard(doc, PAGE.marginL, y, cardW, 'Initial Capital', `$${stats.capital.toFixed(2)}`);
+    y = drawStatCard(doc, PAGE.marginL + cardW + gap, y - 21, cardW, 'Current Balance', `$${stats.balance.toFixed(2)}`, { valueColor: '#D4AF37' });
     y = drawStatCard(doc, PAGE.marginL + (cardW + gap) * 2, y - 21, cardW, 'Net Profit / Loss', `${stats.profit >= 0 ? '+' : ''}$${stats.profit.toFixed(2)}`, { valueColor: stats.profit >= 0 ? '#22C55E' : '#EF4444' });
     y = drawStatCard(doc, PAGE.marginL + (cardW + gap) * 3, y - 21, cardW, 'Win Rate', `${stats.winRate.toFixed(1)}%`, { valueColor: '#D4AF37' });
     y += 3;
@@ -198,7 +198,7 @@ export default function TradingJournalPage() {
     // Win/Loss Breakdown
     y = drawSectionTitle(doc, 'Trade Distribution', y);
     y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Successful Trades (WIN)', `${stats.wins}`, { valueColor: '#22C55E' });
-    y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Trades Losts (LOSS)', `${stats.losses}`, { valueColor: '#EF4444' });
+    y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Lost Trades (LOSS)', `${stats.losses}`, { valueColor: '#EF4444' });
     y += 2;
 
     // Risk Level
@@ -210,7 +210,7 @@ export default function TradingJournalPage() {
     // Trades Table
     if (validTrades.length > 0) {
       y = checkPageBreak(doc, y, 30);
-      y = drawSectionTitle(doc, 'Detailed History des Trades', y);
+      y = drawSectionTitle(doc, 'Detailed Trade History', y);
 
       const headers = [
         { label: '#', width: 12 },
@@ -307,7 +307,7 @@ export default function TradingJournalPage() {
           <div className="w-16 h-16 bg-white/[0.02] border border-white/5 rounded-2xl flex items-center justify-center mx-auto mb-6 text-gray-500">
             <Calendar className="w-8 h-8" />
           </div>
-          <h2 className="text-lg font-black text-white uppercase mb-2">None session active</h2>
+          <h2 className="text-lg font-black text-white uppercase mb-2">No active session</h2>
           <p className="text-sm text-gray-400 font-bold mb-6 max-w-md mx-auto leading-relaxed">
             Pour voir vos statistiques et historique de trades, veuillez d&apos;abord configurer et sauvegarder une session dans le Risk Manager (via le Bot Telegram ou l&apos;onglet Risk Manager).
           </p>
@@ -317,8 +317,8 @@ export default function TradingJournalPage() {
           {/* Summary Cards */}
           <div className="lg:col-span-12 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
             {[
-              { label: 'Capital Initial', value: `$${stats.capital.toFixed(2)}`, icon: DollarSign, color: 'text-gray-400 bg-white/[0.02]' },
-              { label: 'Balance Actuelle', value: `$${stats.balance.toFixed(2)}`, icon: BarChart3, color: 'text-[#D4AF37] bg-[#D4AF37]/10' },
+              { label: 'Initial Capital', value: `$${stats.capital.toFixed(2)}`, icon: DollarSign, color: 'text-gray-400 bg-white/[0.02]' },
+              { label: 'Current Balance', value: `$${stats.balance.toFixed(2)}`, icon: BarChart3, color: 'text-[#D4AF37] bg-[#D4AF37]/10' },
               { label: 'Net Profit / Loss', value: `${stats.profit >= 0 ? '+' : ''}$${stats.profit.toFixed(2)}`, icon: Target, color: stats.profit >= 0 ? 'text-green-500 bg-green-500/10' : 'text-red-500 bg-red-500/10' },
               { label: 'Win Rate Global', value: `${stats.winRate.toFixed(1)}%`, icon: Target, color: 'text-[#D4AF37] bg-[#D4AF37]/10' }
             ].map((stat, i) => (
@@ -343,7 +343,7 @@ export default function TradingJournalPage() {
           {/* Left panel: Session details */}
           <div className="lg:col-span-4 space-y-6">
             <div className="bg-[#0a0a0c]/80 border border-white/5 p-6 rounded-3xl backdrop-blur-md space-y-4">
-              <h3 className="text-sm font-black text-white uppercase tracking-wider border-b border-white/5 pb-3">Informations Session</h3>
+              <h3 className="text-sm font-black text-white uppercase tracking-wider border-b border-white/5 pb-3">Session Information</h3>
               <div className="space-y-3 font-bold text-xs">
                 <div className="flex justify-between text-gray-400">
                   <span>Session Number:</span>
@@ -362,7 +362,7 @@ export default function TradingJournalPage() {
                   <span className="text-green-500">{stats.wins}</span>
                 </div>
                 <div className="flex justify-between text-gray-400">
-                  <span>Trades Losts (LOSS) :</span>
+                  <span>Lost Trades (LOSS) :</span>
                   <span className="text-red-500">{stats.losses}</span>
                 </div>
               </div>
@@ -378,7 +378,7 @@ export default function TradingJournalPage() {
 
           {/* Right panel: Detailed list */}
           <div className="lg:col-span-8 bg-[#0a0a0c]/80 border border-white/5 p-6 rounded-3xl backdrop-blur-md space-y-6">
-            <h3 className="text-sm font-black text-white uppercase tracking-wider">Detailed History des Trades</h3>
+            <h3 className="text-sm font-black text-white uppercase tracking-wider">Detailed Trade History</h3>
             {validTrades.length === 0 ? (
               <p className="text-xs text-gray-500 font-bold italic text-center py-12 bg-[#050507]/40 rounded-2xl border border-white/5">
                 No trades recorded in this active session.
@@ -448,10 +448,10 @@ export default function TradingJournalPage() {
             >
               <div className="flex items-center gap-3 mb-4">
                 <AlertTriangle className="w-6 h-6 text-red-500" />
-                <h3 className="text-lg font-bold text-white">Reset le journal</h3>
+                <h3 className="text-lg font-bold text-white">Reset Trading Journal</h3>
               </div>
               <p className="text-sm text-gray-400 mb-6 leading-relaxed">
-                Do you really want to reset the trading journal? All session data and trade history will be permanently erased.
+                This will remove the current session from the Trading Journal. Other saved sessions will be kept. Are you sure?
               </p>
               <div className="flex gap-3">
                 <button
@@ -462,14 +462,14 @@ export default function TradingJournalPage() {
                   {isResetting ? <>
                     <Loader2 className="w-4 h-4 animate-spin" />
                     Resetting...
-                  </> : 'Confirmer'}
+                  </> : 'Confirm'}
                 </button>
                 <button
                   onClick={() => setShowResetConfirm(false)}
                   disabled={isResetting}
                   className="flex-1 bg-gray-800 hover:bg-gray-700 disabled:opacity-50 text-gray-300 px-4 py-2.5 rounded-lg font-bold transition-colors"
                 >
-                  Annuler
+                  Cancel
                 </button>
               </div>
             </motion.div>
