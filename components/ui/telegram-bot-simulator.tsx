@@ -409,7 +409,7 @@ export function TelegramBotSimulator() {
     // Note: winrate is per-SIGNAL, not per-pair, so it's not shown in the pair list.
     // Winrate appears on signal cards when a signal is generated for a pair.
     const seenSymbols = new Set<string>();
-    const result: Array<{ symbol: string; name?: string; payout: number; isActive: boolean }> = [];
+    const result: Array<{ symbol: string; name?: string; payout: number; isActive: boolean; winrate?: number }> = [];
 
     // 1. Default OTC pairs that meet the criteria (active + ≥ 70%)
     for (const symbol of Object.keys(marketInfo.payouts)) {

@@ -186,7 +186,7 @@ export default function RiskManagerPage() {
     setInitialCapital(1000);
     setPayout(92);
     setCurrentEditingIdx(-1);
-    setIsDirty(false);
+    setJustSaved(false);
 
     // Remove current session from allSessions array if it was saved
     if (currentEditingIdx >= 0 && currentEditingIdx < allSessions.length) {
