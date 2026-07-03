@@ -106,11 +106,11 @@ function SignalCountdown({ timestamp, expiration, onExpire }: { timestamp?: stri
         if (elapsedMin < 1) {
           setElapsedText(''); // Show nothing — just "EXPIRED" will be displayed
         } else if (elapsedMonths >= 1) {
-          setElapsedText(`${elapsedMonths} month$(elapsedMonths > 1 ? "s" : "") ago`);
+          setElapsedText(`${elapsedMonths} month${elapsedMonths > 1 ? "s" : ""} ago`);
         } else if (elapsedWeeks >= 1) {
-          setElapsedText(`${elapsedWeeks} week$(elapsedWeeks > 1 ? "s" : "") ago`);
+          setElapsedText(`${elapsedWeeks} week${elapsedWeeks > 1 ? "s" : ""} ago`);
         } else if (elapsedDays >= 1) {
-          setElapsedText(`${elapsedDays} day$(elapsedDays > 1 ? "s" : "") ago`);
+          setElapsedText(`${elapsedDays} day${elapsedDays > 1 ? "s" : ""} ago`);
         } else if (elapsedHrs >= 1) {
           setElapsedText(`${elapsedHrs}h ago`);
         } else {
