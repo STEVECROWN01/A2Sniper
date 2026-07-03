@@ -149,8 +149,9 @@ export default function RiskManagerPage() {
     return { computedTrades, wins, losses, totalProfit, currentBalance, winRate, accountGain, totalStake };
   }, [trades, initialCapital, payout]);
 
-  // Use API winrate if available, otherwise fall back to local calculation
-  const displayWinRate = apiWinRate !== null && apiWinRate > 0 ? apiWinRate : results.winRate;
+  // Use LOCAL trade-based winrate (not API winrate) — the Risk Manager should
+  // reflect the trades the user entered, not the backend signal performance.
+  const displayWinRate = results.winRate;
   const riskLevel = calculateRiskLevel(displayWinRate, results.wins + results.losses, results.accountGain);
   const riskStyle = getRiskLevelStyle(riskLevel);
 
@@ -387,7 +388,7 @@ export default function RiskManagerPage() {
       userId: user?.id,
       avatarUrl: user?.avatar,
     };
-    const doc = createBrandedPDF('Risk Manager', 'Gestionnaire de capital professionnel A2Sniper 3.0', pdfUser);
+    const doc = createBrandedPDF('Risk Manager', 'Professional capital manager A2Sniper 3.0', pdfUser);
     let y = 58;
 
     // User info card
@@ -395,8 +396,8 @@ export default function RiskManagerPage() {
 
     // Configuration
     y = drawSectionTitle(doc, 'Configuration', y);
-    y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Capital Initial', `$${initialCapital.toFixed(2)}`);
-    y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Payout Marche', `${payout}%`, { valueColor: '#D4AF37' });
+    y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Initial Capital', `$${initialCapital.toFixed(2)}`);
+    y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Market Payout', `${payout}%`, { valueColor: '#D4AF37' });
     y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Session', `#${sessionCounter}`);
     y += 2;
 
@@ -405,7 +406,7 @@ export default function RiskManagerPage() {
     const cardW = 42;
     const gap = 3;
     y = drawStatCard(doc, PAGE.marginL, y, cardW, 'Balance', `$${results.currentBalance.toFixed(2)}`);
-    y = drawStatCard(doc, PAGE.marginL + cardW + gap, y - 21, cardW, 'Profit Net', `${results.totalProfit >= 0 ? '+' : ''}$${results.totalProfit.toFixed(2)}`, { valueColor: results.totalProfit >= 0 ? '#22C55E' : '#EF4444' });
+    y = drawStatCard(doc, PAGE.marginL + cardW + gap, y - 21, cardW, 'Net Profit', `${results.totalProfit >= 0 ? '+' : ''}$${results.totalProfit.toFixed(2)}`, { valueColor: results.totalProfit >= 0 ? '#22C55E' : '#EF4444' });
     y = drawStatCard(doc, PAGE.marginL + (cardW + gap) * 2, y - 21, cardW, 'Win Rate', displayWinRate > 0 ? `${displayWinRate.toFixed(1)}%` : 'N/A', { valueColor: '#D4AF37' });
     y = drawStatCard(doc, PAGE.marginL + (cardW + gap) * 3, y - 21, cardW, 'Gain', `${results.accountGain >= 0 ? '+' : ''}${results.accountGain.toFixed(2)}%`, { valueColor: results.accountGain >= 0 ? '#22C55E' : '#EF4444' });
     y += 3;
@@ -462,7 +463,7 @@ export default function RiskManagerPage() {
                 </div>
                 <h1 className="text-2xl font-black text-white uppercase tracking-tight">Advanced Risk Manager</h1>
               </div>
-              <p className="text-gray-400 font-medium">Gestionnaire de capital professionnel A2Sniper 3.0</p>
+              <p className="text-gray-400 font-medium">Professional capital manager A2Sniper 3.0</p>
             </motion.div>
 
             <div className="flex items-center gap-2 flex-wrap">
@@ -509,7 +510,7 @@ export default function RiskManagerPage() {
                   <p className="text-lg font-black text-white">${results.currentBalance.toFixed(2)}</p>
                 </div>
                 <div className="bg-[#0a0a0c] px-4 py-3 rounded-xl border border-gray-800/50">
-                  <p className="text-[9px] font-bold text-gray-500 uppercase tracking-wider mb-1">Profit Net</p>
+                  <p className="text-[9px] font-bold text-gray-500 uppercase tracking-wider mb-1">Net Profit</p>
                   <p className={`text-lg font-black ${results.totalProfit >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                     {results.totalProfit >= 0 ? '+' : ''}${results.totalProfit.toFixed(2)}
                   </p>
@@ -610,7 +611,7 @@ export default function RiskManagerPage() {
 
                 <div className="space-y-4">
                   <div>
-                    <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest block mb-2">Capital Initial</label>
+                    <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest block mb-2">Initial Capital</label>
                     <div className="relative">
                       <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-600" />
                       <input
