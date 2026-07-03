@@ -218,8 +218,17 @@ export default function RiskManagerPage() {
       sessionCounter,
       savedAt: new Date().toISOString(),
     };
+    // Write to BOTH keys so Trading Journal can read from either
     localStorage.setItem('a2sniper_risk_session', JSON.stringify(sessionData));
+    // Also update the current session in the sessions array
+    if (currentEditingIdx >= 0 && currentEditingIdx < allSessions.length) {
+      const updated = [...allSessions];
+      updated[currentEditingIdx] = sessionData;
+      setAllSessions(updated);
+      localStorage.setItem('a2sniper_risk_sessions', JSON.stringify(updated));
+    }
     window.dispatchEvent(new StorageEvent('storage', { key: 'a2sniper_risk_session' }));
+    window.dispatchEvent(new StorageEvent('storage', { key: 'a2sniper_risk_sessions' }));
   };
 
   // Load all sessions on mount — but DON'T overwrite if user already has data
