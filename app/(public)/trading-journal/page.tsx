@@ -247,8 +247,8 @@ export default function TradingJournalPage() {
       {/* Session navigation + action buttons */}
       {sessionData && (
         <div className="flex justify-between items-center gap-3 flex-wrap">
-          {/* Session navigation arrows */}
-          {allSessions.length > 1 && (
+          {/* Session navigation arrows — always show when sessions exist */}
+          {allSessions.length > 0 && (
             <div className="flex items-center gap-2">
               <button
                 onClick={() => setCurrentSessionIdx(Math.max(0, currentSessionIdx - 1))}
