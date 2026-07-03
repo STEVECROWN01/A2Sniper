@@ -51,7 +51,7 @@ function getRiskLevelStyle(level: RiskLevel) {
 
 export default function RiskManagerPage() {
   useAuth();
-  const { userStats, fetchPerformance, user } = useAppStore();
+  const { userStats, fetchPerformance, user, marketInfo, fetchMarketStatus } = useAppStore();
   const [initialCapital, setInitialCapital] = useState(() => {
     if (typeof window !== 'undefined') {
       const saved = localStorage.getItem('a2sniper_risk_capital');
@@ -89,7 +89,7 @@ export default function RiskManagerPage() {
   // Check if there are unsaved changes
   const hasUnsavedChanges = justSaved === false && hasRecordedTrades;
 
-  // Fetch performance data for real winrate + auto-fill balance from PO
+  // Fetch performance data + market status (for PO balance auto-fill)
   useEffect(() => {
     const loadData = async () => {
       try {
@@ -97,25 +97,24 @@ export default function RiskManagerPage() {
         if (userStats?.winRate && userStats.winRate > 0) {
           setApiWinRate(userStats.winRate);
         }
-        // Auto-fill initial capital from Pocket Option account balance
-        const apiUrl = getApiUrl();
-        const res = await fetch(`${apiUrl}/api/market/status`, { credentials: 'include' });
-        if (res.ok) {
-          const data = await res.json();
-          if (data.account_balance && data.account_balance > 0) {
-            // Only auto-fill if the current capital is the default (1000) or empty
-            // Don't overwrite if user already set a custom value
-            const currentCap = localStorage.getItem('a2sniper_risk_capital');
-            if (!currentCap || currentCap === '1000') {
-              setInitialCapital(data.account_balance);
-              localStorage.setItem('a2sniper_risk_capital', String(data.account_balance));
-            }
-          }
-        }
+        await fetchMarketStatus();
       } catch {}
     };
     loadData();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Auto-fill initial capital from Pocket Option account balance
+  // Uses marketInfo from the store (updated by fetchMarketStatus every 1s)
+  useEffect(() => {
+    if (marketInfo?.account_balance && marketInfo.account_balance > 0) {
+      const currentCap = localStorage.getItem('a2sniper_risk_capital');
+      // Only auto-fill if current capital is default (1000) or not set
+      if (!currentCap || currentCap === '1000') {
+        setInitialCapital(marketInfo.account_balance);
+        localStorage.setItem('a2sniper_risk_capital', String(marketInfo.account_balance));
+      }
+    }
+  }, [marketInfo?.account_balance]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const results = useMemo(() => {
     let currentBalance = initialCapital;
@@ -184,7 +183,8 @@ export default function RiskManagerPage() {
     const emptyTrades = Array(10).fill({ result: '', amount: 0, return: 0 });
     setTrades(emptyTrades);
     setSessionCounter(1);
-    setInitialCapital(1000);
+    const poBalance = marketInfo?.account_balance && marketInfo.account_balance > 0 ? marketInfo.account_balance : 1000;
+    setInitialCapital(poBalance);
     setPayout(92);
     setCurrentEditingIdx(-1);
     setJustSaved(false);
@@ -258,7 +258,8 @@ export default function RiskManagerPage() {
   };
 
   const doNewSession = () => {
-    setInitialCapital(1000);
+    const poBalance = marketInfo?.account_balance && marketInfo.account_balance > 0 ? marketInfo.account_balance : 1000;
+    setInitialCapital(poBalance);
     setPayout(92);
     setTrades(Array(10).fill({ result: '', amount: 0, return: 0 }));
     setSessionCounter(sessionCounter + 1);

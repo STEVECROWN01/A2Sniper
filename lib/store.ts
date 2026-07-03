@@ -83,6 +83,7 @@ interface AppState {
     payouts: Record<string, number>;
     pair_status?: Record<string, { payout: number; is_active: boolean; display: string }>;
     all_otc_pairs?: Record<string, number>;
+    account_balance?: number | null;
   } | null;
   isInitialized: boolean;
   clockOffset: number;
@@ -431,6 +432,7 @@ export const useAppStore = create<AppState>((set, get) => ({
             payouts: mergedPayouts,
             pair_status: pairStatus,
             all_otc_pairs: allOtcPairs,
+            account_balance: data.account_balance ?? null,
           }
         });
 
