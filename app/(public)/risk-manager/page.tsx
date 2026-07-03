@@ -402,7 +402,7 @@ export default function RiskManagerPage() {
     y += 2;
 
     // Risk Stats
-    y = drawSectionTitle(doc, 'Analysis de risque', y);
+    y = drawSectionTitle(doc, 'Risk Analysis', y);
     const cardW = 42;
     const gap = 3;
     y = drawStatCard(doc, PAGE.marginL, y, cardW, 'Balance', `$${results.currentBalance.toFixed(2)}`);
@@ -528,7 +528,7 @@ export default function RiskManagerPage() {
                   </p>
                 </div>
                 <div className="bg-[#0a0a0c] px-4 py-3 rounded-xl border border-gray-800/50 col-span-2 sm:col-span-1">
-                  <p className="text-[9px] font-bold text-gray-500 uppercase tracking-wider mb-1">Risque</p>
+                  <p className="text-[9px] font-bold text-gray-500 uppercase tracking-wider mb-1">Risk</p>
                   <div className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md ${riskStyle.bg} ${riskStyle.border} border`}>
                     {riskLevel === 'High' || riskLevel === 'Critical' ? (
                       <AlertTriangle className={`w-3.5 h-3.5 ${riskStyle.text}`} />
