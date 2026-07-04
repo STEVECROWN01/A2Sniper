@@ -44,7 +44,7 @@ export default function PerformancePage() {
     return signals.filter(s => new Date(s.timestamp) >= cutoff);
   }, [signals, selectedTimeframe]);
 
-  // Calculer les statistiques par paire
+  // Calculer les statistiques par pair
   const pairStats = useMemo(() => {
     return tradingPairs.map(pair => {
       const pairSignals = filteredSignals.filter(s => s.pair === pair.symbol);
@@ -64,7 +64,7 @@ export default function PerformancePage() {
     }).filter(stat => stat.totalTrades > 0);
   }, [filteredSignals]);
 
-  // Données pour le graphique (réelles)
+  // Data for the chart (real)
   const chartData = useMemo(() => {
     const dailyMap: Record<string, { winRate: number; total: number; profit: number }> = {};
     filteredSignals.forEach(s => {
@@ -198,7 +198,7 @@ export default function PerformancePage() {
       userId: user?.id,
       avatarUrl: user?.avatar,
     };
-    const doc = createBrandedPDF('Analyse de Performance', `Periode: ${selectedTimeframe}`, pdfUser);
+    const doc = createBrandedPDF('Analysis de Performance', `Periode: ${selectedTimeframe}`, pdfUser);
     let y = 58;
 
     // User info card
@@ -228,13 +228,13 @@ export default function PerformancePage() {
     // Pair Stats Table
     if (pairStats.length > 0) {
       y = checkPageBreak(doc, y, 30);
-      y = drawSectionTitle(doc, 'Performance par paire', y);
+      y = drawSectionTitle(doc, 'Performance par pair', y);
       const headers = [
-        { label: 'Paire', width: 30 },
+        { label: 'Pair', width: 30 },
         { label: 'Trades', width: 20, align: 'center' as const },
         { label: 'Win Rate', width: 25, align: 'center' as const },
         { label: 'Gagnes', width: 20, align: 'center' as const },
-        { label: 'Perdus', width: 20, align: 'center' as const },
+        { label: 'Losts', width: 20, align: 'center' as const },
         { label: 'Profit', width: 30, align: 'right' as const },
       ];
       const rows = pairStats.map(p => [
@@ -256,7 +256,7 @@ export default function PerformancePage() {
         { label: 'Mois', width: 35 },
         { label: 'Trades', width: 25, align: 'center' as const },
         { label: 'Gagnes', width: 25, align: 'center' as const },
-        { label: 'Perdus', width: 25, align: 'center' as const },
+        { label: 'Losts', width: 25, align: 'center' as const },
         { label: 'Win Rate', width: 25, align: 'center' as const },
         { label: 'Profit', width: 30, align: 'right' as const },
       ];
@@ -306,10 +306,10 @@ export default function PerformancePage() {
             >
               <div>
                 <h1 className="text-2xl font-bold text-white mb-2">
-                  Analyse de Performance
+                  Analysis de Performance
                 </h1>
                 <p className="text-gray-400">
-                  Analyse détaillée de vos résultats de trading
+                  Detailed analysis of your trading results
                 </p>
               </div>
               
@@ -323,7 +323,7 @@ export default function PerformancePage() {
                   <option value="7D">7 Jours</option>
                   <option value="1M">1 Mois</option>
                   <option value="3M">3 Mois</option>
-                  <option value="1Y">1 Année</option>
+                  <option value="1Y">1 Year</option>
                 </select>
                 
                 <button
@@ -354,7 +354,7 @@ export default function PerformancePage() {
               color="green"
             />
             <MetricCard
-              title="Taux de réussite"
+              title="Success Rate"
               value={`${metrics.avgWinRate.toFixed(1)}%`}
               change={metrics.winRateChange !== null ? { value: Math.abs(metrics.winRateChange), type: metrics.winRateChange >= 0 ? 'increase' : 'decrease' } : undefined}
               icon={<Target className="w-6 h-6" />}
@@ -378,7 +378,7 @@ export default function PerformancePage() {
           <div className="mb-8">
             <PerformanceChart 
               data={chartData.length > 0 ? chartData : [{ date: new Date().toISOString().split('T')[0], winRate: 0, totalTrades: 0, profit: 0 }]}
-              title="Évolution de la performance (Données Réelles)"
+              title="Performance Evolution (Real Data)"
             />
           </div>
 
@@ -390,25 +390,25 @@ export default function PerformancePage() {
             className="bg-[#0A0B0E] rounded-xl border border-[#1a1a2e] p-6 mb-8"
           >
             <h3 className="text-lg font-semibold text-white mb-6">
-              Performance par paire de devises
+              Performance par pair de devises
             </h3>
             {pairStats.length === 0 ? (
               <div className="text-center py-12">
                 <AlertCircle className="w-12 h-12 text-gray-600 mx-auto mb-4" />
-                <p className="text-gray-500 text-sm">Aucune donnée de performance disponible pour cette période.</p>
-                <p className="text-gray-600 text-xs mt-2">Les statistiques par paire apparaîtront dès que des signaux résolus seront disponibles.</p>
+                <p className="text-gray-500 text-sm">No performance data available for this period.</p>
+                <p className="text-gray-600 text-xs mt-2">Per-pair statistics will appear as soon as resolved signals are available.</p>
               </div>
             ) : (
             <div className="overflow-x-auto">
               <table className="w-full">
                 <thead>
                   <tr className="border-b border-[#1a1a2e]">
-                    <th className="text-left py-3 px-4 font-medium text-white">Paire</th>
+                    <th className="text-left py-3 px-4 font-medium text-white">Pair</th>
                     <th className="text-left py-3 px-4 font-medium text-white">Trades</th>
-                    <th className="text-left py-3 px-4 font-medium text-white">Taux de réussite</th>
+                    <th className="text-left py-3 px-4 font-medium text-white">Success Rate</th>
                     <th className="text-left py-3 px-4 font-medium text-white">Profit</th>
-                    <th className="text-left py-3 px-4 font-medium text-white">Gagnés</th>
-                    <th className="text-left py-3 px-4 font-medium text-white">Perdus</th>
+                    <th className="text-left py-3 px-4 font-medium text-white">Wons</th>
+                    <th className="text-left py-3 px-4 font-medium text-white">Losts</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -492,8 +492,8 @@ export default function PerformancePage() {
               {monthlyPerformance.length === 0 ? (
                 <div className="text-center py-8">
                   <Calendar className="w-10 h-10 text-gray-600 mx-auto mb-3" />
-                  <p className="text-gray-500 text-sm">Aucune donnée mensuelle disponible.</p>
-                  <p className="text-gray-600 text-xs mt-1">Les performances mensuelles s&apos;afficheront dès que des signaux résolus seront enregistrés.</p>
+                  <p className="text-gray-500 text-sm">No monthly data available.</p>
+                  <p className="text-gray-600 text-xs mt-1">Monthly performance will appear as soon as resolved signals are recorded.</p>
                 </div>
               ) : (
                 <div className="space-y-3">
@@ -527,13 +527,13 @@ export default function PerformancePage() {
               className="bg-[#0A0B0E] rounded-xl border border-[#1a1a2e] p-6"
             >
               <h3 className="text-lg font-semibold text-white mb-4">
-                Métriques de risque
+                Metrics de risque
               </h3>
               {!riskMetrics ? (
                 <div className="text-center py-8">
                   <PieChart className="w-10 h-10 text-gray-600 mx-auto mb-3" />
-                  <p className="text-gray-500 text-sm">Aucune donnée de risque disponible.</p>
-                  <p className="text-gray-600 text-xs mt-1">Les métriques de risque seront calculées dès que des résultats de trades seront enregistrés.</p>
+                  <p className="text-gray-500 text-sm">No risk data available.</p>
+                  <p className="text-gray-600 text-xs mt-1">Risk metrics will be calculated as soon as trade results are recorded.</p>
                 </div>
               ) : (
                 <div className="space-y-3">
@@ -541,9 +541,9 @@ export default function PerformancePage() {
                     { label: 'Profit Factor', value: riskMetrics.profitFactor, color: parseFloat(String(riskMetrics.profitFactor)) >= 1.5 ? 'text-green-400' : 'text-yellow-400' },
                     { label: 'Ratio Gain/Perte moyen', value: riskMetrics.avgProfitLossRatio, color: 'text-[#D4AF37]' },
                     { label: 'Drawdown maximal', value: `${riskMetrics.maxDrawdown}%`, color: 'text-red-400' },
-                    { label: 'Pertes consécutives max', value: String(riskMetrics.maxConsecutiveLosses), color: 'text-orange-400' },
-                    { label: 'Taux de réussite', value: `${riskMetrics.winRate}%`, color: parseFloat(riskMetrics.winRate) >= 60 ? 'text-green-400' : 'text-red-400' },
-                    { label: 'Trades analysés', value: String(riskMetrics.totalTrades), color: 'text-gray-300' },
+                    { label: 'Max Consecutive Losses', value: String(riskMetrics.maxConsecutiveLosses), color: 'text-orange-400' },
+                    { label: 'Success Rate', value: `${riskMetrics.winRate}%`, color: parseFloat(riskMetrics.winRate) >= 60 ? 'text-green-400' : 'text-red-400' },
+                    { label: 'Trades Analyzed', value: String(riskMetrics.totalTrades), color: 'text-gray-300' },
                   ].map((metric) => (
                     <div key={metric.label} className="flex items-center justify-between p-3 bg-[#050507] rounded-lg border border-white/5">
                       <span className="text-sm text-gray-400">{metric.label}</span>

@@ -65,8 +65,8 @@ export const pricingPlans = [
     quarterly: 178, // -10%
     annual: 159, // -20%
     features: [
-      'Jusqu\'à 20 signaux/jour',
-      'Accès Bot Telegram',
+      'Up to 20 signals/day',
+      'Telegram Bot Access',
     ],
     assets: ['Forex OTC'],
     support: 'Email 48h',
@@ -78,11 +78,11 @@ export const pricingPlans = [
     quarterly: 268, // -10%
     annual: 238, // -20%
     features: [
-      'Jusqu\'à 35 signaux/jour',
-      'Analyse SMC détaillée par signal',
-      'Commande /analyse à la demande',
+      'Up to 35 signals/day',
+      'Detailed SMC analysis per signal',
+      'On-demand /analyze command',
       'Commande /structure SMC',
-      'Dashboard web avancé',
+      'Advanced web dashboard',
       'Support Chat 4h'
     ],
     popular: true,
@@ -97,21 +97,21 @@ export const pricingPlans = [
     quarterly: 358, // -10%
     annual: 318, // -20%
     features: [
-      'Signaux illimités',
-      'Accès Signaux Sniper Winrate élevé',
+      'Unlimited signals',
+      'Access to High-Winrate Sniper Signals',
       'Backtesting sur 5 ans',
-      'Accès API Full Access',
-      'Coaching personnalisé (4h/mois)',
+      'Full Access API access',
+      'Personalized coaching (4h/month)',
       'Rapport de performance mensuel PDF'
     ],
     brokers: ['Pocket Option'],
     assets: ['Forex OTC'],
-    support: 'Téléphone 1h + Priorité',
+    support: 'Phone 1h + Priority',
     api_access: true
   }
 ];
 
-// Courtiers supportés selon le cahier des charges
+// Supported Brokers selon le cahier des charges
 export const supportedBrokers = [
   {
     name: 'Pocket Option',
@@ -163,7 +163,7 @@ export const supportedBrokers = [
   }
 ];
 
-// Actifs OTC supportés — EXCLUSIVEMENT Pocket Option OTC
+// Active OTC supported — EXCLUSIVELY Pocket Option OTC
 export const supportedAssets = {
   forex: [
     'EUR/USD OTC', 'GBP/USD OTC', 'USD/JPY OTC', 'AUD/USD OTC', 'USD/CHF OTC', 'EUR/GBP OTC',
@@ -171,18 +171,18 @@ export const supportedAssets = {
   ],
 };
 
-// Métriques de performance — valeurs réalistes (N/A jusqu'à ce que les données réelles soient disponibles)
+// Performance metrics — realistic values (N/A until real data is available)
 export const performanceMetrics = {
-  accuracy: 0, // À remplir par les données réelles de l'API
-  verified_success_rate: 0, // À remplir par les données réelles de l'API
-  signals_per_day: { min: 0, max: 0 }, // À remplir par les données réelles
-  execution_time: 0, // À remplir par les données réelles
-  profit_loss_ratio: 0, // À remplir par les données réelles
-  uptime: 0, // À remplir par les données réelles
-  response_time: 0 // À remplir par les données réelles
+  accuracy: 0, // To be filled with real API data
+  verified_success_rate: 0, // To be filled with real API data
+  signals_per_day: { min: 0, max: 0 }, // To be filled with real data
+  execution_time: 0, // To be filled with real data
+  profit_loss_ratio: 0, // To be filled with real data
+  uptime: 0, // To be filled with real data
+  response_time: 0 // To be filled with real data
 };
 
-// Nouvelles données selon spécifications du document
+// New data according to document specifications
 export const technicalIndicatorsConfig = {
   RSI: { period: 14, oversold: 30, overbought: 70 },
   MACD: { fast: 12, slow: 26, signal: 9 },
@@ -192,7 +192,7 @@ export const technicalIndicatorsConfig = {
   Volume: { threshold: 1.5 } // 1.5x moyenne
 };
 
-// Modèles d'apprentissage automatique selon spécifications
+// Machine learning models according to specifications
 export const mlModelsConfig = {
   RandomForest: {
     type: 'classification',
@@ -212,13 +212,13 @@ export const mlModelsConfig = {
   }
 };
 
-// Configuration de génération et diffusion des signaux
+// Signal generation and distribution configuration
 export const signalConfig = {
   frequency: {
     calculation: '1_minute', // Calcul toutes les minutes
-    diffusion: 'instantaneous' // Diffusion instantanée
+    diffusion: 'instantaneous' // Instant distribution
   },
-  format: '[HH:MM:SS] – Actif: [EUR/USD] – Direction: [Call/Put] – Expiration: [1–5 min] – Winrate: [95%]',
+  format: '[HH:MM:SS] – Active: [EUR/USD] – Direction: [Call/Put] – Expiration: [1–5 min] – Winrate: [95%]',
   winrate_based: true,
   model_ensemble: true,
   user_adjustable_thresholds: true,
@@ -228,7 +228,7 @@ export const signalConfig = {
   }
 };
 
-// Interface Telegram selon spécifications
+// Telegram interface according to specifications
 export const telegramInterface = {
   commands: {
     '/start': 'onboarding_and_authentication',
@@ -244,7 +244,7 @@ export const telegramInterface = {
   }
 };
 
-// Dashboards web selon spécifications
+// Web dashboards according to specifications
 export const webDashboards = {
   main_dashboard: {
     chronological_signals_view: true,
@@ -263,7 +263,7 @@ export const webDashboards = {
   }
 };
 
-// Support du risque et backtesting selon spécifications
+// Risk support and backtesting according to specifications
 export const riskAndBacktesting = {
   risk_management: {
     stop_loss_take_profit_settings: true,

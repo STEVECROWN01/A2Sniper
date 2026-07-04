@@ -30,7 +30,7 @@ export function BacktestResults({ result, onClose }: BacktestResultsProps) {
 
     if (format === 'pdf') {
       // Professional branded PDF export
-      const doc = createBrandedPDF('Resultats du Backtest', 'Analyse detaillee des performances historiques', pdfUser);
+      const doc = createBrandedPDF('Resultats du Backtest', 'Analysis detaillee des performances historiques', pdfUser);
       let y = 58;
 
       // User info card
@@ -53,8 +53,8 @@ export function BacktestResults({ result, onClose }: BacktestResultsProps) {
 
       // Detailed metrics
       y = drawSectionTitle(doc, 'Metriques detaillees', y);
-      y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Trades Gagnants', String(result.winningTrades), { valueColor: '#22C55E' });
-      y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Trades Perdants', String(result.losingTrades), { valueColor: '#EF4444' });
+      y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Trades Won', String(result.winningTrades), { valueColor: '#22C55E' });
+      y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Trades Lost', String(result.losingTrades), { valueColor: '#EF4444' });
       y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Plus Gros Gain', `$${result.largestWin.toFixed(2)}`, { valueColor: '#22C55E' });
       y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Plus Grosse Perte', `$${result.largestLoss.toFixed(2)}`, { valueColor: '#EF4444' });
       y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Serie Gagnante Max', String(result.consecutiveWins));
@@ -64,10 +64,10 @@ export function BacktestResults({ result, onClose }: BacktestResultsProps) {
       // Trades table
       if (result.trades.length > 0) {
         y = checkPageBreak(doc, y, 30);
-        y = drawSectionTitle(doc, 'Historique des trades', y);
+        y = drawSectionTitle(doc, 'Trade History', y);
         const headers = [
           { label: '#', width: 12 },
-          { label: 'Paire', width: 28 },
+          { label: 'Pair', width: 28 },
           { label: 'Direction', width: 22, align: 'center' as const },
           { label: 'Resultat', width: 22, align: 'center' as const },
           { label: 'Entree', width: 28, align: 'right' as const },
@@ -134,7 +134,7 @@ export function BacktestResults({ result, onClose }: BacktestResultsProps) {
   const tabs = [
     { id: 'overview', name: 'Vue d\'ensemble', icon: BarChart3 },
     { id: 'trades', name: 'Trades', icon: TrendingUp },
-    { id: 'metrics', name: 'Métriques', icon: Target }
+    { id: 'metrics', name: 'Metrics', icon: Target }
   ];
 
   return (
@@ -148,8 +148,8 @@ export function BacktestResults({ result, onClose }: BacktestResultsProps) {
         {/* Header */}
         <div className="flex items-center justify-between p-6 border-b border-white/5">
           <div>
-            <h2 className="text-xl font-black text-white uppercase tracking-wider">Résultats du Backtest</h2>
-            <p className="text-xs text-gray-500 font-bold mt-1">Analyse détaillée des performances historiques.</p>
+            <h2 className="text-xl font-black text-white uppercase tracking-wider">Results du Backtest</h2>
+            <p className="text-xs text-gray-500 font-bold mt-1">Detailed analysis of historical performance.</p>
           </div>
           <div className="flex items-center space-x-3">
             <div className="flex items-center space-x-2">
@@ -157,7 +157,7 @@ export function BacktestResults({ result, onClose }: BacktestResultsProps) {
                 onClick={() => handleDownload('pdf')}
                 className={`font-black uppercase tracking-wider text-[10px] px-4 py-2 rounded-xl transition-all flex items-center gap-1.5 ${justExported ? 'bg-green-500 text-white' : 'bg-[#D4AF37] hover:bg-[#c5a059] text-black'}`}
               >
-                {justExported ? <><Check className="w-3 h-3" /> EXPORTÉ</> : 'PDF'}
+                {justExported ? <><Check className="w-3 h-3" /> EXPORTED</> : 'PDF'}
               </button>
               <button
                 onClick={() => handleDownload('csv')}
@@ -221,7 +221,7 @@ export function BacktestResults({ result, onClose }: BacktestResultsProps) {
               <div className="bg-[#0a0a0c] rounded-xl p-5 border border-white/5">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-[10px] text-gray-500 font-bold uppercase tracking-wider mb-1">Taux de Réussite</p>
+                    <p className="text-[10px] text-gray-500 font-bold uppercase tracking-wider mb-1">Success Rate</p>
                     <p className="text-2xl font-black text-[#D4AF37]">
                       {result.winRate.toFixed(1)}%
                     </p>
@@ -310,11 +310,11 @@ export function BacktestResults({ result, onClose }: BacktestResultsProps) {
                 <thead>
                   <tr className="border-b border-white/10 text-gray-500 uppercase text-[10px] tracking-wider">
                     <th className="text-left py-3 px-4">ID</th>
-                    <th className="text-left py-3 px-4">Paire</th>
+                    <th className="text-left py-3 px-4">Pair</th>
                     <th className="text-left py-3 px-4">Direction</th>
-                    <th className="text-left py-3 px-4">Entrée</th>
+                    <th className="text-left py-3 px-4">Entry</th>
                     <th className="text-left py-3 px-4">Sortie</th>
-                    <th className="text-left py-3 px-4">Résultat</th>
+                    <th className="text-left py-3 px-4">Result</th>
                     <th className="text-left py-3 px-4">Profit</th>
                   </tr>
                 </thead>
@@ -368,14 +368,14 @@ export function BacktestResults({ result, onClose }: BacktestResultsProps) {
           {activeTab === 'metrics' && (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8 text-xs font-bold text-gray-400">
               <div>
-                <h3 className="text-sm font-black text-[#D4AF37] uppercase tracking-wider mb-4">Métriques de Performance</h3>
+                <h3 className="text-sm font-black text-[#D4AF37] uppercase tracking-wider mb-4">Metrics de Performance</h3>
                 <div className="space-y-3">
                   <div className="flex justify-between border-b border-white/[0.02] pb-2">
-                    <span>Trades Gagnants</span>
+                    <span>Trades Won</span>
                     <span className="text-white font-black">{result.winningTrades}</span>
                   </div>
                   <div className="flex justify-between border-b border-white/[0.02] pb-2">
-                    <span>Trades Perdants</span>
+                    <span>Trades Lost</span>
                     <span className="text-white font-black">{result.losingTrades}</span>
                   </div>
                   <div className="flex justify-between border-b border-white/[0.02] pb-2">
@@ -387,18 +387,18 @@ export function BacktestResults({ result, onClose }: BacktestResultsProps) {
                     <span className="text-red-500 font-black">${result.largestLoss.toFixed(2)}</span>
                   </div>
                   <div className="flex justify-between border-b border-white/[0.02] pb-2">
-                    <span>Série Gagnante Max</span>
+                    <span>Max Winning Streak</span>
                     <span className="text-white font-black">{result.consecutiveWins}</span>
                   </div>
                   <div className="flex justify-between border-b border-white/[0.02] pb-2">
-                    <span>Série Perdante Max</span>
+                    <span>Max Losing Streak</span>
                     <span className="text-white font-black">{result.consecutiveLosses}</span>
                   </div>
                 </div>
               </div>
 
               <div>
-                <h3 className="text-sm font-black text-[#D4AF37] uppercase tracking-wider mb-4">Métriques de Risque</h3>
+                <h3 className="text-sm font-black text-[#D4AF37] uppercase tracking-wider mb-4">Metrics de Risque</h3>
                 <div className="space-y-3">
                   <div className="flex justify-between border-b border-white/[0.02] pb-2">
                     <span>Profit Total</span>

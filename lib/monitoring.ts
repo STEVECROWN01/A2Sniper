@@ -1,4 +1,4 @@
-// Système de monitoring et surveillance selon le cahier des charges
+// Monitoring and surveillance system according to specifications
 
 export interface SystemMetrics {
   timestamp: Date;
@@ -96,7 +96,7 @@ export class MonitoringSystem {
 
   private monitoringInterval?: NodeJS.Timeout;
 
-  // Démarrage du monitoring
+  // Monitoring start
   startMonitoring(intervalMs: number = 60000): void {
     this.monitoringInterval = setInterval(() => {
       this.collectMetrics();
@@ -105,7 +105,7 @@ export class MonitoringSystem {
     console.log('Monitoring system started');
   }
 
-  // Arrêt du monitoring
+  // Monitoring stop
   stopMonitoring(): void {
     if (this.monitoringInterval) {
       clearInterval(this.monitoringInterval);
@@ -114,7 +114,7 @@ export class MonitoringSystem {
     console.log('Monitoring system stopped');
   }
 
-  // Collecte des métriques système
+  // System metrics collection
   // NOTE: All metric values use random variation because this is a client-side
   // monitoring stub. In production, replace with real system monitoring APIs.
   private collectMetrics(): void {
@@ -136,21 +136,21 @@ export class MonitoringSystem {
 
     this.metrics.push(metrics);
     
-    // Maintenir seulement les 1440 dernières métriques (24h si collecte chaque minute)
+    // Keep only the last 1440 metrics (24h if collected every minute)
     if (this.metrics.length > 1440) {
       this.metrics.shift();
     }
 
-    // Vérifier les règles d'alerte
+    // Check alert rules
     this.checkAlertRules(metrics);
   }
 
-  // Vérification des règles d'alerte
+  // Alert rule verification
   private checkAlertRules(metrics: SystemMetrics): void {
     for (const rule of this.alertRules) {
       if (!rule.enabled) continue;
 
-      // Vérifier le cooldown
+      // Check cooldown
       if (rule.last_triggered) {
         const cooldownMs = rule.cooldown * 60 * 1000;
         if (Date.now() - rule.last_triggered.getTime() < cooldownMs) {
@@ -195,7 +195,7 @@ export class MonitoringSystem {
     return (errorCount / recentLogs.length) * 100;
   }
 
-  // Déclenchement d'une alerte
+  // Alert trigger
   private triggerAlert(rule: AlertRule, value: number): void {
     const alert: Alert = {
       id: `alert_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
@@ -242,36 +242,36 @@ export class MonitoringSystem {
 
     this.performanceLogs.push(performanceLog);
 
-    // Maintenir seulement les 10000 derniers logs
+    // Keep only les 10000 derniers logs
     if (this.performanceLogs.length > 10000) {
       this.performanceLogs.shift();
     }
 
-    // Vérifier si c'est une erreur
+    // Check if it's an error
     if (performanceLog.status_code >= 400) {
       this.updateErrorRate();
     }
   }
 
-  // Mise à jour du taux d'erreur
+  // Error rate update
   private updateErrorRate(): void {
     const recentLogs = this.performanceLogs.slice(-100); // 100 derniers logs
     const errorCount = recentLogs.filter(log => log.status_code >= 400).length;
     const errorRate = (errorCount / recentLogs.length) * 100;
 
-    // Mettre à jour la métrique d'erreur dans les métriques actuelles
+    // Update error metric in current metrics
     if (this.metrics.length > 0) {
       this.metrics[this.metrics.length - 1].error_rate = errorRate;
     }
   }
 
-  // Récupération des métriques
+  // Metrics retrieval
   getMetrics(hours: number = 1): SystemMetrics[] {
     const cutoff = new Date(Date.now() - hours * 60 * 60 * 1000);
     return this.metrics.filter(m => m.timestamp >= cutoff);
   }
 
-  // Récupération des alertes
+  // Alerts retrieval
   getAlerts(resolved: boolean | null = null): Alert[] {
     if (resolved === null) {
       return this.alerts;
@@ -279,7 +279,7 @@ export class MonitoringSystem {
     return this.alerts.filter(a => a.resolved === resolved);
   }
 
-  // Résolution d'une alerte
+  // Alert resolution
   resolveAlert(alertId: string): boolean {
     const alert = this.alerts.find(a => a.id === alertId);
     if (alert && !alert.resolved) {
@@ -290,7 +290,7 @@ export class MonitoringSystem {
     return false;
   }
 
-  // Récupération des logs de performance
+  // Retrieval des logs de performance
   getPerformanceLogs(hours: number = 1): PerformanceLog[] {
     const cutoff = new Date(Date.now() - hours * 60 * 60 * 1000);
     return this.performanceLogs.filter(log => log.timestamp >= cutoff);
@@ -324,7 +324,7 @@ export class MonitoringSystem {
     const errorCount = logs.filter(log => log.status_code >= 400).length;
     const minutesSpan = hours * 60;
 
-    // Analyse par endpoint
+    // Analysis par endpoint
     const endpointStats = new Map<string, { total_time: number; count: number }>();
     
     logs.forEach(log => {
@@ -353,7 +353,7 @@ export class MonitoringSystem {
     };
   }
 
-  // Santé du système
+  // System health
   getSystemHealth(): {
     status: 'healthy' | 'warning' | 'critical';
     uptime: number;
@@ -377,7 +377,7 @@ export class MonitoringSystem {
       status = 'warning';
     }
 
-    // Vérification des composants
+    // Verification des composants
     const components = [
       {
         name: 'API Server',
@@ -411,7 +411,7 @@ export class MonitoringSystem {
     };
   }
 
-  // Configuration des règles d'alerte
+  // Alert rule configuration
   updateAlertRule(ruleId: string, updates: Partial<AlertRule>): boolean {
     const rule = this.alertRules.find(r => r.id === ruleId);
     if (rule) {
@@ -421,7 +421,7 @@ export class MonitoringSystem {
     return false;
   }
 
-  // Ajout d'une nouvelle règle d'alerte
+  // Adding a new alert rule
   addAlertRule(rule: Omit<AlertRule, 'id'>): string {
     const newRule: AlertRule = {
       id: `rule_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
@@ -432,7 +432,7 @@ export class MonitoringSystem {
     return newRule.id;
   }
 
-  // Export des données pour analyse
+  // Data export for analysis
   exportData(type: 'metrics' | 'alerts' | 'performance', format: 'json' | 'csv' = 'json'): string {
     let data: SystemMetrics[] | Alert[] | PerformanceLog[];
     
@@ -451,7 +451,7 @@ export class MonitoringSystem {
     if (format === 'json') {
       return JSON.stringify(data, null, 2);
     } else {
-      // Conversion CSV simplifiée
+      // Simplified CSV conversion
       if (data.length === 0) return '';
       
       const headers = Object.keys(data[0]).join(',');
@@ -466,6 +466,6 @@ export class MonitoringSystem {
   }
 }
 
-// Instance globale du système de monitoring
+// Global monitoring system instance
 // SSR guard: only instantiate in browser environment
 export const monitoringSystem = typeof window !== 'undefined' ? new MonitoringSystem() : (null as unknown as MonitoringSystem);

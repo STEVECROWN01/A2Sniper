@@ -2,45 +2,28 @@
 
 import { motion } from 'framer-motion';
 import { TelegramBotSimulator } from '@/components/ui/telegram-bot-simulator';
-import { Bot, Zap, Shield, Users, Target, BarChart4, ChevronRight, MessageSquare, ShieldCheck } from 'lucide-react';
+import { Zap, ShieldCheck, ChevronRight } from 'lucide-react';
 
 export default function TelegramPage() {
   const features = [
     {
-      icon: <Bot className="w-6 h-6" />,
-      title: "Moteur A2Sniper 3.0",
-      description: "Interface Assistant de pointe avec consensus multi-modèles (LSTM/Transformer/XGBoost)."
-    },
-    {
       icon: <Zap className="w-6 h-6" />,
-      title: "Signaux Temps Réel",
-      description: "Données extraites directement du flux WebSocket Pocket Option. Zéro latence."
+      title: "Real-time Signals",
+      description: "Data extracted directly from the Pocket Option WebSocket stream. Zero latency."
     },
     {
       icon: <ShieldCheck className="w-6 h-6" />,
-      title: "Gestion du Risque",
-      description: "Risk Manager intégré pour une protection maximale du capital et profits constants."
-    },
-    {
-      icon: <Users className="w-6 h-6" />,
-      title: "Accès Exclusif",
-      description: "Espace Founders-Only avec monitoring en direct et analyses SMC détaillées."
+      title: "Risk Management",
+      description: "Integrated Risk Manager for maximum capital protection and consistent profits."
     }
-  ];
-
-  const highlights = [
-    { label: "Précision Assistant", value: "N/A", color: "text-green-400" },
-    { label: "Latence", value: "< 150ms", color: "text-[#D4AF37]" },
-    { label: "Actifs", value: "8 OTC Pairs", color: "text-indigo-400" },
-    { label: "Disponibilité", value: "24/7", color: "text-purple-400" }
   ];
 
   return (
     <div className="space-y-12 max-w-7xl mx-auto">
-          
+
           <div className="grid grid-cols-1 xl:grid-cols-12 gap-12 items-start">
-            
-            {/* Left: Simulator (Pushed upwards slightly with negative top margin) */}
+
+            {/* Left: Simulator */}
             <div className="xl:col-span-5 relative group mt-4 xl:-mt-8">
               <div className="absolute -inset-1 bg-gradient-to-r from-[#D4AF37] to-[#C5A059] rounded-[2.5rem] blur opacity-20 group-hover:opacity-30 transition duration-1000 group-hover:duration-200" />
               <motion.div
@@ -53,10 +36,10 @@ export default function TelegramPage() {
               </motion.div>
             </div>
 
-            {/* Right: Content & Onboarding text block */}
+            {/* Right: Content */}
             <div className="xl:col-span-7 space-y-10">
-              
-              {/* Header block moved to the right */}
+
+              {/* Header block */}
               <div className="relative">
                 <div className="absolute -top-20 -left-20 w-64 h-64 bg-[#D4AF37]/10 rounded-full blur-[100px] pointer-events-none" />
                 <motion.div
@@ -64,13 +47,12 @@ export default function TelegramPage() {
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ duration: 0.8 }}
                 >
-
                   <h1 className="text-4xl md:text-5xl font-black text-white mb-4 tracking-tight leading-tight">
-                    Bot Telegram <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#D4AF37] to-[#C5A059]">A2Sniper</span>
+                    Telegram Bot <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#D4AF37] to-[#C5A059]">A2Sniper</span>
                   </h1>
                   <p className="text-lg text-gray-400 max-w-2xl font-medium leading-relaxed mb-6">
-                    Connectez-vous au flux de signaux le plus puissant du marché. 
-                    Données réelles, analyses institutionnelles et exécution instantanée.
+                    Connect to the most powerful signal stream on the market.
+                    Real data, institutional analysis and instant execution.
                   </p>
                   <a
                     href="https://t.me/A2SniperBot"
@@ -78,30 +60,14 @@ export default function TelegramPage() {
                     rel="noopener noreferrer"
                     className="inline-flex py-4 px-8 bg-gradient-to-r from-[#D4AF37] to-[#C5A059] hover:from-[#C5A059] hover:to-[#D4AF37] rounded-2xl text-xs font-black text-white uppercase tracking-[0.3em] transition-all shadow-[0_0_30px_rgba(212,175,55,0.2)] items-center justify-center gap-3 active:scale-95 group"
                   >
-                    Rejoindre le Terminal Telegram
+                    Join Telegram Terminal
                     <ChevronRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
                   </a>
                 </motion.div>
               </div>
 
-              {/* Stats Bar */}
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                {highlights.map((stat, i) => (
-                  <motion.div
-                    key={i}
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: i * 0.1 }}
-                    className="bg-[#0a0a0c] p-4 rounded-2xl border border-gray-800/50 text-center"
-                  >
-                    <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1">{stat.label}</p>
-                    <p className={`text-xl font-black ${stat.color} tracking-tight`}>{stat.value}</p>
-                  </motion.div>
-                ))}
-              </div>
-
-              {/* Features Grid */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* Features Grid — only Real-time Signals and Risk Management */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-16">
                 {features.map((feature, index) => (
                   <motion.div
                     key={index}

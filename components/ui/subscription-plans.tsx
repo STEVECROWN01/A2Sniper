@@ -11,16 +11,16 @@ const plans = [
     price: 198,
     originalPrice: 298,
     discount: 33,
-    description: 'Parfait pour débuter avec les signaux Assistant',
+    description: 'Perfect to start with Assistant signals',
     features: [
-      'Jusqu\'à 20 signaux/jour',
-      'Accès Bot Telegram privé',
-      'Score de confluence affiché',
+      'Up to 20 signals/day',
+      'Private Telegram Bot access',
+      'Confluence score displayed',
       'Support par email (48h)'
     ],
     limitations: [
-      'Pas d\'accès API',
-      'Pas d\'analyse SMC détaillée'
+      'No API access',
+      'No detailed SMC analysis'
     ],
     popular: false
   },
@@ -29,12 +29,12 @@ const plans = [
     price: 298,
     originalPrice: 398,
     discount: 25,
-    description: 'Le choix des traders sérieux',
+    description: 'The choice for serious traders',
     features: [
-      'Jusqu\'à 35 signaux/jour',
-      'Analyse SMC détaillée par signal',
+      'Up to 35 signals/day',
+      'Detailed SMC analysis per signal',
       'Commandes /analyse et /structure',
-      'Dashboard web avancé',
+      'Advanced web dashboard',
       'Support chat en direct (4h)'
     ],
     limitations: [],
@@ -47,11 +47,11 @@ const plans = [
     discount: 33,
     description: 'Pour les traders professionnels',
     features: [
-      'Signaux illimités',
-      'Signaux Sniper Score 10/10 + alerte VIP',
+      'Unlimited signals',
+      'Sniper Signals Score 10/10 + VIP alert',
       'Backtesting sur 5 ans',
-      'Accès API Full Access',
-      'Coaching personnalisé (4h/mois)',
+      'Full Access API access',
+      'Personalized coaching (4h/month)',
       'Rapport mensuel PDF',
       'Support prioritaire'
     ],
@@ -62,7 +62,7 @@ const plans = [
 
 const paymentMethods = [
   { id: 'card', name: 'Carte bancaire', icon: CreditCard, description: 'Visa, Mastercard, Amex' },
-  { id: 'paypal', name: 'PayPal', icon: CreditCard, description: 'Paiement sécurisé' },
+  { id: 'paypal', name: 'PayPal', icon: CreditCard, description: 'Secure payment' },
   { id: 'crypto', name: 'Crypto', icon: Zap, description: 'Bitcoin, Ethereum' }
 ];
 
@@ -89,7 +89,7 @@ export function SubscriptionPlans() {
   const handlePayment = async () => {
     setIsProcessing(true);
     if (selectedPlan === null) {
-      toast.error('Aucun plan sélectionné');
+      toast.error('No plan selected');
       setIsProcessing(false);
       return;
     }
@@ -98,17 +98,17 @@ export function SubscriptionPlans() {
     await new Promise(resolve => setTimeout(resolve, 800));
     setIsProcessing(false);
     setShowPaymentModal(false);
-    toast.info('Les paiements ne sont pas encore disponibles. L\'intégration Stripe est en cours de développement.', {
+    toast.info('Payments are not yet available. Stripe integration is under development.', {
       duration: 5000,
-      description: `Plan ${plans[selectedPlan].name} ($${Math.round(plans[selectedPlan].price * getBillingMultiplier())}/mois) — vous serez notifié lors de l'ouverture.`
+      description: `Plan ${plans[selectedPlan].name} ($${Math.round(plans[selectedPlan].price * getBillingMultiplier())}/month) — you will be notified when it opens.`
     });
   };
 
   const handleJoinWaitlist = () => {
     setShowPaymentModal(false);
-    toast.success('Vous avez été ajouté à la liste d\'attente !', {
+    toast.success('You have been added to the waitlist!', {
       duration: 4000,
-      description: 'Vous serez parmi les premiers informés lors de l\'ouverture des paiements.'
+      description: 'You will be among the first notified when payments open.'
     });
   };
 
@@ -124,10 +124,10 @@ export function SubscriptionPlans() {
             transition={{ duration: 0.5 }}
           >
             <h1 className="text-3xl md:text-4xl font-black text-white uppercase tracking-tight mb-4">
-              Abonnements <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#D4AF37] to-[#F3E5AB]">Founders</span>
+              Subscriptions <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#D4AF37] to-[#F3E5AB]">Founders</span>
             </h1>
             <p className="text-sm text-gray-400 font-bold max-w-2xl mx-auto mb-8">
-              Débloquez l&apos;accès complet au flux algorithmique A2Sniper et propulsez vos performances.
+              Unlock full access to the A2Sniper algorithmic stream and boost your performance.
             </p>
             
             {/* Cycle de facturation */}
@@ -213,12 +213,12 @@ export function SubscriptionPlans() {
                         </div>
                       </div>
                       <div className="text-xs text-green-500 font-bold mt-1">
-                        Économisez {plan.discount}%
+                        Save {plan.discount}%
                       </div>
                     </div>
                   </div>
 
-                  {/* Fonctionnalités */}
+                  {/* Features */}
                   <div className="space-y-4 mb-8 text-xs font-bold">
                     {plan.features.map((feature, featureIndex) => (
                       <div key={featureIndex} className="flex items-start space-x-3">
@@ -262,18 +262,18 @@ export function SubscriptionPlans() {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8 text-center">
             <div className="flex flex-col items-center p-4">
               <Shield className="w-10 h-10 text-[#D4AF37] mb-4" />
-              <h3 className="text-sm font-bold text-white uppercase mb-2 tracking-wider">Garantie 30 jours</h3>
-              <p className="text-xs text-gray-500 font-bold">Remboursement intégral si vous n&apos;êtes pas satisfait</p>
+              <h3 className="text-sm font-bold text-white uppercase mb-2 tracking-wider">30-day Guarantee</h3>
+              <p className="text-xs text-gray-500 font-bold">Full refund if you are not satisfied</p>
             </div>
             <div className="flex flex-col items-center p-4">
               <Zap className="w-10 h-10 text-[#D4AF37] mb-4" />
-              <h3 className="text-sm font-bold text-white uppercase mb-2 tracking-wider">Activation instantanée</h3>
-              <p className="text-xs text-gray-500 font-bold">Accès immédiat après confirmation de la blockchain ou banque</p>
+              <h3 className="text-sm font-bold text-white uppercase mb-2 tracking-wider">Instant Activation</h3>
+              <p className="text-xs text-gray-500 font-bold">Immediate access after blockchain or bank confirmation</p>
             </div>
             <div className="flex flex-col items-center p-4">
               <Crown className="w-10 h-10 text-[#D4AF37] mb-4" />
               <h3 className="text-sm font-bold text-white uppercase mb-2 tracking-wider">Support premium</h3>
-              <p className="text-xs text-gray-500 font-bold">Équipe dédiée en direct 24/7 sur le cockpit</p>
+              <p className="text-xs text-gray-500 font-bold">Dedicated live team 24/7 on the cockpit</p>
             </div>
           </div>
         </motion.div>
@@ -289,14 +289,14 @@ export function SubscriptionPlans() {
           >
             <div className="text-center mb-6">
               <h3 className="text-lg font-black text-white uppercase tracking-wider mb-2">
-                Sécuriser l&apos;abonnement
+                Secure Subscription
               </h3>
               <p className="text-xs text-gray-400 font-bold">
                 Plan {plans[selectedPlan].name} - <span className="text-[#D4AF37] font-black">${Math.round(plans[selectedPlan].price * getBillingMultiplier())}</span>
               </p>
             </div>
 
-            {/* Méthodes de paiement */}
+            {/* Payment Methods */}
             <div className="space-y-3 mb-6">
               {paymentMethods.map((method) => (
                 <button
@@ -319,8 +319,8 @@ export function SubscriptionPlans() {
 
             {/* Coming Soon Banner */}
             <div className="bg-yellow-500/10 border border-yellow-500/20 rounded-xl p-4 mb-4 text-center">
-              <p className="text-yellow-500 text-xs font-bold uppercase tracking-wider mb-1">🚧 Paiement bientôt disponible</p>
-              <p className="text-gray-400 text-[10px]">L&apos;intégration Stripe est en cours. Aucun paiement ne sera traité pour le moment.</p>
+              <p className="text-yellow-500 text-xs font-bold uppercase tracking-wider mb-1">🚧 Payment coming soon</p>
+              <p className="text-gray-400 text-[10px]">Stripe integration is in progress. No payment will be processed at this time.</p>
             </div>
 
             {/* Boutons d'action */}
@@ -352,7 +352,7 @@ export function SubscriptionPlans() {
                   ) : (
                     <>
                       <Clock className="w-3.5 h-3.5" />
-                      <span>Bientôt disponible</span>
+                      <span>Coming soon</span>
                     </>
                   )}
                 </button>

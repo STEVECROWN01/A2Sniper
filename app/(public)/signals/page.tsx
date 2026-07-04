@@ -58,7 +58,7 @@ export default function SignalsPage() {
     if (selectedStatus === 'ACTIVE' || selectedStatus === 'ALL') {
       const latest12 = result
         .sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime())
-        .slice(0, 12);
+        .slice(0, 50);
       
       return latest12.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
     }
@@ -78,10 +78,11 @@ export default function SignalsPage() {
     if (store.fetchSignals) store.fetchSignals();
     if (store.fetchMarketStatus) store.fetchMarketStatus();
 
+    // Real-time refresh every 1s (user requirement: never miss an update)
     const apiTimer = setInterval(() => {
       if (store.fetchSignals) store.fetchSignals();
       if (store.fetchMarketStatus) store.fetchMarketStatus();
-    }, 5000);
+    }, 1000);
 
     return () => clearInterval(apiTimer);
   }, []);
@@ -104,7 +105,7 @@ export default function SignalsPage() {
     if (!result.success) {
       setConnectError(result.message);
     } else {
-      toast.success('Connecté au marché Pocket Option !');
+      toast.success('Connected to Pocket Option market!');
     }
     // NOTE: We intentionally do NOT clear the SSID field on success or failure
     // so the user can see what they pasted and it survives a page refresh.
@@ -116,9 +117,9 @@ export default function SignalsPage() {
     setConnectError('');
     const result = await attemptReconnect();
     if (result.success) {
-      toast.success('Reconnexion réussie !');
+      toast.success('Reconnection successful!');
     } else {
-      setConnectError(result.message || 'Reconnexion échouée. Vérifiez que votre compte Pocket Option est toujours connecté, ou collez un nouveau SSID.');
+      setConnectError(result.message || 'Reconnection failed. Make sure your Pocket Option account is still connected, or paste a new SSID.');
     }
     setIsConnecting(false);
   };
@@ -141,7 +142,7 @@ export default function SignalsPage() {
       userId: user?.id,
       avatarUrl: user?.avatar,
     };
-    const doc = createBrandedPDF('Rapport Signaux', 'Signaux de trading filtrés et statistiques', pdfUser);
+    const doc = createBrandedPDF('Signals Report', 'Filtered trading signals and statistics', pdfUser);
     let y = 58;
 
     // User info card
@@ -149,10 +150,10 @@ export default function SignalsPage() {
 
     // Filter info
     y = drawSectionTitle(doc, 'Filtres appliques', y);
-    y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Paire', selectedPair === 'ALL' ? 'Toutes' : selectedPair);
-    y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Direction', selectedDirection === 'ALL' ? 'Toutes' : selectedDirection);
-    y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Statut', selectedStatus === 'ALL' ? 'Tous' : selectedStatus);
-    y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Payout', selectedPayout === 'ALL' ? 'Tous' : `>${selectedPayout}%`);
+    y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Pair', selectedPair === 'ALL' ? 'All' : selectedPair);
+    y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Direction', selectedDirection === 'ALL' ? 'All' : selectedDirection);
+    y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Status', selectedStatus === 'ALL' ? 'All' : selectedStatus);
+    y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Payout', selectedPayout === 'ALL' ? 'All' : `>${selectedPayout}%`);
     y += 2;
 
     // Stats
@@ -160,19 +161,19 @@ export default function SignalsPage() {
     const cardW = 42;
     const gap = 3;
     y = drawStatCard(doc, PAGE.marginL, y, cardW, 'Total', String(stats.total));
-    y = drawStatCard(doc, PAGE.marginL + cardW + gap, y - 21, cardW, 'Actifs', String(stats.active), { valueColor: '#3B82F6' });
+    y = drawStatCard(doc, PAGE.marginL + cardW + gap, y - 21, cardW, 'Active', String(stats.active), { valueColor: '#3B82F6' });
     y = drawStatCard(doc, PAGE.marginL + (cardW + gap) * 2, y - 21, cardW, 'Gagnes', String(stats.won), { valueColor: '#22C55E' });
-    y = drawStatCard(doc, PAGE.marginL + (cardW + gap) * 3, y - 21, cardW, 'Perdus', String(stats.lost), { valueColor: '#EF4444' });
+    y = drawStatCard(doc, PAGE.marginL + (cardW + gap) * 3, y - 21, cardW, 'Losts', String(stats.lost), { valueColor: '#EF4444' });
     y += 6;
 
     // Signals table
     y = drawSectionTitle(doc, 'Liste des signaux', y);
     if (filteredSignals.length > 0) {
       const headers = [
-        { label: 'Paire', width: 28 },
+        { label: 'Pair', width: 28 },
         { label: 'Direction', width: 22, align: 'center' as const },
         { label: 'Winrate', width: 20, align: 'center' as const },
-        { label: 'Statut', width: 20, align: 'center' as const },
+        { label: 'Status', width: 20, align: 'center' as const },
         { label: 'Payout', width: 18, align: 'right' as const },
         { label: 'Expiration', width: 35, align: 'right' as const },
       ];
@@ -182,13 +183,13 @@ export default function SignalsPage() {
         s.winrate ? `${s.winrate}%` : '-',
         s.status || '-',
         s.payout ? `${s.payout}%` : '-',
-        s.timestamp ? new Date(s.timestamp).toLocaleString('fr-FR', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-',
+        s.timestamp ? new Date(s.timestamp).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-',
       ]);
       y = drawTable(doc, PAGE.marginL, y, headers, rows);
     } else {
       doc.setFontSize(8);
       doc.setTextColor(107, 114, 128);
-      doc.text('Aucun signal trouve avec ces filtres.', PAGE.marginL + 4, y + 4);
+      doc.text('No signals found with these filters.', PAGE.marginL + 4, y + 4);
     }
 
     const dateStr = new Date().toISOString().split('T')[0];
@@ -211,18 +212,18 @@ export default function SignalsPage() {
             >
               <div>
                 <h1 className="text-2xl font-black text-white uppercase tracking-tight">
-                  Signaux de Trading A2Sniper
+                  A2Sniper Trading Signals
                 </h1>
                 <p className="text-gray-400 max-w-3xl text-xs font-bold leading-relaxed mt-1">
                   {liveStatus === 'LIVE' 
-                    ? "Bienvenue sur A2Sniper 3.0, l'Assistant de pointe pour le trading haute fréquence. Le système est connecté avec succès au marché réel via WebSocket."
-                    : "Bienvenue sur A2Sniper 3.0, l'Assistant de pointe pour le trading haute fréquence. Veuillez configurer le SSID ci-dessous pour connecter l'analyseur au marché."}
+                    ? "Welcome to A2Sniper 3.0, the cutting-edge assistant for high-frequency trading. The system is successfully connected to the live market via WebSocket."
+                    : "Welcome to A2Sniper 3.0, the cutting-edge assistant for high-frequency trading. Please configure the SSID below to connect the analyzer to the market."}
                 </p>
               </div>
               
               <div className="flex items-center space-x-3">
                 <div 
-                  title={liveStatus === 'LIVE' ? "ANALYSE BASÉE SUR LES DONNÉES RÉELLES" : "SYSTÈME DÉCONNECTÉ DU MARCHÉ"}
+                  title={liveStatus === 'LIVE' ? "ANALYSIS BASED ON REAL DATA" : "SYSTEM DISCONNECTED FROM MARKET"}
                   className="flex items-center px-3 py-2 bg-[#0a0a0c] rounded-xl border border-white/5 shadow-sm cursor-help transition-all"
                 >
                   <span className="relative flex h-3 w-3 mr-2">
@@ -230,7 +231,7 @@ export default function SignalsPage() {
                     <span className={`relative inline-flex rounded-full h-3 w-3 ${liveStatus === 'LIVE' ? 'bg-green-500' : 'bg-red-500'}`}></span>
                   </span>
                   <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">
-                    {liveStatus === 'LIVE' ? 'MARKET LIVE' : 'DÉCONNECTÉ'}
+                    {liveStatus === 'LIVE' ? 'MARKET LIVE' : 'DISCONNECTED'}
                   </span>
                 </div>
 
@@ -239,7 +240,7 @@ export default function SignalsPage() {
                     onClick={() => disconnectMarket()}
                     className="px-3 py-2 bg-red-500/10 text-red-500 rounded-xl text-[10px] font-black uppercase tracking-wider hover:bg-red-500 hover:text-white transition-all border border-red-500/20"
                   >
-                    Déconnecter
+                    Disconnect
                   </button>
                 )}
 
@@ -255,7 +256,7 @@ export default function SignalsPage() {
                 <button
                   onClick={handleExportSignals}
                   className={`p-2 rounded-xl transition-colors ${justExported ? 'bg-green-500 text-white border border-green-400' : 'bg-[#0a0a0c] text-green-500 border border-white/5 hover:bg-white/[0.03]'}`}
-                  title={justExported ? 'PDF exporté !' : 'Exporter les signaux'}
+                  title={justExported ? 'PDF exported!' : 'Export signals'}
                 >
                   {justExported ? <Check className="w-5 h-5" /> : <Download className="w-5 h-5" />}
                 </button>
@@ -280,47 +281,47 @@ export default function SignalsPage() {
                     <div className="w-10 h-10 bg-[#D4AF37]/10 border border-[#D4AF37]/20 rounded-xl flex items-center justify-center text-[#D4AF37]">
                       <Settings className="w-5 h-5" />
                     </div>
-                    Connexion au Marché
+                    Market Login
                   </h2>
                   <p className="text-xs text-gray-400 mb-6 font-bold leading-relaxed">
-                    Afin que A2Sniper 3.0 analyse en direct le flux WebSocket Pocket Option, vous devez entrer la chaîne d'authentification active (SSID) ci-dessous.
+                    For A2Sniper 3.0 to analyze the Pocket Option WebSocket stream in real time, you must enter the active authentication string (SSID) below.
                   </p>
                   
                   <div className="space-y-4 mb-8">
-                    <h3 className="font-black text-xs text-white uppercase tracking-wider">Protocole de connexion :</h3>
+                    <h3 className="font-black text-xs text-white uppercase tracking-wider">Connection protocol:</h3>
                     <ul className="space-y-3 font-bold text-xs text-gray-400">
                       <li className="flex gap-3">
                         <span className="flex-shrink-0 w-5 h-5 bg-[#D4AF37]/10 border border-[#D4AF37]/20 text-[#D4AF37] rounded-full flex items-center justify-center font-bold text-[10px]">1</span>
-                        <span>Connectez-vous sur votre compte <a href="https://pocketoption.com" target="_blank" rel="noopener noreferrer" className="text-[#D4AF37] hover:underline">pocketoption.com</a></span>
+                        <span>Log in to your account at <a href="https://pocketoption.com" target="_blank" rel="noopener noreferrer" className="text-[#D4AF37] hover:underline">pocketoption.com</a></span>
                       </li>
                       <li className="flex gap-3">
                         <span className="flex-shrink-0 w-5 h-5 bg-[#D4AF37]/10 border border-[#D4AF37]/20 text-[#D4AF37] rounded-full flex items-center justify-center font-bold text-[10px]">2</span>
-                        <span>Ouvrez les Outils de développement (F12) -&gt; onglet Network (Réseau)</span>
+                        <span>Open Developer Tools (F12) -&gt; Network tab</span>
                       </li>
                       <li className="flex gap-3">
                         <span className="flex-shrink-0 w-5 h-5 bg-[#D4AF37]/10 border border-[#D4AF37]/20 text-[#D4AF37] rounded-full flex items-center justify-center font-bold text-[10px]">3</span>
-                        <span>Filtrez par &apos;WS&apos; (WebSockets) et cherchez la trame de connexion commençant par &apos;42[&quot;auth&quot;...&apos;</span>
+                        <span>Filter by &apos;WS&apos; (WebSockets) and find the connection frame starting with &apos;42[&quot;auth&quot;...&apos;</span>
                       </li>
                       <li className="flex gap-3">
                         <span className="flex-shrink-0 w-5 h-5 bg-[#D4AF37]/10 border border-[#D4AF37]/20 text-[#D4AF37] rounded-full flex items-center justify-center font-bold text-[10px]">4</span>
-                        <span>Copiez l'intégralité du texte de la trame et collez-le dans le champ ci-contre.</span>
+                        <span>Copy the entire frame text and paste it into the field on the right.</span>
                       </li>
                     </ul>
                   </div>
 
                   <div className="flex items-center gap-4 p-4 bg-[#D4AF37]/5 border border-[#D4AF37]/10 rounded-xl text-gray-400 text-xs font-bold leading-relaxed">
                     <Target className="w-5 h-5 text-[#D4AF37] flex-shrink-0" />
-                    <p>Le SSID reste actif tant que vous ne déconnectez pas votre compte Pocket Option — même si vous fermez le navigateur. Il change uniquement si vous vous déconnectez puis reconnectez sur Pocket Option.</p>
+                    <p>The SSID remains active as long as you don't disconnect your Pocket Option account — even if you close the browser. It only changes if you log out and log back in to Pocket Option.</p>
                   </div>
                 </div>
 
                 <div className="w-full lg:w-96 space-y-6">
                   <div className="bg-[#050507] p-6 rounded-2xl border border-white/5">
-                    <label className="block text-[10px] font-black text-gray-400 mb-2 uppercase tracking-widest">Chaîne SSID (Trame d'auth)</label>
+                    <label className="block text-[10px] font-black text-gray-400 mb-2 uppercase tracking-widest">SSID (Auth Frame)</label>
                     <textarea
                       value={ssid}
                       onChange={(e) => { setSsid(e.target.value); setConnectError(''); }}
-                      placeholder='Collez ici la trame 42["auth",{...}] copiée depuis F12 → Network → WS'
+                      placeholder='Paste here the 42["auth",{...}] frame copied from F12 → Network → WS'
                       className={`w-full h-32 px-4 py-3 bg-white/[0.02] border rounded-xl focus:outline-none text-[10px] font-mono mb-2 resize-none text-white transition-colors overflow-auto ${
                         ssid && validateSSID(ssid).status === 'invalid'
                           ? 'border-red-500/50 focus:border-red-500'
@@ -349,7 +350,7 @@ export default function SignalsPage() {
                           {validation.details?.isDemoAccount !== undefined && (
                             <p className="mt-1 text-gray-500">
                               Mode: <span className={validation.details.isDemoAccount ? 'text-yellow-400' : 'text-green-400'}>
-                                {validation.details.isDemoAccount ? 'COMPTE DÉMO' : 'COMPTE RÉEL'}
+                                {validation.details.isDemoAccount ? 'DEMO ACCOUNT' : 'REAL ACCOUNT'}
                               </span>
                               {validation.details.uid && <> · UID: {validation.details.uid}</>}
                             </p>
@@ -372,12 +373,12 @@ export default function SignalsPage() {
                       {isConnecting ? (
                         <>
                           <RefreshCw className="w-4 h-4 animate-spin" />
-                          Connexion en cours...
+                          Login en cours...
                         </>
                       ) : (
                         <>
                           <Zap className="w-4 h-4" />
-                          Connecter au Marché
+                          Connect to Market
                         </>
                       )}
                     </button>
@@ -389,14 +390,14 @@ export default function SignalsPage() {
                         className="w-full py-3 rounded-xl font-black uppercase tracking-[0.15em] text-[10px] transition-all flex items-center justify-center gap-2 bg-white/[0.03] text-gray-400 border border-white/5 hover:bg-white/[0.06] hover:text-white hover:border-[#D4AF37]/30"
                       >
                         <Wifi className="w-3.5 h-3.5" />
-                        Reconnecter avec le SSID sauvegardé
+                        Reconnect with saved SSID
                       </button>
                     )}
                     
                     {connectError && (
                       <div className="mt-4 text-[10px] font-bold text-red-400 bg-red-500/10 p-4 rounded-xl border border-red-500/20 space-y-2">
                         <p className="font-black text-red-500 uppercase tracking-wider flex items-center gap-1">
-                          <AlertTriangle className="w-3 h-3" /> Échec de la connexion
+                          <AlertTriangle className="w-3 h-3" /> Connection failed
                         </p>
                         <p className="leading-relaxed">{connectError}</p>
                         <a
@@ -405,7 +406,7 @@ export default function SignalsPage() {
                           rel="noopener noreferrer"
                           className="inline-block mt-1 text-[#D4AF37] underline hover:text-yellow-300 transition-colors"
                         >
-                          → Aller sur pocketoption.com (si vous vous êtes déconnecté de votre compte)
+                          → Go to pocketoption.com (if you logged out of your account)
                         </a>
                       </div>
                     )}
@@ -419,10 +420,10 @@ export default function SignalsPage() {
               {/* Stats Bar */}
               <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
                 {[
-                  { label: 'Total Signaux', value: stats.total, color: 'text-gray-400 bg-white/[0.02]', icon: TrendingUp },
-                  { label: 'Actifs', value: stats.active, color: 'text-[#D4AF37] bg-[#D4AF37]/10', icon: Clock },
-                  { label: 'Gagnants', value: stats.won, color: 'text-green-500 bg-green-500/10', icon: Target },
-                  { label: 'Perdants', value: stats.lost, color: 'text-red-500 bg-red-500/10', icon: TrendingUp }
+                  { label: 'Total Signals', value: stats.total, color: 'text-gray-400 bg-white/[0.02]', icon: TrendingUp },
+                  { label: 'Active', value: stats.active, color: 'text-[#D4AF37] bg-[#D4AF37]/10', icon: Clock },
+                  { label: 'Won', value: stats.won, color: 'text-green-500 bg-green-500/10', icon: Target },
+                  { label: 'Lost', value: stats.lost, color: 'text-red-500 bg-red-500/10', icon: TrendingUp }
                 ].map((card, index) => (
                   <motion.div
                     key={index}
@@ -458,7 +459,7 @@ export default function SignalsPage() {
                     onChange={(e) => setSelectedPair(e.target.value)}
                     className="w-full px-4 py-2.5 bg-[#050507] border border-white/5 rounded-xl focus:outline-none focus:border-[#D4AF37] text-xs font-bold text-white"
                   >
-                    <option value="ALL">Toutes les paires</option>
+                    <option value="ALL">All Pairs</option>
                     {tradingPairs.map(pair => (
                       <option key={pair.symbol} value={pair.symbol}>
                         {pair.symbol}
@@ -472,11 +473,11 @@ export default function SignalsPage() {
                     onChange={(e) => setSelectedStatus(e.target.value)}
                     className="w-full px-4 py-2.5 bg-[#050507] border border-white/5 rounded-xl focus:outline-none focus:border-[#D4AF37] text-xs font-bold text-white"
                   >
-                    <option value="ALL">Tous les statuts</option>
-                    <option value="ACTIVE">Actif</option>
-                    <option value="WON">Gagné</option>
-                    <option value="LOST">Perdu</option>
-                    <option value="EXPIRED">Expiré</option>
+                    <option value="ALL">All Statuses</option>
+                    <option value="ACTIVE">Active</option>
+                    <option value="WON">Won</option>
+                    <option value="LOST">Lost</option>
+                    <option value="EXPIRED">Expired</option>
                   </select>
 
                   {/* Direction Filter */}
@@ -485,7 +486,7 @@ export default function SignalsPage() {
                     onChange={(e) => setSelectedDirection(e.target.value)}
                     className="w-full px-4 py-2.5 bg-[#050507] border border-white/5 rounded-xl focus:outline-none focus:border-[#D4AF37] text-xs font-bold text-white"
                   >
-                    <option value="ALL">Toutes les directions</option>
+                    <option value="ALL">All Directions</option>
                     <option value="CALL">CALL</option>
                     <option value="PUT">PUT</option>
                   </select>
@@ -496,7 +497,7 @@ export default function SignalsPage() {
                     onChange={(e) => setMinWinrate(Number(e.target.value))}
                     className="w-full px-4 py-2.5 bg-[#050507] border border-white/5 rounded-xl focus:outline-none focus:border-[#D4AF37] text-xs font-bold text-white"
                   >
-                    <option value="0">Tous les Winrates</option>
+                    <option value="0">All Winrates</option>
                     <option value="70">70%+</option>
                     <option value="75">75%+</option>
                     <option value="80">80%+</option>
@@ -511,7 +512,7 @@ export default function SignalsPage() {
                     onChange={(e) => setSelectedPayout(e.target.value)}
                     className="w-full px-4 py-2.5 bg-[#050507] border border-[#D4AF37]/20 focus:border-[#D4AF37] rounded-xl focus:outline-none text-xs font-bold text-white transition-colors"
                   >
-                    <option value="ALL">Tout Payout</option>
+                    <option value="ALL">All Payouts</option>
                     <option value="70">&ge; 70% Payout</option>
                     <option value="75">&ge; 75% Payout</option>
                     <option value="80">&ge; 80% Payout</option>
@@ -548,8 +549,8 @@ export default function SignalsPage() {
                   <div className="w-16 h-16 bg-white/[0.02] border border-white/5 rounded-full flex items-center justify-center mx-auto mb-4">
                     <Filter className="w-6 h-6 text-gray-500" />
                   </div>
-                  <h3 className="text-sm font-black text-white uppercase mb-2">Aucun signal trouvé</h3>
-                  <p className="text-xs text-gray-500 font-bold">Modifiez vos paramètres de filtrage pour rafraîchir le flux.</p>
+                  <h3 className="text-sm font-black text-white uppercase mb-2">No signals found</h3>
+                  <p className="text-xs text-gray-500 font-bold">Adjust your filter settings to refresh the stream.</p>
                 </motion.div>
               )}
             </>

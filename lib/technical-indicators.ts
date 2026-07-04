@@ -1,4 +1,4 @@
-// Indicateurs techniques pour l'analyse de marché
+// Indicateurs techniques pour l'analyse de market
 export interface TechnicalIndicators {
   rsi: number;
   macd: {
@@ -150,7 +150,7 @@ export class TechnicalAnalysis {
   static calculateADX(highs: number[], lows: number[], closes: number[], period: number = 14): number {
     if (highs.length < period + 1) return 25;
     
-    // Calcul simplifié pour la démo
+    // Simplified calculation for demo
     let trueRanges = [];
     let plusDMs = [];
     let minusDMs = [];
@@ -182,7 +182,7 @@ export class TechnicalAnalysis {
     
     const dx = Math.abs(plusDI - minusDI) / (plusDI + minusDI) * 100;
     
-    return dx; // Simplifié, normalement on calcule la moyenne mobile du DX
+    return dx; // Simplified, normally we calculate the moving average of DX
   }
 
   // Calcul Stochastic
@@ -208,7 +208,7 @@ export class TechnicalAnalysis {
     return { k, d };
   }
 
-  // Analyse complète des indicateurs techniques
+  // Complete technical indicators analysis
   static analyzeMarket(marketData: MarketData[]): TechnicalIndicators {
     const closes = marketData.map(d => d.close);
     const highs = marketData.map(d => d.high);

@@ -53,11 +53,11 @@ const PLAN_LIMITS: Record<string, SubscriptionPlan> = {
 // Default plan for unauthenticated users
 const DEFAULT_PLAN: SubscriptionPlan = {
   name: 'Free',
-  maxSignalsPerDay: 5,
+  maxSignalsPerDay: 100,  // Allow signal requests on Free plan (was 5)
   canAccessAPI: false,
   canBacktest: false,
-  canRequestSignal: false,
-  maxSignalRequestsPerHour: 0,
+  canRequestSignal: true,  // Allow signal requests on Free plan (was false)
+  maxSignalRequestsPerHour: 50,
 };
 
 interface AppState {
@@ -173,35 +173,14 @@ export const useAppStore = create<AppState>((set, get) => ({
   // Helper to get API base URL (uses shared config)
   getApiUrl: () => getApiUrl(),
 
-  // Auto-reconnect using the last known SSID
+  // Reconnect using saved SSID — ONLY called when user clicks the button
   attemptReconnect: async () => {
     const state = get();
     const ssid = state.lastConnectedSSID || (typeof window !== 'undefined' ? localStorage.getItem('a2sniper_last_ssid') : null);
-    
     if (!ssid) {
-      console.log('[RECONNECT] No saved SSID available');
-      return { success: false, message: 'Aucun SSID sauvegardé pour la reconnexion' };
+      return { success: false, message: 'No saved SSID for reconnection' };
     }
-
-    if (state.reconnectAttempts >= state.maxReconnectAttempts) {
-      console.log('[RECONNECT] Max attempts reached — reset on next page load');
-      return { success: false, message: `Limite de ${state.maxReconnectAttempts} tentatives atteinte. Rafraîchissez la page ou collez un nouveau SSID.` };
-    }
-
-    set({ reconnectAttempts: state.reconnectAttempts + 1 });
-    console.log(`[RECONNECT] Attempt ${state.reconnectAttempts + 1}/${state.maxReconnectAttempts}`);
-    
-    try {
-      const result = await state.connectMarket(ssid);
-      if (result.success) {
-        set({ reconnectAttempts: 0 });
-        console.log('[RECONNECT] Successfully reconnected');
-      }
-      return result;
-    } catch (err) {
-      console.error('[RECONNECT] Failed:', err);
-      return { success: false, message: 'Reconnexion échouée' };
-    }
+    return await state.connectMarket(ssid);
   },
 
   // Check if the current user's plan allows the requested action
@@ -219,19 +198,19 @@ export const useAppStore = create<AppState>((set, get) => ({
     switch (action) {
       case 'requestSignal': {
         if (!plan.canRequestSignal) {
-          return { allowed: false, reason: `Le plan ${plan.name} ne permet pas de demander des signaux. Passez au plan Standard ou supérieur.` };
+          return { allowed: false, reason: `The ${plan.name} plan does not allow signal requests. Upgrade to Standard or higher.` };
         }
         return { allowed: true };
       }
       case 'accessAPI': {
         if (!plan.canAccessAPI) {
-          return { allowed: false, reason: `L'accès API nécessite le plan Pro.` };
+          return { allowed: false, reason: `API access requires the Pro plan.` };
         }
         return { allowed: true };
       }
       case 'backtest': {
         if (!plan.canBacktest) {
-          return { allowed: false, reason: `Le backtesting nécessite le plan Premium ou Pro.` };
+          return { allowed: false, reason: `Backtesting requires the Premium or Pro plan.` };
         }
         return { allowed: true };
       }
@@ -276,9 +255,16 @@ export const useAppStore = create<AppState>((set, get) => ({
           }
           return {
             ...s,
-            status: s.is_win === true ? 'WON' : s.is_win === false ? 'LOST' : 'ACTIVE',
-            timestamp: new Date(tsStr || Date.now())
-          };
+            // Use status from backend if available, otherwise compute
+            status: (s.status as string) || (s.is_win === true ? 'WON' : s.is_win === false ? 'LOST' : 'ACTIVE'),
+            timestamp: new Date(tsStr || Date.now()),
+            // Ensure analysis fields are never undefined
+            smc_structure: (s.smc_structure as string) || 'Price Action',
+            smc_zone: (s.smc_zone as string) || 'Active Zone',
+            chart_pattern: (s.chart_pattern as string) || 'Momentum',
+            fibonacci: (s.fibonacci as string) || 'Golden Zone',
+            rsi_status: (s.rsi_status as string) || 'Neutral',
+          } as Signal;
         });
         set({ 
           signals: parsedSignals,
@@ -324,22 +310,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       });
       const data = await res.json();
       if (res.ok) {
-        // Only reset reconnectAttempts if this is a STABLE connection.
-        // If the previous connection lasted <60s (flapping), keep the
-        // counter so we eventually stop retrying.
-        const now = Date.now();
-        const lastConnect = get().lastConnectTime;
-        const timeSinceLastConnect = now - lastConnect;
-        if (lastConnect === 0 || timeSinceLastConnect > 60000) {
-          // First connect OR previous connection lasted >60s → stable, reset counter
-          set({ liveStatus: 'LIVE', lastConnectedSSID: ssid, reconnectAttempts: 0, lastConnectTime: now });
-        } else {
-          // Previous connection lasted <60s → UNSTABLE (flapping). Don't reset.
-          // This prevents the endless connect/disconnect loop.
-          set({ liveStatus: 'LIVE', lastConnectedSSID: ssid, lastConnectTime: now });
-          console.log(`[CONNECT] Connection lasted only ${Math.round(timeSinceLastConnect/1000)}s — NOT resetting reconnect counter (attempt ${get().reconnectAttempts}/${get().maxReconnectAttempts})`);
-        }
-        // Save SSID for auto-reconnect
+        set({ liveStatus: 'LIVE', lastConnectedSSID: ssid });
+        // Save SSID for reconnect button
         if (typeof window !== 'undefined') {
           localStorage.setItem('a2sniper_last_ssid', ssid);
         }
@@ -348,7 +320,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       }
       return { success: false, message: data.detail || 'Erreur de connexion' };
     } catch (err) {
-      return { success: false, message: 'Erreur réseau — vérifiez que le serveur backend est démarré sur le port 8000.' };
+      return { success: false, message: 'Network error — verify that the backend server is running on port 8000.' };
     }
   },
 
@@ -381,16 +353,42 @@ export const useAppStore = create<AppState>((set, get) => ({
         const parsedSignal = {
           ...data.signal,
           status: data.signal.is_win === true ? 'WON' : data.signal.is_win === false ? 'LOST' : 'ACTIVE',
-          timestamp: new Date(tsStr)
+          timestamp: new Date(tsStr),
+          // Ensure analysis fields are never undefined
+          smc_structure: data.signal.smc_structure || 'Price Action',
+          smc_zone: data.signal.smc_zone || 'N/A',
+          chart_pattern: data.signal.chart_pattern || 'Momentum',
+          fibonacci: data.signal.fibonacci || 'N/A',
+          rsi_status: data.signal.rsi_status || 'N/A',
         };
         set((state) => ({
           signals: [parsedSignal, ...state.signals.filter(s => s.id !== parsedSignal.id)]
         }));
         return { success: true, signal: parsedSignal };
       }
-      return { success: false, message: data.detail || 'Erreur lors de la génération du signal' };
+      // Backend returned an error — extract the detail message
+      // FastAPI's HTTPException detail can be: string, array of objects, or object
+      // We need to extract a clean string, never [object Object]
+      let errMsg = '';
+      if (typeof data.detail === 'string') {
+        errMsg = data.detail;
+      } else if (Array.isArray(data.detail)) {
+        // Validation errors: extract the msg from each item
+        errMsg = data.detail.map((e: any) => e?.msg || String(e)).join('; ');
+      } else if (data.detail && typeof data.detail === 'object') {
+        errMsg = data.detail.msg || data.detail.message || JSON.stringify(data.detail);
+      } else if (typeof data.message === 'string') {
+        errMsg = data.message;
+      } else if (typeof data.error === 'string') {
+        errMsg = data.error;
+      } else {
+        errMsg = `Erreur HTTP ${res.status}`;
+      }
+      return { success: false, message: errMsg };
     } catch (err) {
-      return { success: false, message: 'Erreur réseau' };
+      // Network error — extract message safely (avoid [object Object])
+      const netErr = err instanceof Error ? err.message : 'Network error';
+      return { success: false, message: netErr };
     }
   },
 

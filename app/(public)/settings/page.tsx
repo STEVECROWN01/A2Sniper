@@ -31,9 +31,9 @@ export default function SettingsPage() {
   });
   const [selectedLanguage, setSelectedLanguage] = useState(() => {
     if (typeof window !== 'undefined') {
-      return localStorage.getItem('a2sniper_language') || 'Français';
+      return localStorage.getItem('a2sniper_language') || 'English';
     }
-    return 'Français';
+    return 'English';
   });
   const [selectedTimezone, setSelectedTimezone] = useState(() => {
     if (typeof window !== 'undefined') {
@@ -74,12 +74,12 @@ export default function SettingsPage() {
   const tabs = [
     { id: 'profile', name: 'Profil', icon: User },
     { id: 'notifications', name: 'Notifications', icon: Bell },
-    { id: 'security', name: 'Sécurité', icon: Shield },
+    { id: 'security', name: 'Security', icon: Shield },
     { id: 'appearance', name: 'Apparence', icon: Palette }
   ];
 
   const handleSave = () => {
-    toast.success('Paramètres sauvegardés avec succès !');
+    toast.success('Settings saved successfully!');
     setSavedMessage(true);
     setTimeout(() => setSavedMessage(false), 2000);
   };
@@ -90,11 +90,11 @@ export default function SettingsPage() {
 
     // Validate file type and size
     if (!file.type.startsWith('image/')) {
-      toast.error('Veuillez sélectionner un fichier image.');
+      toast.error('Please select an image file.');
       return;
     }
     if (file.size > 5 * 1024 * 1024) {
-      toast.error('L\'image ne doit pas dépasser 5 MB.');
+      toast.error('Image must not exceed 5 MB.');
       return;
     }
 
@@ -113,16 +113,16 @@ export default function SettingsPage() {
       if (res.ok) {
         const data = await res.json();
         setAvatarUrl(data.avatar_url || URL.createObjectURL(file));
-        toast.success('Photo de profil mise à jour !');
+        toast.success('Profile photo updated!');
       } else {
         // Fallback: show preview locally even if API fails
         setAvatarUrl(URL.createObjectURL(file));
-        toast.success('Photo mise à jour localement (serveur indisponible).');
+        toast.success('Photo updated locally (server unavailable).');
       }
     } catch {
       // Show preview locally when API is unavailable
       setAvatarUrl(URL.createObjectURL(file));
-      toast.success('Photo mise à jour localement (serveur indisponible).');
+      toast.success('Photo updated locally (server unavailable).');
     } finally {
       setIsUploadingPhoto(false);
       // Reset file input
@@ -140,7 +140,7 @@ export default function SettingsPage() {
       return;
     }
     if (newPassword.length < 8) {
-      toast.error('Le nouveau mot de passe doit contenir au moins 8 caractères.');
+      toast.error('New password must contain at least 8 characters.');
       return;
     }
 
@@ -160,7 +160,7 @@ export default function SettingsPage() {
       });
 
       if (res.ok) {
-        toast.success('Mot de passe modifié avec succès !');
+        toast.success('Password changed successfully!');
         setCurrentPassword('');
         setNewPassword('');
         setConfirmPassword('');
@@ -169,7 +169,7 @@ export default function SettingsPage() {
         toast.error(data.detail || 'Erreur lors du changement de mot de passe.');
       }
     } catch {
-      toast.error('Erreur réseau. Veuillez réessayer.');
+      toast.error('Network error. Please try again.');
     } finally {
       setIsChangingPassword(false);
     }
@@ -192,7 +192,7 @@ export default function SettingsPage() {
         document.documentElement.classList.toggle('dark', prefersDark);
       }
     }
-    toast.success(`Thème changé : ${theme === 'light' ? 'Clair' : theme === 'dark' ? 'Sombre' : 'Automatique'}`);
+    toast.success(`Theme changed: ${theme === 'light' ? 'Light' : theme === 'dark' ? 'Dark' : 'Auto'}`);
   };
 
   const handleLanguageChange = (lang: string) => {
@@ -200,7 +200,7 @@ export default function SettingsPage() {
     if (typeof window !== 'undefined') {
       localStorage.setItem('a2sniper_language', lang);
     }
-    toast.success(`Langue changée : ${lang}`);
+    toast.success(`Language changed: ${lang}`);
   };
 
   const handleTimezoneChange = (tz: string) => {
@@ -208,7 +208,7 @@ export default function SettingsPage() {
     if (typeof window !== 'undefined') {
       localStorage.setItem('a2sniper_timezone', tz);
     }
-    toast.success(`Fuseau horaire changé : ${tz}`);
+    toast.success(`Timezone changed: ${tz}`);
   };
 
   const handleDeleteSendOtp = async () => {
@@ -230,13 +230,13 @@ export default function SettingsPage() {
 
       if (res.ok) {
         setDeleteStep('OTP');
-        toast.success('Code OTP envoyé à votre email.');
+        toast.success('OTP code sent to your email.');
       } else {
         const errorData = await res.json().catch(() => ({}));
         toast.error(errorData.detail || 'Erreur lors de l\'envoi du code OTP. Contactez le support.');
       }
     } catch {
-      toast.error('Erreur réseau. Veuillez réessayer.');
+      toast.error('Network error. Please try again.');
     } finally {
       setIsDeletingAccount(false);
     }
@@ -256,7 +256,7 @@ export default function SettingsPage() {
       });
 
       if (res.ok) {
-        toast.success('Compte supprimé avec succès.');
+        toast.success('Account deleted successfully.');
         // Clear local storage preferences (NOT auth tokens — those are in httpOnly cookies)
         if (typeof window !== 'undefined') {
           localStorage.removeItem('a2sniper_user');
@@ -282,7 +282,7 @@ export default function SettingsPage() {
         toast.error(errorData.detail || 'Erreur lors de la suppression du compte. Contactez le support.');
       }
     } catch {
-      toast.error('Erreur réseau. Veuillez réessayer.');
+      toast.error('Network error. Please try again.');
     } finally {
       setIsDeletingAccount(false);
     }
@@ -339,7 +339,7 @@ export default function SettingsPage() {
       } else {
         doc.setFontSize(8);
         doc.setTextColor(107, 114, 128);
-        doc.text('Aucune notification configuree.', PAGE.marginL + 4, y + 4);
+        doc.text('No notifications configuree.', PAGE.marginL + 4, y + 4);
         y += 8;
       }
 
@@ -349,7 +349,7 @@ export default function SettingsPage() {
       setTimeout(() => setJustExported(false), 2500);
       toast.success('Rapport PDF exporte avec succes !');
     } catch {
-      toast.error('Erreur lors de l\'export. Veuillez réessayer.');
+      toast.error('Export error. Please try again.');
     } finally {
       setIsExporting(false);
     }
@@ -365,10 +365,10 @@ export default function SettingsPage() {
               transition={{ duration: 0.5 }}
             >
               <h1 className="text-2xl font-bold text-white mb-2">
-                Paramètres
+                Settings
               </h1>
               <p className="text-gray-400">
-                Gérez vos préférences et paramètres de compte
+                Manage your preferences and account settings
               </p>
             </motion.div>
           </div>
@@ -442,7 +442,7 @@ export default function SettingsPage() {
                             ) : (
                               <Camera className="w-4 h-4" />
                             )}
-                            {isUploadingPhoto ? 'Téléchargement...' : 'Changer la photo'}
+                            {isUploadingPhoto ? 'Uploading...' : 'Change Photo'}
                           </button>
                           <p className="text-[10px] text-gray-500 mt-1">JPG, PNG — Max 5 MB</p>
                         </div>
@@ -471,7 +471,7 @@ export default function SettingsPage() {
                         </div>
                         <div>
                           <label className="block text-sm font-medium text-gray-400 mb-2">
-                            Téléphone
+                            Phone
                           </label>
                           <input
                             type="tel"
@@ -497,13 +497,13 @@ export default function SettingsPage() {
                   {/* Export & Delete Account */}
                   <div className="bg-[#0A0B0E] rounded-xl border border-[#1a1a2e] p-6">
                     <h2 className="text-lg font-semibold text-white mb-6">
-                      Données du compte
+                      Data du compte
                     </h2>
                     <div className="space-y-4">
                       <div className="flex items-center justify-between">
                         <div>
-                          <h3 className="font-medium text-white">Exporter mes données</h3>
-                          <p className="text-sm text-gray-500">Télécharger une copie de vos données personnelles</p>
+                          <h3 className="font-medium text-white">Export My Data</h3>
+                          <p className="text-sm text-gray-500">Download a copy of your personal data</p>
                         </div>
                         <button
                           onClick={handleExportData}
@@ -511,14 +511,14 @@ export default function SettingsPage() {
                           className={`px-4 py-2 rounded-lg transition-colors font-bold flex items-center gap-2 disabled:opacity-50 ${justExported ? 'bg-green-500 text-white border border-green-400' : 'bg-[#121216] hover:bg-[#1a1a1f] border border-gray-800 text-white'}`}
                         >
                           {isExporting ? <Loader2 className="w-4 h-4 animate-spin" /> : justExported ? <Check className="w-4 h-4" /> : <Download className="w-4 h-4" />}
-                          {isExporting ? 'Exportation...' : justExported ? 'Exporté !' : 'Exporter'}
+                          {isExporting ? 'Exporting...' : justExported ? 'Exported!' : 'Export'}
                         </button>
                       </div>
                       <div className="border-t border-[#1a1a2e] pt-4">
                         <div className="flex items-center justify-between">
                           <div>
                             <h3 className="font-medium text-red-400">Supprimer le compte</h3>
-                            <p className="text-sm text-gray-500">Cette action est irréversible</p>
+                            <p className="text-sm text-gray-500">This action is irreversible</p>
                           </div>
                           <button
                             onClick={() => setShowDeleteDialog(true)}
@@ -556,7 +556,7 @@ export default function SettingsPage() {
                           {deleteStep === 'CONFIRM' ? (
                             <>
                               <p className="text-sm text-gray-400 mb-6">
-                                Cette action est irréversible. Toutes vos données seront définitivement supprimées.
+                                This action is irreversible. All your data will be permanently deleted.
                                 Tapez <span className="text-red-400 font-bold">SUPPRIMER</span> pour confirmer.
                               </p>
                               <input
@@ -572,7 +572,7 @@ export default function SettingsPage() {
                                   disabled={isDeletingAccount || deleteConfirmText !== 'SUPPRIMER'}
                                   className="flex-1 bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg font-bold disabled:opacity-50 transition-colors"
                                 >
-                                  {isDeletingAccount ? 'Envoi...' : 'Supprimer définitivement'}
+                                  {isDeletingAccount ? 'Sending...' : 'Delete Permanently'}
                                 </button>
                                 <button
                                   onClick={() => { setShowDeleteDialog(false); setDeleteConfirmText(''); setDeleteOtpCode(''); setDeleteStep('CONFIRM'); }}
@@ -585,7 +585,7 @@ export default function SettingsPage() {
                           ) : (
                             <>
                               <p className="text-sm text-gray-400 mb-6">
-                                Un code OTP a été envoyé à votre email. Entrez-le ci-dessous pour confirmer la suppression.
+                                An OTP code has been sent to your email. Enter it below to confirm deletion.
                               </p>
                               <input
                                 type="text"
@@ -627,15 +627,15 @@ export default function SettingsPage() {
                   className="bg-[#0A0B0E] rounded-xl border border-[#1a1a2e] p-6"
                 >
                   <h2 className="text-lg font-semibold text-white mb-6">
-                    Préférences de notification
+                    Notification Preferences
                   </h2>
 
                   <div className="space-y-6">
                     {[
-                      { key: 'signals' as const, title: 'Signaux de trading', desc: 'Recevoir les nouveaux signaux' },
-                      { key: 'performance' as const, title: 'Rapports de performance', desc: 'Résumé quotidien des performances' },
-                      { key: 'news' as const, title: 'Actualités du marché', desc: 'Informations importantes sur les marchés' },
-                      { key: 'marketing' as const, title: 'Emails marketing', desc: 'Offres et nouvelles fonctionnalités' }
+                      { key: 'signals' as const, title: 'Trading Signals', desc: 'Receive new signals' },
+                      { key: 'performance' as const, title: 'Performance Reports', desc: 'Daily performance summary' },
+                      { key: 'news' as const, title: 'Market News', desc: 'Important market information' },
+                      { key: 'marketing' as const, title: 'Marketing Emails', desc: 'Offers and new features' }
                     ].map((item) => (
                     <div key={item.key} className="flex items-center justify-between">
                       <div>
@@ -666,7 +666,7 @@ export default function SettingsPage() {
                   className="bg-[#0A0B0E] rounded-xl border border-[#1a1a2e] p-6"
                 >
                   <h2 className="text-lg font-semibold text-white mb-6">
-                    Sécurité du compte
+                    Security du compte
                   </h2>
 
                   <div className="space-y-6">
@@ -693,7 +693,7 @@ export default function SettingsPage() {
                             value={newPassword}
                             onChange={(e) => setNewPassword(e.target.value)}
                             className="w-full px-3 py-2 bg-[#050507] border border-[#1a1a2e] rounded-lg focus:ring-2 focus:ring-[#D4AF37] focus:border-transparent text-white"
-                            placeholder="Min. 8 caractères"
+                            placeholder="Min. 8 characters"
                           />
                         </div>
                         <div>
@@ -719,11 +719,11 @@ export default function SettingsPage() {
                     </div>
 
                     <div className="border-t border-[#1a1a2e] pt-6">
-                      <h3 className="font-medium text-white mb-3">Authentification à deux facteurs</h3>
+                      <h3 className="font-medium text-white mb-3">Two-Factor Authentication</h3>
                       <div className="flex items-center justify-between">
                         <div>
                           <p className="text-sm text-gray-500">
-                            Ajoutez une couche de sécurité supplémentaire à votre compte
+                            Add an extra layer of security to your account
                           </p>
                           <span className="inline-flex items-center gap-1.5 mt-1 px-2 py-0.5 bg-yellow-500/10 border border-yellow-500/20 rounded text-[10px] font-bold text-yellow-400 uppercase tracking-wider">
                             <Clock className="w-3 h-3" />
@@ -757,7 +757,7 @@ export default function SettingsPage() {
 
                   <div className="space-y-6">
                     <div>
-                      <h3 className="font-medium text-white mb-3 flex items-center gap-2"><Palette className="w-4 h-4 text-[#D4AF37]" /> Thème</h3>
+                      <h3 className="font-medium text-white mb-3 flex items-center gap-2"><Palette className="w-4 h-4 text-[#D4AF37]" /> Theme</h3>
                       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                         <div onClick={() => handleThemeChange('light')} className={`border rounded-lg p-4 cursor-pointer hover:border-[#D4AF37] transition-colors ${selectedTheme === 'light' ? 'border-[#D4AF37] bg-[#D4AF37]/10' : 'border-[#1a1a2e]'}`}>
                           <div className="w-full h-16 bg-gray-200 border border-gray-300 rounded mb-2"></div>
@@ -781,7 +781,7 @@ export default function SettingsPage() {
                         onChange={(e) => handleLanguageChange(e.target.value)}
                         className="w-full md:w-64 px-3 py-2 bg-[#050507] border border-[#1a1a2e] rounded-lg focus:ring-2 focus:ring-[#D4AF37] focus:border-transparent text-white"
                       >
-                        <option>Français</option>
+                        <option>English</option>
                         <option>English</option>
                         <option>Español</option>
                         <option>Deutsch</option>
@@ -828,7 +828,7 @@ export default function SettingsPage() {
                     className="flex items-center space-x-2 text-green-500"
                   >
                     <Check className="w-5 h-5" />
-                    <span>Modifications enregistrées</span>
+                    <span>Changes saved</span>
                   </motion.div>
                 )}
               </motion.div>

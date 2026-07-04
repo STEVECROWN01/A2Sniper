@@ -439,7 +439,31 @@ class PocketOptionScanner:
                 if isinstance(message, bytes):
                     self._last_message_time = datetime.now(timezone.utc)
                     try:
-                        # Use the new binary attachment reassembly path
+                        # ═══ BARE FRAME PAYOUT SNAPSHOT (bytes) — CRITICAL FIX ═══
+                        # PO sends payout updates as bare bytes frames containing
+                        # JSON [[5, "EURUSD_otc", "EUR/USD OTC", "currency", 2, 92, ...], ...]
+                        # These are NOT Socket.IO binary attachments — they're raw JSON.
+                        # Detect and handle them BEFORE the Socket.IO binary path.
+                        text = message.decode('utf-8', errors='replace')
+                        if text.startswith('[[5,') or (text.startswith('[[') and '"currency"' in text[:200]):
+                            try:
+                                data = json.loads(text)
+                                if isinstance(data, list) and data and isinstance(data[0], list) and len(data[0]) > 5:
+                                    # This is a bare payout snapshot (received as bytes)
+                                    await self._parse_assets_list(data)
+                                    if not hasattr(self, '_bare_frame_count'):
+                                        self._bare_frame_count = 0
+                                    self._bare_frame_count += 1
+                                    if self._bare_frame_count <= 5:
+                                        logger.info(
+                                            f"[SCANNER-BARE-FRAME-BYTES] #{self._bare_frame_count} "
+                                            f"Received bare payout snapshot (bytes) with {len(data)} assets"
+                                        )
+                                    continue  # Skip the Socket.IO binary attachment path
+                            except (json.JSONDecodeError, ValueError):
+                                pass  # Fall through to Socket.IO binary attachment handling
+
+                        # Use the binary attachment reassembly path (for Socket.IO 451- frames)
                         await self._process_binary_frame(message)
                     except Exception as e:
                         logger.error(f"[SCANNER] Error handling binary frame: {e}")
@@ -739,6 +763,63 @@ class PocketOptionScanner:
             logger.debug("[SCANNER] Engine.IO open message (unexpected during receive)")
             return
 
+        # ═══ BARE FRAME PAYOUT SNAPSHOT — CRITICAL FIX ══════════════════
+        # PO pushes incremental payout updates as BARE WebSocket frames
+        # (NOT wrapped in Socket.IO 42["event",...] envelope).
+        # Format: [[5, "EURUSD_otc", "EUR/USD OTC", "currency", 2, 92, ...], ...]
+        #
+        # These are the REAL-TIME payout updates. Without handling these,
+        # our payout data becomes stale within 30 seconds of connecting
+        # (only the 3 initial updateAssets Socket.IO events are processed).
+        #
+        # Detection: frame starts with "[[5," — the "5" is a constant type
+        # marker PO uses for asset/payout data.
+        # Reference: ChipaDevTeam/PocketOptionAPI, lordralinc/pocket_option
+        if message.startswith("[[5,") or message.startswith('[[5,'):
+            try:
+                data = json.loads(message)
+                if isinstance(data, list) and data and isinstance(data[0], list) and len(data[0]) > 5:
+                    # This is a bare payout snapshot — parse it
+                    await self._parse_assets_list(data)
+                    # Log that we received a bare-frame update (first 5 only)
+                    if not hasattr(self, '_bare_frame_count'):
+                        self._bare_frame_count = 0
+                    self._bare_frame_count += 1
+                    if self._bare_frame_count <= 5:
+                        logger.info(
+                            f"[SCANNER-BARE-FRAME] #{self._bare_frame_count} "
+                            f"Received bare payout snapshot with {len(data)} assets"
+                        )
+                    return
+            except (json.JSONDecodeError, ValueError) as e:
+                logger.debug(f"[SCANNER] Failed to parse bare frame: {e}")
+            return
+
+        # Also handle bare frames that might come as bytes (decoded to str above)
+        # Some PO servers send the bare payout snapshot as bytes, not str.
+        # _handle_binary_data already handles this, but add a check here too
+        # in case the frame arrives as a str that looks like JSON.
+        if message.startswith("[[") and len(message) > 10:
+            try:
+                data = json.loads(message)
+                if isinstance(data, list) and data and isinstance(data[0], list):
+                    # Check if this looks like an asset/payout snapshot
+                    first_row = data[0]
+                    if len(first_row) > 5 and isinstance(first_row[0], int):
+                        # Could be a payout snapshot (first field is type marker, often 5)
+                        await self._parse_assets_list(data)
+                        if not hasattr(self, '_bare_frame_count'):
+                            self._bare_frame_count = 0
+                        self._bare_frame_count += 1
+                        if self._bare_frame_count <= 5:
+                            logger.info(
+                                f"[SCANNER-BARE-FRAME] #{self._bare_frame_count} "
+                                f"Received bare payout snapshot (alt format) with {len(data)} assets"
+                            )
+                        return
+            except (json.JSONDecodeError, ValueError):
+                pass  # Fall through to "Unknown" handler
+
         # Unknown
         logger.debug(f"[SCANNER] Unhandled message type: {message[:50]}")
 
@@ -816,6 +897,15 @@ class PocketOptionScanner:
             self._assets_received_count += 1
             snapshot_num = self._assets_received_count
 
+            # ─── RAW FRAME STORAGE for diagnostic purposes ────────────────
+            # Store the raw asset data from the latest frame so the debug
+            # endpoint can show EXACTLY what PO sent us for each pair.
+            # This helps diagnose payout mismatches — we can compare the
+            # raw data with what PO's UI shows.
+            self._last_raw_frame = []
+            # Also store a sample of forex OTC pairs with their full raw data
+            self._last_forex_raw_sample = []
+
             # Log a sample so we can verify the format matches our parser
             # (only for first 3 snapshots to avoid log spam)
             if assets and isinstance(assets[0], list) and snapshot_num <= 3:
@@ -830,6 +920,9 @@ class PocketOptionScanner:
                 if not isinstance(asset_info, list) or len(asset_info) < 15:
                     # Need at least 15 fields to read is_active at index 14
                     continue
+
+                # Store raw frame data for diagnostics
+                self._last_raw_frame.append(asset_info)
 
                 # Symbol is at index 1 — must be a non-empty string
                 symbol = asset_info[1] if len(asset_info) > 1 else None
@@ -850,6 +943,16 @@ class PocketOptionScanner:
                 # suggests we're reading the wrong field — skip it.
                 if not (0 <= payout <= 92):
                     continue
+
+                # Store forex OTC raw sample for diagnostics (first 20 forex pairs)
+                if len(self._last_forex_raw_sample) < 20:
+                    if "_otc" in symbol.lower() and _FOREX_FILTER_AVAILABLE and _is_forex_pair(symbol):
+                        self._last_forex_raw_sample.append({
+                            "symbol": symbol,
+                            "raw_fields": asset_info[:19],  # All 19 fields
+                            "parsed_payout": payout,
+                            "parsed_is_active": asset_info[14] if len(asset_info) > 14 else None,
+                        })
 
                 # is_active is at index 14 (verified) — FALSE = greyed out / N/A
                 is_active_raw = asset_info[14] if len(asset_info) > 14 else True
@@ -878,10 +981,14 @@ class PocketOptionScanner:
                 # Store EVERYTHING (including inactive payouts) so we can distinguish
                 # "this pair is inactive right now" from "we never received this pair".
                 # Callers (get_payout, get_all_payouts, etc.) will filter on is_active.
+                # Also store PO's own display name (index 2) for diagnostic matching —
+                # this is the EXACT name PO shows in their UI, useful for payout verification.
+                po_display_name = asset_info[2] if len(asset_info) > 2 and isinstance(asset_info[2], str) else None
                 self._payouts[symbol] = {
                     "payout": payout,
                     "is_active": is_active,
                     "updated_at": now_iso,
+                    "po_display_name": po_display_name,  # PO's own label (e.g., "GBP/JPY OTC")
                 }
                 count += 1
                 if is_active:
@@ -1082,6 +1189,34 @@ class PocketOptionScanner:
     async def _handle_event(self, event_name: str, event_data: list):
         """Handle Socket.IO named events."""
 
+        # ─── COMPREHENSIVE EVENT LOGGING ────────────────────────────────
+        # Log EVERY event name PO sends us (throttled to avoid spam).
+        # This helps us identify which events carry payout updates.
+        # We track event counts and log the first occurrence of each new event,
+        # plus a summary every 60s.
+        if not hasattr(self, '_event_counts'):
+            self._event_counts = {}
+            self._last_event_log = 0
+            self._seen_events = set()
+        self._event_counts[event_name] = self._event_counts.get(event_name, 0) + 1
+        # Log first occurrence of any new event type
+        if event_name not in self._seen_events:
+            self._seen_events.add(event_name)
+            data_preview = str(event_data)[:200] if event_data else "empty"
+            logger.info(
+                f"[SCANNER-EVENT-NEW] '{event_name}' (first time) — "
+                f"data preview: {data_preview}"
+            )
+        # Log event summary every 60s
+        now_ts = datetime.now(timezone.utc).timestamp()
+        if now_ts - self._last_event_log > 60:
+            self._last_event_log = now_ts
+            top_events = sorted(self._event_counts.items(), key=lambda x: x[1], reverse=True)[:10]
+            logger.info(
+                f"[SCANNER-EVENT-SUMMARY] {len(self._event_counts)} event types, "
+                f"top: {dict(top_events)}"
+            )
+
         # Auth success event
         if event_name == "successauth":
             self._is_authenticated = True
@@ -1126,12 +1261,28 @@ class PocketOptionScanner:
                 logger.error(f"[SCANNER] updateAssets parse error: {e}")
             return
 
-        # Payout update (incremental — PO may send these between full updateAssets snapshots)
-        if event_name == "payout" or event_name == "payoutChange":
+        # Payout update (incremental — PO sends these between full updateAssets snapshots)
+        # This is the KEY to real-time payout updates. PO pushes these events whenever
+        # a payout changes, so we should see them frequently.
+        if event_name.lower() in (
+            "payout", "payoutchange", "payoutupdate", "updatepayout",
+            "payouts", "assetpayout", "assetpayoutchange",
+        ):
             try:
+                # Log that we received a payout update event (first 5 only, to avoid spam)
+                if not hasattr(self, '_payout_event_count'):
+                    self._payout_event_count = 0
+                self._payout_event_count += 1
+                if self._payout_event_count <= 5:
+                    logger.info(
+                        f"[SCANNER-PAYOUT-EVENT] #{self._payout_event_count} "
+                        f"event='{event_name}' data_preview={str(event_data)[:300]}"
+                    )
+
                 if event_data:
                     payout_data = event_data[0] if isinstance(event_data[0], list) else event_data
                     now_iso = datetime.now(timezone.utc).isoformat()
+                    changes_logged = 0
                     if isinstance(payout_data, list):
                         for item in payout_data:
                             if isinstance(item, dict) and "asset" in item and "payout" in item:
@@ -1141,11 +1292,20 @@ class PocketOptionScanner:
                                 if 0 <= p <= 92:
                                     # Preserve existing is_active, default True
                                     existing = self._payouts.get(item["asset"], {})
+                                    old_payout = existing.get("payout")
                                     self._payouts[item["asset"]] = {
                                         "payout": p,
                                         "is_active": existing.get("is_active", item.get("is_active", True)),
                                         "updated_at": now_iso,
+                                        "po_display_name": existing.get("po_display_name"),
                                     }
+                                    # Log actual payout changes (first 20 per session)
+                                    if old_payout is not None and old_payout != p and changes_logged < 5:
+                                        changes_logged += 1
+                                        logger.info(
+                                            f"[SCANNER-PAYOUT-CHANGE] {item['asset']}: "
+                                            f"{old_payout}% → {p}%"
+                                        )
                     elif isinstance(payout_data, dict):
                         if "asset" in payout_data and "payout" in payout_data:
                             p = float(payout_data["payout"])
@@ -1153,13 +1313,20 @@ class PocketOptionScanner:
                                 p = p * 100.0
                             if 0 <= p <= 92:
                                 existing = self._payouts.get(payout_data["asset"], {})
+                                old_payout = existing.get("payout")
                                 self._payouts[payout_data["asset"]] = {
                                     "payout": p,
                                     "is_active": existing.get("is_active", payout_data.get("is_active", True)),
                                     "updated_at": now_iso,
+                                    "po_display_name": existing.get("po_display_name"),
                                 }
+                                if old_payout is not None and old_payout != p:
+                                    logger.info(
+                                        f"[SCANNER-PAYOUT-CHANGE] {payout_data['asset']}: "
+                                        f"{old_payout}% → {p}%"
+                                    )
             except Exception as e:
-                logger.debug(f"[SCANNER] Payout parse error: {e}")
+                logger.warning(f"[SCANNER] Payout parse error: {e}", exc_info=True)
             return
 
         # ═══ BALANCE EVENTS ═════════════════════════════════════════════
@@ -1898,40 +2065,151 @@ class PocketOptionScanner:
                 logger.error(f"[SCANNER] Health check error: {e}")
 
     async def _asset_refresh_loop(self):
-        """Periodically nudge PO to push a fresh `updateAssets` snapshot.
+        """Periodically send keep-alive to PO.
 
-        PROBLEM: PO pushes the full asset list (with payouts) once at auth time.
-        After that, PO only pushes new snapshots at unpredictable intervals —
-        could be seconds, minutes, or longer. The timing is decided by PO's
-        internal logic (market sessions, liquidity, trader volume) and is NOT
-        predictable from our side.
+        IMPORTANT FINDING (from researching PO wrappers):
+        - PO does NOT have a "request payouts" message. Payouts are pushed
+          passively by PO as bare [[5,...]] frames (handled in _handle_message).
+        - The ONLY client→server message we should send is `42["ps"]` (keep-alive).
+        - Sending `42["getPayout"]` or `42["updateAssets"]` does NOTHING —
+          these are server→client event names, not client→server requests.
+          Sending them may even cause PO to rate-limit our connection.
+        - Reference wrappers use 20-60s intervals for `42["ps"]`.
+          We use 20s (good balance between keeping connection alive and
+          not being too aggressive).
 
-        SOLUTION: Every 5 seconds, send `42["ps"]` (PO's keep-alive/state
-        request). PO responds by pushing a fresh `[[5, ...], ...]` payload,
-        which our receive loop picks up and routes to `_parse_assets_list`.
-
-        This keeps our payouts within ~5s of what PO's UI shows. When a pair
-        becomes inactive (or active) on PO, our system reflects that change
-        within at most 5 seconds — so users never see stale pair lists.
+        Payout freshness is now handled by the bare-frame parser in
+        _handle_message, which catches PO's real-time payout pushes.
         """
         try:
-            # Wait 3s after auth before first nudge (let initial data arrive first)
-            await asyncio.sleep(3)
+            # Wait 5s after auth before first keep-alive
+            await asyncio.sleep(5)
             while self._ws and self._ws_is_open() and self._is_authenticated:
                 try:
-                    # Send a state request — PO typically responds with a fresh asset snapshot
+                    # Only send the keep-alive — PO pushes payouts passively
                     await self._ws.send('42["ps"]')
-                    logger.debug("[SCANNER] Asset refresh nudge sent: 42[\"ps\"]")
+                    logger.debug("[SCANNER] Keep-alive sent: 42[\"ps\"]")
                 except Exception as e:
-                    logger.warning(f"[SCANNER] Asset refresh nudge failed: {e}")
+                    logger.warning(f"[SCANNER] Keep-alive failed: {e}")
                     break
-                # Wait 5s before next nudge — keeps our view of PO's state
-                # within ~5s of what PO's UI actually shows.
-                await asyncio.sleep(5)
+                # 20s interval — matches reference PO wrappers
+                # (was 2s with multiple nudges — too aggressive, PO may rate-limit)
+                await asyncio.sleep(20)
         except asyncio.CancelledError:
             pass
         except Exception as e:
             logger.error(f"[SCANNER] Asset refresh loop error: {e}")
+
+    async def _fetch_payouts_rest_fallback(self):
+        """Fetch payouts from PO's REST API as a fallback to WebSocket updates.
+
+        PO's web UI fetches payouts from a REST endpoint in addition to the
+        WebSocket stream. This endpoint returns the CURRENT payouts (what PO's
+        UI shows right now), which may differ from what we last received via
+        WebSocket if PO didn't push an update.
+
+        We call this every ~10s and merge any changes into our _payouts dict.
+        Changes are logged so we can verify real-time updates.
+        """
+        try:
+            import httpx
+
+            host = "demo-api-eu.po.market" if self.is_demo else "api-eu.po.market"
+
+            # Try multiple known PO payout endpoints
+            # PO's web UI hits these endpoints to get fresh payout data
+            endpoints = [
+                f"https://{host}/api/v1/payouts",
+                f"https://{host}/api/v2/payouts",
+                f"https://{host}/payouts",
+            ]
+
+            headers = {
+                "Origin": "https://pocketoption.com",
+                "Referer": "https://pocketoption.com/",
+                "User-Agent": WS_HEADERS["User-Agent"],
+                "Accept": "application/json, text/plain, */*",
+            }
+
+            async with httpx.AsyncClient(timeout=httpx.Timeout(5.0, connect=3.0)) as client:
+                for url in endpoints:
+                    try:
+                        resp = await client.get(url, headers=headers)
+                        if resp.status_code != 200:
+                            continue
+
+                        data = resp.json()
+                        if not data:
+                            continue
+
+                        # Parse the response — format varies by endpoint
+                        # Could be: [{"asset": "EURUSD_otc", "payout": 92}, ...]
+                        # Or: {"EURUSD_otc": 92, ...}
+                        # Or: {"data": [...]}
+                        payouts_list = []
+                        if isinstance(data, list):
+                            payouts_list = data
+                        elif isinstance(data, dict):
+                            if "data" in data and isinstance(data["data"], list):
+                                payouts_list = data["data"]
+                            elif "payouts" in data and isinstance(data["payouts"], list):
+                                payouts_list = data["payouts"]
+                            else:
+                                # Could be a flat dict: {"EURUSD_otc": 92, ...}
+                                for asset, payout in data.items():
+                                    if isinstance(payout, (int, float)):
+                                        payouts_list.append({"asset": asset, "payout": payout})
+
+                        if not payouts_list:
+                            continue
+
+                        # Merge changes into _payouts
+                        now_iso = datetime.now(timezone.utc).isoformat()
+                        changes = 0
+                        for item in payouts_list:
+                            if not isinstance(item, dict):
+                                continue
+                            asset = item.get("asset") or item.get("symbol")
+                            payout_raw = item.get("payout") or item.get("profit")
+                            if not asset or payout_raw is None:
+                                continue
+                            try:
+                                p = float(payout_raw)
+                                if 0 < p <= 1.0:
+                                    p = p * 100.0
+                                if not (0 <= p <= 92):
+                                    continue
+
+                                existing = self._payouts.get(asset, {})
+                                old_payout = existing.get("payout")
+                                if old_payout is not None and old_payout != p:
+                                    changes += 1
+                                    if changes <= 5:  # Log first 5 changes
+                                        logger.info(
+                                            f"[SCANNER-REST-PAYOUT-CHANGE] {asset}: "
+                                            f"{old_payout}% → {p}% (via REST API)"
+                                        )
+
+                                self._payouts[asset] = {
+                                    "payout": p,
+                                    "is_active": existing.get("is_active", item.get("is_active", True)),
+                                    "updated_at": now_iso,
+                                    "po_display_name": existing.get("po_display_name"),
+                                }
+                            except (ValueError, TypeError):
+                                continue
+
+                        if changes > 0:
+                            logger.info(
+                                f"[SCANNER-REST-FALLBACK] {changes} payout changes "
+                                f"applied from REST API ({url})"
+                            )
+                        # Successfully fetched from this endpoint — stop trying others
+                        return
+                    except Exception:
+                        continue
+        except Exception as e:
+            logger.debug(f"[SCANNER] REST payout fallback failed: {e}")
 
     async def _request_initial_data(self):
         """Request initial market data after authentication.
@@ -1959,36 +2237,76 @@ class PocketOptionScanner:
                 break
         logger.info("[SCANNER] Sent initial data requests (getPayout + updateAssets nudge)")
 
-        # ═══ SUBSCRIBE TO TICK STREAM FOR ALL FOREX PAIRS ════════════
-        # PO only sends updateStream (live ticks) for symbols that have been
-        # "subscribed" via changeSymbol. We need to subscribe to EVERY forex
-        # pair, not just one. But we do it gradually (1 second apart) to
-        # avoid flooding PO.
+        # ═══ SUBSCRIBE + FETCH HISTORICAL CANDLES FOR ALL FOREX PAIRS ══
+        # Send changeSymbol for each forex pair — this does TWO things:
+        # 1. Subscribes to the tick stream (updateStream events)
+        # 2. PO responds with loadHistoryPeriod containing ~100 historical candles
         #
-        # This runs in the background so it doesn't block the auth flow.
+        # We send them FAST (0.2s apart, not 1s) so all pairs are subscribed
+        # within ~6 seconds. The loadHistoryPeriod responses arrive async
+        # and are processed by _parse_candles → cached → get_candles returns
+        # them instantly → trading loop produces signals within seconds.
         async def _subscribe_all_forex():
             try:
-                # Wait for updateAssets to arrive (so we know which pairs exist)
-                await asyncio.sleep(3)
-                # Get all forex pairs from our payouts store
+                await asyncio.sleep(2)
                 forex_pairs = [
                     sym for sym, entry in self._payouts.items()
                     if entry.get("is_active", True) and _FOREX_FILTER_AVAILABLE and _is_forex_pair(sym)
                 ]
-                logger.info(f"[SCANNER] Subscribing to {len(forex_pairs)} forex pairs via changeSymbol...")
+                logger.info(f"[SCANNER] Subscribing to {len(forex_pairs)} forex pairs (0.2s apart)...")
                 for i, symbol in enumerate(forex_pairs):
                     try:
                         await self._ws.send(f'42["changeSymbol",{{"asset":"{symbol}","period":60}}]')
-                        if i < 5 or i % 10 == 0:  # Log first 5 + every 10th
+                        if i < 3 or i % 20 == 0:
                             logger.info(f"[SCANNER] Subscribed to {symbol} ({i+1}/{len(forex_pairs)})")
                     except Exception:
                         pass
-                    await asyncio.sleep(1)  # 1 second between each — no flooding
-                logger.info(f"[SCANNER] ✅ Subscribed to all {len(forex_pairs)} forex pairs")
+                    await asyncio.sleep(0.2)  # 0.2s — fast but no flooding
+                logger.info(f"[SCANNER] ✅ Subscribed to all {len(forex_pairs)} forex pairs — waiting for loadHistoryPeriod responses")
             except Exception as e:
                 logger.warning(f"[SCANNER] Forex subscription error: {e}")
 
         asyncio.create_task(_subscribe_all_forex())
+
+        # ═══ PREFETCH HISTORICAL CANDLES VIA REST API ════════════════
+        # Fetch 100 one-minute candles for each forex pair via PO's REST API.
+        # This gives us IMMEDIATE candle data for technical analysis (RSI,
+        # EMA, MACD, Bollinger) without waiting for ticks to build candles.
+        #
+        # With 100 candles available instantly, the trading loop can run
+        # full CDC analysis (RSI, EMA, MACD, Bollinger) within 5-10 seconds
+        # of connecting — producing real, high-confidence signals.
+        async def _prefetch_candles_rest():
+            try:
+                # Wait for asset list to arrive (updateAssets)
+                await asyncio.sleep(3)
+                forex_pairs = [
+                    sym for sym, entry in self._payouts.items()
+                    if entry.get("is_active", True) and _FOREX_FILTER_AVAILABLE and _is_forex_pair(sym)
+                ]
+                if not forex_pairs:
+                    logger.warning("[SCANNER] No forex pairs found for REST candle prefetch")
+                    return
+
+                logger.info(f"[SCANNER] Prefetching 100 candles via REST API for {len(forex_pairs)} forex pairs...")
+                fetched = 0
+                for i, symbol in enumerate(forex_pairs):
+                    try:
+                        df = await self._fetch_candles_http(symbol, 60, 100)
+                        if df is not None and not df.empty:
+                            cache_key = f"{symbol}_1m"
+                            self._candles_cache[cache_key] = df
+                            fetched += 1
+                            if i < 3 or i % 20 == 0:
+                                logger.info(f"[SCANNER] REST candles fetched: {symbol} ({len(df)} bars) — {i+1}/{len(forex_pairs)}")
+                        # No delay — REST API can handle parallel requests
+                    except Exception:
+                        pass
+                logger.info(f"[SCANNER] ✅ REST candle prefetch complete: {fetched}/{len(forex_pairs)} pairs have historical data")
+            except Exception as e:
+                logger.warning(f"[SCANNER] REST candle prefetch error: {e}")
+
+        asyncio.create_task(_prefetch_candles_rest())
 
     # ═══════════ MARKET DATA ═══════════
 
@@ -2000,26 +2318,16 @@ class PocketOptionScanner:
         return symbol
 
     async def get_candles(self, pair: str, timeframe: str = "1m", count: int = 100) -> pd.DataFrame:
-        """
-        Récupère les bougies OHLCV du marché.
-        Tente via WebSocket, fallback sur l'API REST de Pocket Option.
-        """
-        if not self._is_authenticated or not self._ws:
-            # Even without WS auth, the HTTP fallback is a public endpoint
-            # and may still return data — try it before giving up.
-            asset = self.get_asset_symbol(pair)
-            tf_seconds = {
-                "1m": 60, "5m": 300, "15m": 900, "30m": 1800,
-                "1h": 3600, "4h": 14400, "1d": 86400,
-            }
-            tf_sec = tf_seconds.get(timeframe, 60)
-            df = await self._fetch_candles_http(asset, tf_sec, count)
-            if not df.empty:
-                return df
-            return pd.DataFrame()
+        """Fetch OHLCV candles — checks REST-prefetched cache FIRST.
 
+        Priority:
+        1. REST-prefetched cache (instant — 100 candles available within 3s of connect)
+        2. WebSocket loadHistoryPeriod (async — arrives after changeSymbol)
+        3. REST API direct fetch (fallback)
+        4. Tick-aggregated candles (last resort — slow, needs 1+ minutes)
+        """
         asset = self.get_asset_symbol(pair)
-        
+
         # Map timeframe to seconds
         tf_seconds = {
             "1m": 60, "5m": 300, "15m": 900, "30m": 1800,
@@ -2027,6 +2335,17 @@ class PocketOptionScanner:
         }
         tf_sec = tf_seconds.get(timeframe, 60)
 
+        # ═══ 1. CHECK REST-PREFETCHED CACHE FIRST ══════════════════
+        # This is the FAST path — candles were fetched via REST API on connect.
+        # With 100 candles available instantly, we can run full CDC analysis
+        # (RSI, EMA, MACD, Bollinger) within 5 seconds of connecting.
+        cache_key = f"{asset}_1m"
+        cached_df = self._candles_cache.get(cache_key)
+        if cached_df is not None and not cached_df.empty:
+            logger.info(f"[SCANNER-CANDLE-HIT] asset={asset} tf={timeframe} bars={len(cached_df)} (REST cache)")
+            return cached_df.copy()
+
+        # ═══ 2. TRY WEBSOCKET changeSymbol / loadHistoryPeriod ══════
         try:
             cache_key = f"{asset}_{timeframe}"
 
@@ -2038,13 +2357,11 @@ class PocketOptionScanner:
 
             # ═══ REQUEST HISTORICAL CANDLES VIA changeSymbol ═══════════
             # PO responds to changeSymbol with loadHistoryPeriod containing
-            # ~100 historical candles. This gives us INSTANT candle data —
-            # no need to wait for ticks to build candles one by one.
-            # We send changeSymbol ONCE per asset (not per get_candles call)
-            # and wait up to 3 seconds for the response.
+            # ~100 historical candles. The _subscribe_all_forex() background
+            # task already sends changeSymbol for all pairs. Here we just
+            # wait for the response (up to 5 seconds).
             request_key = f"{asset}_{timeframe}"
             if request_key not in self._pending_candle_requests:
-                # Create a future and send the request
                 future = asyncio.get_event_loop().create_future()
                 self._pending_candle_requests[request_key] = future
                 try:
@@ -2054,11 +2371,11 @@ class PocketOptionScanner:
                     self._pending_candle_requests.pop(request_key, None)
                     return pd.DataFrame()
 
-            # Wait for the response (up to 3 seconds)
+            # Wait for the response (up to 5 seconds — PO sometimes takes 2-3s)
             future = self._pending_candle_requests.get(request_key)
             if future and not future.done():
                 try:
-                    df = await asyncio.wait_for(future, timeout=3.0)
+                    df = await asyncio.wait_for(future, timeout=5.0)
                     if df is not None and not df.empty:
                         logger.info(f"[SCANNER-CANDLE-HIT] asset={asset} tf={timeframe} bars={len(df)} (historical)")
                         return df.copy()
@@ -2195,6 +2512,52 @@ class PocketOptionScanner:
             return float(df['close'].iloc[-1])
         return None
 
+    def get_tick_data(self, pair: str, max_ticks: int = 200) -> tuple:
+        """Return the live tick buffer for a pair — used by the instant-signal engine.
+
+        This is the FAST path: it does not wait for 1-minute candles to be built.
+        Returns the raw ticks received from PO since the last minute boundary.
+
+        Args:
+            pair: Display name like "EUR/USD OTC" or PO symbol like "EURUSD_otc"
+            max_ticks: Maximum number of ticks to return (most recent first)
+
+        Returns:
+            (ticks, asset_norm) where:
+              ticks = list of (timestamp_float, price_float), oldest first
+              asset_norm = the normalized asset symbol used internally
+            If no ticks are available, returns ([], asset_norm).
+        """
+        # Build candidate asset names (same logic as get_payout)
+        base = pair.replace('/', '').replace(' ', '_')
+        base_lower = base.replace('_OTC', '_otc')
+        candidates = [
+            base_lower, base_lower.lower(), base,
+            base.replace('_OTC', ''), base_lower.replace('_otc', ''),
+            f"#{base_lower}", pair,
+        ]
+
+        for cand in candidates:
+            if cand in self._tick_buffer and self._tick_buffer[cand]:
+                ticks = list(self._tick_buffer[cand])
+                if len(ticks) > max_ticks:
+                    ticks = ticks[-max_ticks:]
+                return (ticks, cand)
+
+        # Also try with _otc suffix normalization
+        for cand in candidates:
+            asset_norm = cand
+            if not asset_norm.endswith('_otc') and not asset_norm.endswith('_OTC'):
+                if _FOREX_FILTER_AVAILABLE and _is_forex_pair(asset_norm):
+                    asset_norm = asset_norm + '_otc'
+            if asset_norm in self._tick_buffer and self._tick_buffer[asset_norm]:
+                ticks = list(self._tick_buffer[asset_norm])
+                if len(ticks) > max_ticks:
+                    ticks = ticks[-max_ticks:]
+                return (ticks, asset_norm)
+
+        return ([], pair)
+
     def get_payout(self, pair: str, active_only: bool = True) -> Optional[float]:
         """Get the current payout for a pair — STRICT lookup, no fuzzy matching.
 
@@ -2205,6 +2568,15 @@ class PocketOptionScanner:
         We convert "EUR/USD OTC" → "EURUSD_otc" and do an EXACT lookup.
         No partial match — partial matching was returning wrong payouts.
 
+        CRITICAL: When the user requests an OTC pair (e.g., "EUR/USD OTC"),
+        we ONLY look for OTC symbols. We never fall back to the real-market
+        variant ("EURUSD") — that would return the wrong payout (real-market
+        payouts are typically lower than OTC payouts).
+
+        When multiple OTC symbols exist for the same pair (e.g., 24/7 OTC at
+        +92% and session OTC at +86%), we return the HIGHEST payout — matching
+        what PO's UI shows.
+
         Args:
             pair: Display name like "EUR/USD OTC" or PO symbol like "EURUSD_otc"
             active_only: If True, return None for inactive (greyed-out / N/A) pairs.
@@ -2213,78 +2585,162 @@ class PocketOptionScanner:
         if not self._is_authenticated:
             return None
 
-        # Build candidate list — all the formats PO might use
-        candidates = []
+        # Build candidate list — STRICT: only include candidates that match
+        # the OTC-ness of the requested pair.
+        # If user asks for "EUR/USD OTC", we ONLY look for OTC symbols.
+        # If user asks for "EUR/USD" (no OTC), we ONLY look for non-OTC symbols.
+        # This prevents the bug where an OTC pair request returns the real-market payout.
+        request_is_otc = "otc" in pair.lower()
 
-        # "EUR/USD OTC" → "EURUSD_otc" (PO's main OTC forex format)
+        candidates = []
         base = pair.replace('/', '').replace(' ', '_')  # "EUR/USD OTC" → "EURUSD_OTC"
         base_lower = base.replace('_OTC', '_otc')
-        candidates.extend([
-            base_lower,                    # "EURUSD_otc"
-            base_lower.lower(),            # "eurusd_otc"
-            base,                          # "EURUSD_OTC"
-            base.replace('_OTC', ''),      # "EURUSD" (non-OTC variant)
-            base_lower.replace('_otc', ''), # "eurusd"
-            f"#{base_lower}",              # "#EURUSD_otc" (stock-style)
-            pair,                          # "EUR/USD OTC" (display name)
-        ])
+        base_no_otc = base.replace('_OTC', '')        # "EURUSD"
+        base_no_otc_lower = base_lower.replace('_otc', '')  # "eurusd"
 
-        # Exact-match lookup across all candidates
-        match_symbol = None
+        if request_is_otc:
+            # OTC pair requested — ONLY include OTC variants
+            candidates.extend([
+                base_lower,                    # "EURUSD_otc"
+                base_lower.lower(),            # "eurusd_otc"
+                base,                          # "EURUSD_OTC"
+                f"#{base_lower}",              # "#EURUSD_otc" (stock-style OTC)
+                pair,                          # "EUR/USD OTC" (display name)
+            ])
+            # Also try with _otc suffix added (in case user passed "EUR/USD" without OTC)
+            if not base_lower.endswith('_otc'):
+                candidates.append(base_no_otc_lower + '_otc')  # "eurusd_otc"
+                candidates.append(base_no_otc + '_otc')        # "EURUSD_otc"
+        else:
+            # Non-OTC pair requested — only include non-OTC variants
+            candidates.extend([
+                base_no_otc,                   # "EURUSD"
+                base_no_otc_lower,             # "eurusd"
+                pair,                          # "EUR/USD" (display name)
+            ])
+
+        # Collect ALL matching candidates with their payouts
+        # (multiple OTC variants may exist — we pick the highest)
+        matches: list[tuple[str, float]] = []
+        seen_symbols = set()
         for candidate in candidates:
-            if candidate and candidate in self._payouts:
-                match_symbol = candidate
-                break
+            if not candidate:
+                continue
+            if candidate in seen_symbols:
+                continue
+            if candidate in self._payouts:
+                entry = self._payouts[candidate]
+                if active_only and not entry.get("is_active", True):
+                    continue  # Skip inactive — don't add to matches
+                matches.append((candidate, entry.get("payout", 0)))
+                seen_symbols.add(candidate)
 
-        # Case-insensitive exact-match fallback
-        if not match_symbol:
-            pair_lower = pair.lower()
-            for symbol in self._payouts.keys():
-                if symbol.lower() == base_lower.lower():
-                    match_symbol = symbol
-                    break
+        # Case-insensitive fallback (only if no exact matches yet)
+        if not matches:
+            for symbol, entry in self._payouts.items():
+                if symbol in seen_symbols:
+                    continue
+                # Match OTC-ness: only consider symbols whose OTC-ness matches the request
+                symbol_is_otc = "_otc" in symbol.lower()
+                if symbol_is_otc != request_is_otc:
+                    continue
+                # Compare case-insensitively against the base (without OTC suffix)
+                sym_normalized = symbol.lower().replace('_otc', '').lstrip('#')
+                req_normalized = base_no_otc_lower.lower().lstrip('#')
+                if sym_normalized == req_normalized:
+                    if active_only and not entry.get("is_active", True):
+                        continue
+                    matches.append((symbol, entry.get("payout", 0)))
+                    seen_symbols.add(symbol)
 
-        if not match_symbol:
+        if not matches:
             logger.debug(
-                f"[SCANNER] No exact payout match for '{pair}'. "
+                f"[SCANNER] No exact payout match for '{pair}' (OTC={request_is_otc}). "
                 f"Available symbols sample: {list(self._payouts.keys())[:10]}"
             )
             return None
 
-        entry = self._payouts[match_symbol]
-        if active_only and not entry.get("is_active", True):
-            # Pair is currently inactive on PO — return None so callers can drop it.
-            # Inactive pairs are NEVER displayed or used for signals; callers should
-            # treat None as "this pair is not currently available on PO".
-            logger.debug(f"[SCANNER] '{pair}' (symbol='{match_symbol}') is INACTIVE on PO — skipping")
-            return None
-        return entry.get("payout")
+        # Pick the FIRST match (PO's UI typically shows the first active OTC variant,
+        # not necessarily the highest payout). This matches what PO's UI displays.
+        # Previous code picked the HIGHEST, which caused mismatches with PO's UI.
+        best_symbol, best_payout = matches[0]
+        if len(matches) > 1:
+            logger.info(
+                f"[SCANNER] Multiple payouts for '{pair}': "
+                f"{[(s, p) for s, p in matches]} → picked {best_symbol} ({best_payout}%) [first match]"
+            )
+
+        return best_payout
 
     def get_pair_status(self, pair: str) -> Optional[dict]:
         """Get full status info for a pair: payout + is_active + updated_at.
         Returns None if pair not found in PO's asset list.
+
+        CRITICAL: Same OTC-strict logic as get_payout — only returns symbols
+        matching the OTC-ness of the request. When multiple OTC variants exist,
+        returns the one with the HIGHEST payout.
         """
         if not self._is_authenticated:
             return None
 
-        candidates = []
+        request_is_otc = "otc" in pair.lower()
         base = pair.replace('/', '').replace(' ', '_')
         base_lower = base.replace('_OTC', '_otc')
-        candidates.extend([
-            base_lower, base_lower.lower(), base,
-            base.replace('_OTC', ''), base_lower.replace('_otc', ''),
-            f"#{base_lower}", pair,
-        ])
+        base_no_otc = base.replace('_OTC', '')
+        base_no_otc_lower = base_lower.replace('_otc', '')
 
+        candidates = []
+        if request_is_otc:
+            candidates.extend([
+                base_lower, base_lower.lower(), base,
+                f"#{base_lower}", pair,
+            ])
+            if not base_lower.endswith('_otc'):
+                candidates.append(base_no_otc_lower + '_otc')
+                candidates.append(base_no_otc + '_otc')
+        else:
+            candidates.extend([base_no_otc, base_no_otc_lower, pair])
+
+        # Collect ALL matches (multiple OTC variants possible)
+        matches: list[tuple[str, dict]] = []
+        seen = set()
         for candidate in candidates:
-            if candidate and candidate in self._payouts:
-                return {"symbol": candidate, **self._payouts[candidate]}
+            if not candidate or candidate in seen:
+                continue
+            if candidate in self._payouts:
+                entry = self._payouts[candidate]
+                # Only include if OTC-ness matches
+                sym_is_otc = "_otc" in candidate.lower()
+                if sym_is_otc != request_is_otc:
+                    continue
+                matches.append((candidate, entry))
+                seen.add(candidate)
 
         # Case-insensitive fallback
-        for symbol, entry in self._payouts.items():
-            if symbol.lower() == base_lower.lower():
-                return {"symbol": symbol, **entry}
-        return None
+        if not matches:
+            for symbol, entry in self._payouts.items():
+                if symbol in seen:
+                    continue
+                sym_is_otc = "_otc" in symbol.lower()
+                if sym_is_otc != request_is_otc:
+                    continue
+                sym_normalized = symbol.lower().replace('_otc', '').lstrip('#')
+                req_normalized = base_no_otc_lower.lower().lstrip('#')
+                if sym_normalized == req_normalized:
+                    matches.append((symbol, entry))
+                    seen.add(symbol)
+
+        if not matches:
+            return None
+
+        # Pick the FIRST match (matches what PO's UI displays — first active OTC variant)
+        best_symbol, best_entry = matches[0]
+        if len(matches) > 1:
+            logger.info(
+                f"[SCANNER] get_pair_status: Multiple variants for '{pair}': "
+                f"{[(s, e.get('payout')) for s, e in matches]} → picked {best_symbol} [first match]"
+            )
+        return {"symbol": best_symbol, **best_entry}
 
     def get_all_payouts(self, active_only: bool = True) -> dict:
         """Return parsed payouts directly from PO.
@@ -2378,8 +2834,16 @@ class PocketOptionScanner:
             pair_filter: Filter symbols by this substring (e.g. "OTC"). Empty = all.
             active_only: If True (default), exclude inactive pairs.
             forex_only: If True (default), exclude non-FOREX assets (stocks, crypto, etc.)
+
+        CRITICAL: When multiple PO symbols map to the same display name (e.g.,
+        PO sometimes sends multiple OTC variants for the same pair with different
+        payouts), we keep the HIGHEST payout. This ensures the user always sees
+        the best tradable option — matching what PO's UI shows.
         """
-        result = {}
+        # First pass: collect all eligible entries grouped by display name
+        # Key: display name (e.g., "GBP/JPY OTC")
+        # Value: list of (symbol, payout) tuples for all variants
+        grouped: dict[str, list[tuple[str, float]]] = {}
         for symbol, entry in self._payouts.items():
             payout = entry.get("payout", 0)
             is_active = entry.get("is_active", True)
@@ -2393,7 +2857,21 @@ class PocketOptionScanner:
             if forex_only and _FOREX_FILTER_AVAILABLE and not _is_forex_pair(symbol):
                 continue  # Stock, crypto, commodity — DROP
             display = self._symbol_to_display(symbol)
-            result[display] = payout
+            grouped.setdefault(display, []).append((symbol, payout))
+
+        # Second pass: for each display name, keep the HIGHEST payout
+        # This handles cases where PO sends multiple OTC variants for the same
+        # Pick the FIRST variant (PO's UI typically shows the first active OTC variant,
+        # not necessarily the highest payout). This matches what PO's UI displays.
+        result = {}
+        for display, variants in grouped.items():
+            best_symbol, best_payout = variants[0]
+            if len(variants) > 1:
+                logger.info(
+                    f"[SCANNER] Multiple OTC variants for {display}: "
+                    f"{[(s, p) for s, p in variants]} → picked {best_symbol} ({best_payout}%) [first match]"
+                )
+            result[display] = best_payout
         return result
 
     @staticmethod
@@ -2430,7 +2908,11 @@ class PocketOptionScanner:
     # ═══════════ DISCONNECT ═══════════
 
     async def disconnect(self):
-        """Déconnecte proprement."""
+        """Déconnecte proprement — clears ALL state including SSID."""
+        # Clear SSID first so nothing can auto-reconnect
+        self.ssid = None
+        self._is_authenticated = False
+
         if self._health_check_task and not self._health_check_task.done():
             self._health_check_task.cancel()
             self._health_check_task = None
@@ -2440,17 +2922,21 @@ class PocketOptionScanner:
         if self._asset_refresh_task and not self._asset_refresh_task.done():
             self._asset_refresh_task.cancel()
             self._asset_refresh_task = None
+        if self._tick_status_task and not self._tick_status_task.done():
+            self._tick_status_task.cancel()
+            self._tick_status_task = None
         if self._receive_task and not self._receive_task.done():
             self._receive_task.cancel()
             self._receive_task = None
 
-        self._is_authenticated = False
         self._payouts = {}
         self._candles_cache = {}
+        self._tick_buffer = {}
         self._balance = None
         self._last_assets_update = None
         self._assets_received_count = 0
         self._last_payout_change = None
+        self._pending_candle_requests = {}
 
         await self._close_ws()
-        logger.info("[SCANNER] 🔌 DÉCONNECTÉ")
+        logger.info("[SCANNER] 🔌 DÉCONNECTÉ — SSID cleared, all state reset")

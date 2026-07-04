@@ -111,7 +111,7 @@ export default function AdminSignalsPage() {
       userId: user?.id,
       avatarUrl: user?.avatar,
     };
-    const doc = createBrandedPDF('Admin - Signaux', 'Administration des signaux de trading', pdfUser);
+    const doc = createBrandedPDF('Admin - Signals', 'Trading signals administration', pdfUser);
     let y = 58;
 
     // User info card
@@ -119,10 +119,10 @@ export default function AdminSignalsPage() {
 
     // Filter info
     y = drawSectionTitle(doc, 'Filtres appliques', y);
-    y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Recherche', searchTerm || 'Aucune');
-    y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Paire', selectedPair === 'ALL' ? 'Toutes' : selectedPair);
-    y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Statut', selectedStatus === 'ALL' ? 'Tous' : selectedStatus);
-    y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Direction', selectedDirection === 'ALL' ? 'Toutes' : selectedDirection);
+    y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Search', searchTerm || 'None');
+    y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Pair', selectedPair === 'ALL' ? 'All' : selectedPair);
+    y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Status', selectedStatus === 'ALL' ? 'All' : selectedStatus);
+    y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Direction', selectedDirection === 'ALL' ? 'All' : selectedDirection);
     y += 2;
 
     // Stats
@@ -130,19 +130,19 @@ export default function AdminSignalsPage() {
     const cardW = 42;
     const gap = 3;
     y = drawStatCard(doc, PAGE.marginL, y, cardW, 'Total', String(stats.total));
-    y = drawStatCard(doc, PAGE.marginL + cardW + gap, y - 21, cardW, 'Actifs', String(stats.active), { valueColor: '#3B82F6' });
+    y = drawStatCard(doc, PAGE.marginL + cardW + gap, y - 21, cardW, 'Active', String(stats.active), { valueColor: '#3B82F6' });
     y = drawStatCard(doc, PAGE.marginL + (cardW + gap) * 2, y - 21, cardW, 'Gagnes', String(stats.won), { valueColor: '#22C55E' });
-    y = drawStatCard(doc, PAGE.marginL + (cardW + gap) * 3, y - 21, cardW, 'Perdus', String(stats.lost), { valueColor: '#EF4444' });
+    y = drawStatCard(doc, PAGE.marginL + (cardW + gap) * 3, y - 21, cardW, 'Losts', String(stats.lost), { valueColor: '#EF4444' });
     y += 6;
 
     // Signals table
     y = drawSectionTitle(doc, 'Liste des signaux', y);
     if (filteredSignals.length > 0) {
       const headers = [
-        { label: 'Paire', width: 28 },
+        { label: 'Pair', width: 28 },
         { label: 'Direction', width: 22, align: 'center' as const },
         { label: 'Winrate', width: 22, align: 'center' as const },
-        { label: 'Statut', width: 22, align: 'center' as const },
+        { label: 'Status', width: 22, align: 'center' as const },
         { label: 'Payout', width: 20, align: 'right' as const },
         { label: 'Date', width: 35, align: 'right' as const },
       ];
@@ -152,13 +152,13 @@ export default function AdminSignalsPage() {
         s.winrate ? `${s.winrate}%` : '-',
         s.status || '-',
         s.payout ? `${s.payout}%` : '-',
-        s.timestamp ? new Date(s.timestamp).toLocaleString('fr-FR', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-',
+        s.timestamp ? new Date(s.timestamp).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-',
       ]);
       y = drawTable(doc, PAGE.marginL, y, headers, rows);
     } else {
       doc.setFontSize(8);
       doc.setTextColor(107, 114, 128);
-      doc.text('Aucun signal trouve.', PAGE.marginL + 4, y + 4);
+      doc.text('No signals found.', PAGE.marginL + 4, y + 4);
     }
 
     const dateStr = new Date().toISOString().split('T')[0];
@@ -218,7 +218,7 @@ export default function AdminSignalsPage() {
         
         <div className="flex items-center space-x-3">
           <div 
-            title={liveStatus === 'LIVE' ? "ANALYSE BASÉE SUR LES DONNÉES RÉELLES" : "SYSTÈME DÉCONNECTÉ DU MARCHÉ"}
+            title={liveStatus === 'LIVE' ? "ANALYSIS BASED ON REAL DATA" : "SYSTEM DISCONNECTED FROM MARKET"}
             className="flex items-center px-3 py-2 bg-white rounded-lg border border-gray-200 shadow-sm cursor-help transition-all hover:border-blue-200"
           >
             <span className="relative flex h-3 w-3 mr-2">
@@ -226,7 +226,7 @@ export default function AdminSignalsPage() {
               <span className={`relative inline-flex rounded-full h-3 w-3 ${liveStatus === 'LIVE' ? 'bg-green-500' : 'bg-red-500'}`}></span>
             </span>
             <span className="text-xs font-bold text-gray-700">
-              {liveStatus === 'LIVE' ? 'MARKET LIVE' : 'DÉCONNECTÉ'}
+              {liveStatus === 'LIVE' ? 'MARKET LIVE' : 'DISCONNECTED'}
             </span>
           </div>
 
@@ -235,7 +235,7 @@ export default function AdminSignalsPage() {
               onClick={() => disconnectMarket()}
               className="px-3 py-2 bg-red-50 text-red-600 rounded-lg text-xs font-bold hover:bg-red-100 transition-colors border border-red-200"
             >
-              DÉCONNECTER
+              DISCONNECT
             </button>
           )}
 
@@ -273,10 +273,10 @@ export default function AdminSignalsPage() {
                 <div className="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center text-white">
                   <Settings className="w-6 h-6" />
                 </div>
-                Connexion au Marché Pocket Option (ADMIN)
+                Market Login Pocket Option (ADMIN)
               </h2>
               <p className="text-gray-600 mb-6">
-                Pour générer des signaux sniper 100% réels, le système doit se connecter à votre session Pocket Option.
+                To generate 100% real sniper signals, the system must connect to your Pocket Option session.
               </p>
               
               <div className="space-y-4 mb-8">
@@ -284,26 +284,26 @@ export default function AdminSignalsPage() {
                 <ul className="space-y-3">
                   <li className="flex gap-3 text-sm text-gray-600">
                     <span className="flex-shrink-0 w-6 h-6 bg-blue-50 text-blue-600 rounded-full flex items-center justify-center font-bold text-xs">1</span>
-                    <span>Ouvrez votre compte sur <a href="https://pocketoption.com" target="_blank" rel="noopener noreferrer" className="text-blue-600 font-bold hover:underline">pocketoption.com</a></span>
+                    <span>Open your account on <a href="https://pocketoption.com" target="_blank" rel="noopener noreferrer" className="text-blue-600 font-bold hover:underline">pocketoption.com</a></span>
                   </li>
                   <li className="flex gap-3 text-sm text-gray-600">
                     <span className="flex-shrink-0 w-6 h-6 bg-blue-50 text-blue-600 rounded-full flex items-center justify-center font-bold text-xs">2</span>
-                    <span>Appuyez sur F12 (Inspecter) -&gt; onglet Network</span>
+                    <span>Press F12 (Inspect) -&gt; Network tab</span>
                   </li>
                   <li className="flex gap-3 text-sm text-gray-600">
                     <span className="flex-shrink-0 w-6 h-6 bg-blue-50 text-blue-600 rounded-full flex items-center justify-center font-bold text-xs">3</span>
-                    <span>Filtrez par &apos;WS&apos; et cherchez le message commençant par &apos;42[&quot;auth&quot;...&apos;</span>
+                    <span>Filter by &apos;WS&apos; and find the message starting with &apos;42[&quot;auth&quot;...&apos;</span>
                   </li>
                   <li className="flex gap-3 text-sm text-gray-600">
                     <span className="flex-shrink-0 w-6 h-6 bg-blue-50 text-blue-600 rounded-full flex items-center justify-center font-bold text-xs">4</span>
-                    <span>Copiez le message entier et collez-le ci-dessous.</span>
+                    <span>Copy the entire message and paste it below.</span>
                   </li>
                 </ul>
               </div>
 
               <div className="flex items-center gap-4 p-4 bg-yellow-50 border border-yellow-200 rounded-xl text-yellow-800 text-sm">
                 <Target className="w-5 h-5 flex-shrink-0" />
-                <p>Votre SSID reste valide tant que vous ne vous déconnectez pas de votre compte Pocket Option.</p>
+                <p>Your SSID remains valid as long as you don't disconnect from your Pocket Option account.</p>
               </div>
             </div>
 
@@ -351,7 +351,7 @@ export default function AdminSignalsPage() {
                   ) : (
                     <>
                       <Link2 className="w-5 h-5" />
-                      CONNECTER AU MARCHÉ
+                      CONNECT TO MARKET
                     </>
                   )}
                 </button>
@@ -384,7 +384,7 @@ export default function AdminSignalsPage() {
         <div className="bg-white rounded-xl shadow-lg border border-gray-100 p-6">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm text-gray-600 mb-1">Actifs</p>
+              <p className="text-sm text-gray-600 mb-1">Active</p>
               <p className="text-2xl font-bold text-blue-600">{stats.active}</p>
             </div>
             <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
@@ -396,7 +396,7 @@ export default function AdminSignalsPage() {
         <div className="bg-white rounded-xl shadow-lg border border-gray-100 p-6">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm text-gray-600 mb-1">Gagnants</p>
+              <p className="text-sm text-gray-600 mb-1">Won</p>
               <p className="text-2xl font-bold text-green-600">{stats.won}</p>
             </div>
             <div className="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center">
@@ -408,7 +408,7 @@ export default function AdminSignalsPage() {
         <div className="bg-white rounded-xl shadow-lg border border-gray-100 p-6">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm text-gray-600 mb-1">Perdants</p>
+              <p className="text-sm text-gray-600 mb-1">Lost</p>
               <p className="text-2xl font-bold text-red-600">{stats.lost}</p>
             </div>
             <div className="w-12 h-12 bg-red-100 rounded-lg flex items-center justify-center">
@@ -425,7 +425,7 @@ export default function AdminSignalsPage() {
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
             <input
               type="text"
-              placeholder="Rechercher..."
+              placeholder="Searchr..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
@@ -437,7 +437,7 @@ export default function AdminSignalsPage() {
             onChange={(e) => setSelectedPair(e.target.value)}
             className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
           >
-            <option value="ALL">Toutes les paires</option>
+            <option value="ALL">All Pairs</option>
             {tradingPairs.map(pair => (
               <option key={pair.symbol} value={pair.symbol}>{pair.symbol}</option>
             ))}
@@ -448,10 +448,10 @@ export default function AdminSignalsPage() {
             onChange={(e) => setSelectedStatus(e.target.value)}
             className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
           >
-            <option value="ALL">Tous les statuts</option>
-            <option value="ACTIVE">Actif</option>
-            <option value="WON">Gagné</option>
-            <option value="LOST">Perdu</option>
+            <option value="ALL">All Statuses</option>
+            <option value="ACTIVE">Active</option>
+            <option value="WON">Won</option>
+            <option value="LOST">Lost</option>
           </select>
 
           <select
@@ -459,7 +459,7 @@ export default function AdminSignalsPage() {
             onChange={(e) => setSelectedDirection(e.target.value)}
             className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
           >
-            <option value="ALL">Toutes les directions</option>
+            <option value="ALL">All Directions</option>
             <option value="CALL">CALL</option>
             <option value="PUT">PUT</option>
           </select>
@@ -469,7 +469,7 @@ export default function AdminSignalsPage() {
             onChange={(e) => setMinWinrate(Number(e.target.value))}
             className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
           >
-            <option value="0">Tous les Winrates</option>
+            <option value="0">All Winrates</option>
             <option value="85">85%+</option>
             <option value="90">90%+</option>
             <option value="95">95%+</option>
@@ -497,7 +497,7 @@ export default function AdminSignalsPage() {
       {filteredSignals.length === 0 && (
         <div className="text-center py-12">
           <Filter className="w-12 h-12 text-gray-300 mx-auto mb-4" />
-          <h3 className="text-lg font-medium text-gray-900">Aucun signal trouvé</h3>
+          <h3 className="text-lg font-medium text-gray-900">No signals found</h3>
         </div>
       )}
     </div>

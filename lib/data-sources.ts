@@ -187,7 +187,7 @@ export class DataSourceManager {
     }
   }
 
-  // Récupération de données REST — throws error on failure instead of falling back to mock data
+  // REST data retrieval — throws error on failure instead of falling back to mock data
   async fetchRestData(symbol: string, interval: string = '1min'): Promise<MarketDataPoint[]> {
     const source = this.sources.find(s => 
       s.type === 'REST' && s.supported_symbols.includes(symbol)
@@ -244,7 +244,7 @@ export class DataSourceManager {
     }
   }
 
-  // Ajout au buffer de données
+  // Adding to data buffer
   private addToBuffer(data: MarketDataPoint): void {
     const key = data.symbol;
     if (!this.dataBuffer.has(key)) {
@@ -254,18 +254,18 @@ export class DataSourceManager {
     const buffer = this.dataBuffer.get(key)!;
     buffer.push(data);
 
-    // Maintenir seulement les 1000 derniers points
+    // Keep only les 1000 derniers points
     if (buffer.length > 1000) {
       buffer.shift();
     }
   }
 
-  // Notification des abonnés
+  // Subscriber notification
   private notifySubscribers(data: MarketDataPoint): void {
     console.log(`New data for ${data.symbol}:`, data.close);
   }
 
-  // Récupération des données du buffer
+  // Buffer data retrieval
   getBufferedData(symbol: string, limit: number = 100): MarketDataPoint[] {
     const buffer = this.dataBuffer.get(symbol) || [];
     return buffer.slice(-limit);
@@ -305,7 +305,7 @@ export class DataSourceManager {
     this.retryCounts.clear();
   }
 
-  // Statistiques des sources de données
+  // Data source statistics
   getSourceStats(): Array<{
     name: string;
     status: 'connected' | 'disconnected' | 'error';
@@ -321,6 +321,6 @@ export class DataSourceManager {
   }
 }
 
-// Instance globale du gestionnaire de sources de données
+// Global data source manager instance
 // SSR guard: only instantiate in browser environment
 export const dataSourceManager = typeof window !== 'undefined' ? new DataSourceManager() : (null as unknown as DataSourceManager);

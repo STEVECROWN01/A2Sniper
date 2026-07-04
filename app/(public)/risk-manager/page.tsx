@@ -243,6 +243,83 @@ export default function RiskManagerPage() {
     window.dispatchEvent(new StorageEvent('storage', { key: 'a2sniper_risk_session' }));
   };
 
+  // Load all sessions on mount — but DON'T overwrite if user already has data
+  useEffect(() => {
+    const savedAll = localStorage.getItem('a2sniper_risk_sessions');
+    if (savedAll) {
+      try {
+        const parsed = JSON.parse(savedAll);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setAllSessions(parsed);
+          setCurrentEditingIdx(parsed.length - 1);
+          // Only load session data if the current trades are empty
+          // (don't overwrite trades the user already loaded from individual keys)
+          const currentTrades = localStorage.getItem('a2sniper_risk_trades');
+          const hasCurrentTrades = currentTrades && JSON.parse(currentTrades).some((t: any) => t.result && t.amount > 0);
+          if (!hasCurrentTrades) {
+            const last = parsed[parsed.length - 1];
+            setInitialCapital(last.initialCapital || 1000);
+            setPayout(last.payout || 92);
+            setTrades(last.trades || Array(10).fill({ result: '', amount: 0, return: 0 }));
+            setSessionCounter(last.sessionCounter || 0);
+          }
+        }
+      } catch {}
+    }
+  }, []);
+
+  const handleNewSession = () => {
+    // If there are unsaved changes with recorded trades, show confirmation
+    if (hasUnsavedChanges) {
+      setShowNewSessionModal(true);
+      return;
+    }
+    doNewSession();
+  };
+
+  const doNewSession = () => {
+    const poBalance = marketInfo?.account_balance && marketInfo.account_balance > 0 ? marketInfo.account_balance : 1000;
+    setInitialCapital(poBalance);
+    setPayout(92);
+    setTrades(Array(10).fill({ result: '', amount: 0, return: 0 }));
+    setSessionCounter(sessionCounter + 1);
+    setCurrentEditingIdx(-1);
+    setJustSaved(false);
+    setShowNewSessionModal(false);
+    toast.info("New session — fill in your trades and save.", { duration: 3000 });
+  };
+
+  const saveAndNewSession = async () => {
+    if (!hasRecordedTrades) {
+      toast.error("Please record at least 1 trade before saving.", { duration: 3000 });
+      return;
+    }
+    // Save current session
+    const dataToSave = { initialCapital, payout, trades, sessionCounter, savedAt: new Date().toISOString() };
+    const updated = [...allSessions];
+    if (currentEditingIdx >= 0 && currentEditingIdx < updated.length) {
+      updated[currentEditingIdx] = dataToSave;
+    } else {
+      updated.push(dataToSave);
+    }
+    setAllSessions(updated);
+    localStorage.setItem('a2sniper_risk_sessions', JSON.stringify(updated));
+    syncSessionToJournal();
+    toast.success("Session saved! Opening new session...", { duration: 2000 });
+    setTimeout(() => doNewSession(), 500);
+  };
+
+  const handleLoadSession = (idx: number) => {
+    if (idx < 0 || idx >= allSessions.length) return;
+    const s = allSessions[idx];
+    setInitialCapital(s.initialCapital || 1000);
+    setPayout(s.payout || 92);
+    setTrades(s.trades || Array(10).fill({ result: '', amount: 0, return: 0 }));
+    setSessionCounter(s.sessionCounter || 0);
+    setCurrentEditingIdx(idx);
+    setJustSaved(false);
+  };
+
   // Auto-sync whenever trades, capital, payout, or sessionCounter change
   useEffect(() => {
     if (typeof window !== 'undefined') {

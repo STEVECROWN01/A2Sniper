@@ -158,7 +158,7 @@ export function AdvancedAnalytics({ timeframe = '24H' }: AdvancedAnalyticsProps)
       setData({ liveData, performanceByHour, timeframeDistribution, pairPerformance });
     } catch (err) {
       console.error('Failed to load analytics data', err);
-      setError('Impossible de charger les données analytiques. Vérifiez votre connexion.');
+      setError('Cannot load analytics data. Check your connection.');
     } finally {
       setIsLoading(false);
     }
@@ -170,7 +170,7 @@ export function AdvancedAnalytics({ timeframe = '24H' }: AdvancedAnalyticsProps)
 
   const handleRefresh = () => {
     loadAnalyticsData(true);
-    toast.success('Analytics rafraîchis !');
+    toast.success('Analytics refreshed!');
   };
 
   const handleExport = async () => {
@@ -183,7 +183,7 @@ export function AdvancedAnalytics({ timeframe = '24H' }: AdvancedAnalyticsProps)
       userId: user?.id,
       avatarUrl: user?.avatar,
     };
-    const doc = createBrandedPDF('Analyses Avancees', `Timeframe: ${timeframe}`, pdfUser);
+    const doc = createBrandedPDF('Analysiss Avancees', `Timeframe: ${timeframe}`, pdfUser);
     let y = 58;
 
     // User info card
@@ -194,7 +194,7 @@ export function AdvancedAnalytics({ timeframe = '24H' }: AdvancedAnalyticsProps)
     if (data.liveData) {
       const cardW = 42;
       const gap = 3;
-      y = drawStatCard(doc, PAGE.marginL, y, cardW, 'Signaux Generes', String(data.liveData.signalsGenerated || 0));
+      y = drawStatCard(doc, PAGE.marginL, y, cardW, 'Signals Generated', String(data.liveData.signalsGenerated || 0));
       y = drawStatCard(doc, PAGE.marginL + cardW + gap, y - 21, cardW, 'Precision IA', data.liveData.aiAccuracy > 0 ? `${data.liveData.aiAccuracy.toFixed(1)}%` : 'N/A', { valueColor: '#D4AF37' });
       y = drawStatCard(doc, PAGE.marginL + (cardW + gap) * 2, y - 21, cardW, 'Profit Moyen', data.liveData.avgProfit !== 0 ? `$${data.liveData.avgProfit.toFixed(2)}` : 'N/A', { valueColor: data.liveData.avgProfit >= 0 ? '#22C55E' : '#EF4444' });
       y += 6;
@@ -206,7 +206,7 @@ export function AdvancedAnalytics({ timeframe = '24H' }: AdvancedAnalyticsProps)
       y = drawSectionTitle(doc, 'Performance par heure', y);
       const headers = [
         { label: 'Heure', width: 30, align: 'center' as const },
-        { label: 'Signaux', width: 30, align: 'center' as const },
+        { label: 'Signals', width: 30, align: 'center' as const },
         { label: 'Win Rate', width: 30, align: 'center' as const },
         { label: 'Profit', width: 30, align: 'right' as const },
       ];
@@ -222,9 +222,9 @@ export function AdvancedAnalytics({ timeframe = '24H' }: AdvancedAnalyticsProps)
     // Pair Performance
     if (data.pairPerformance && data.pairPerformance.length > 0) {
       y = checkPageBreak(doc, y, 30);
-      y = drawSectionTitle(doc, 'Performance par paire', y);
+      y = drawSectionTitle(doc, 'Performance par pair', y);
       const headers = [
-        { label: 'Paire', width: 30 },
+        { label: 'Pair', width: 30 },
         { label: 'Trades', width: 25, align: 'center' as const },
         { label: 'Win Rate', width: 30, align: 'center' as const },
         { label: 'Profit', width: 30, align: 'right' as const },
@@ -259,7 +259,7 @@ export function AdvancedAnalytics({ timeframe = '24H' }: AdvancedAnalyticsProps)
         </div>
         <div className="flex items-center justify-center py-12">
           <Loader2 className="w-8 h-8 text-[#D4AF37] animate-spin" />
-          <span className="ml-3 text-gray-400 font-bold">Chargement des données analytiques...</span>
+          <span className="ml-3 text-gray-400 font-bold">Loading data analytiques...</span>
         </div>
       </div>
     );
@@ -271,9 +271,9 @@ export function AdvancedAnalytics({ timeframe = '24H' }: AdvancedAnalyticsProps)
         <div className="bg-red-500/10 border border-red-500/30 p-6 rounded-2xl flex items-center gap-4">
           <AlertCircle className="w-6 h-6 text-red-400 flex-shrink-0" />
           <div>
-            <p className="text-red-300 font-bold">{error || 'Aucune donnée disponible'}</p>
+            <p className="text-red-300 font-bold">{error || 'No data available'}</p>
             <button onClick={handleRefresh} className="text-red-400 hover:text-red-300 text-sm mt-1 underline">
-              Réessayer
+              Retry
             </button>
           </div>
         </div>
@@ -283,13 +283,13 @@ export function AdvancedAnalytics({ timeframe = '24H' }: AdvancedAnalyticsProps)
 
   return (
     <div className="space-y-8">
-      {/* Métriques */}
+      {/* Metrics */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
         {[
-          { label: 'Signaux Générés', value: data.liveData.signalsGenerated.toString(), sub: timeframe, icon: TrendingUp, color: 'text-[#D4AF37] bg-[#D4AF37]/10' },
-          { label: 'Précision', value: data.liveData.aiAccuracy > 0 ? `${data.liveData.aiAccuracy.toFixed(1)}%` : 'N/A', sub: 'Données réelles', icon: Zap, color: 'text-green-400 bg-green-500/10' },
+          { label: 'Signals Generated', value: data.liveData.signalsGenerated.toString(), sub: timeframe, icon: TrendingUp, color: 'text-[#D4AF37] bg-[#D4AF37]/10' },
+          { label: 'Accuracy', value: data.liveData.aiAccuracy > 0 ? `${data.liveData.aiAccuracy.toFixed(1)}%` : 'N/A', sub: 'Real data', icon: Zap, color: 'text-green-400 bg-green-500/10' },
           { label: 'Profit Moyen', value: data.liveData.avgProfit !== 0 ? `$${data.liveData.avgProfit.toFixed(2)}` : 'N/A', sub: 'Par signal', icon: Target, color: 'text-purple-400 bg-purple-500/10' },
-          { label: 'Temps Exécution', value: data.liveData.avgExecutionTime > 0 ? `${data.liveData.avgExecutionTime.toFixed(0)}s` : 'N/A', sub: 'Moyenne', icon: Clock, color: 'text-[#D4AF37] bg-[#D4AF37]/10' },
+          { label: 'Execution Time', value: data.liveData.avgExecutionTime > 0 ? `${data.liveData.avgExecutionTime.toFixed(0)}s` : 'N/A', sub: 'Moyenne', icon: Clock, color: 'text-[#D4AF37] bg-[#D4AF37]/10' },
         ].map((metric, i) => (
           <motion.div
             key={i}
@@ -345,13 +345,13 @@ export function AdvancedAnalytics({ timeframe = '24H' }: AdvancedAnalyticsProps)
                 <XAxis dataKey="hour" tick={{ fill: '#6b7280', fontSize: 10, fontWeight: 700 }} axisLine={{ stroke: 'rgba(255,255,255,0.05)' }} />
                 <YAxis tick={{ fill: '#6b7280', fontSize: 10, fontWeight: 700 }} axisLine={{ stroke: 'rgba(255,255,255,0.05)' }} />
                 <Tooltip contentStyle={darkTooltipStyle} />
-                <Bar dataKey="signals" fill="#D4AF37" name="Signaux" radius={[4, 4, 0, 0]} />
-                <Bar dataKey="accuracy" fill="#10B981" name="Précision %" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="signals" fill="#D4AF37" name="Signals" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="accuracy" fill="#10B981" name="Accuracy %" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           ) : (
             <div className="h-[300px] flex items-center justify-center text-gray-500 text-sm font-bold">
-              Aucune donnée disponible pour cette période
+              No data available for this period
             </div>
           )}
         </motion.div>
@@ -386,30 +386,30 @@ export function AdvancedAnalytics({ timeframe = '24H' }: AdvancedAnalyticsProps)
             </ResponsiveContainer>
           ) : (
             <div className="h-[300px] flex items-center justify-center text-gray-500 text-sm font-bold">
-              Aucune donnée de timeframe disponible
+              No timeframe data available
             </div>
           )}
         </motion.div>
       </div>
 
-      {/* Performance par paire */}
+      {/* Performance par pair */}
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.6 }}
         className="bg-[#0a0a0c]/80 border border-white/5 rounded-2xl p-6 backdrop-blur-md"
       >
-        <h3 className="text-sm font-black text-white uppercase tracking-wider mb-6">Performance par Paire de Devises</h3>
+        <h3 className="text-sm font-black text-white uppercase tracking-wider mb-6">Performance par Pair de Devises</h3>
         {data.pairPerformance.length > 0 ? (
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead>
                 <tr className="border-b border-white/5">
-                  <th className="text-left py-3 px-4 text-[10px] font-bold text-gray-500 uppercase tracking-wider">Paire</th>
+                  <th className="text-left py-3 px-4 text-[10px] font-bold text-gray-500 uppercase tracking-wider">Pair</th>
                   <th className="text-left py-3 px-4 text-[10px] font-bold text-gray-500 uppercase tracking-wider">Trades</th>
-                  <th className="text-left py-3 px-4 text-[10px] font-bold text-gray-500 uppercase tracking-wider">Taux Réussite</th>
+                  <th className="text-left py-3 px-4 text-[10px] font-bold text-gray-500 uppercase tracking-wider">Success Rate</th>
                   <th className="text-left py-3 px-4 text-[10px] font-bold text-gray-500 uppercase tracking-wider">Profit</th>
-                  <th className="text-left py-3 px-4 text-[10px] font-bold text-gray-500 uppercase tracking-wider">Tendance</th>
+                  <th className="text-left py-3 px-4 text-[10px] font-bold text-gray-500 uppercase tracking-wider">Trend</th>
                 </tr>
               </thead>
               <tbody>
@@ -483,7 +483,7 @@ export function AdvancedAnalytics({ timeframe = '24H' }: AdvancedAnalyticsProps)
           </div>
         ) : (
           <div className="py-12 text-center text-gray-500 text-sm font-bold">
-            Aucune donnée de performance par paire disponible
+            No per-pair performance data available
           </div>
         )}
       </motion.div>

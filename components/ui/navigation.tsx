@@ -30,15 +30,15 @@ import { useAppStore } from '@/lib/store';
 
 const navigationItems = [
   { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
-  { name: 'Signaux', href: '/signals', icon: TrendingUp },
-  { name: 'Bot Telegram', href: '/telegram', icon: MessageCircle },
+  { name: 'Signals', href: '/signals', icon: TrendingUp },
+  { name: 'Telegram Bot', href: '/telegram', icon: MessageCircle },
   { name: 'Risk Manager', href: '/risk-manager', icon: Calculator },
   { name: 'Trading Journal', href: '/trading-journal', icon: BookOpen },
   { name: 'Performance', href: '/performance', icon: Activity },
-  { name: 'Analyses', href: '/analytics', icon: Brain },
-  { name: 'Courtiers', href: '/brokers', icon: BarChart3 },
-  { name: 'Paramètres', href: '/settings', icon: Settings },
-  { name: 'Tarifs', href: '/pricing', icon: DollarSign }
+  { name: 'Analytics', href: '/analytics', icon: Brain },
+  { name: 'Brokers', href: '/brokers', icon: BarChart3 },
+  { name: 'Settings', href: '/settings', icon: Settings },
+  { name: 'Pricing', href: '/pricing', icon: DollarSign }
 ];
 
 export function Navigation() {
@@ -168,7 +168,7 @@ export function Navigation() {
                 <button
                   onClick={handleLogout}
                   className="flex-shrink-0 p-2 text-gray-500 hover:text-[#D4AF37] hover:bg-white/[0.03] rounded-lg transition-colors"
-                  title="Déconnexion"
+                  title="Logout"
                 >
                   <LogOut className="w-4 h-4" />
                 </button>
@@ -238,7 +238,7 @@ export function Navigation() {
                     ))
                   ) : (
                     <div className="p-6 text-center">
-                      <p className="text-xs text-gray-500 font-bold">Aucune notification</p>
+                      <p className="text-xs text-gray-500 font-bold">No notifications</p>
                     </div>
                   )}
                 </div>
@@ -270,14 +270,14 @@ export function Navigation() {
                     onClick={() => setShowUserMenu(false)}
                   >
                     <Settings className="w-4 h-4" />
-                    <span>Paramètres</span>
+                    <span>Settings</span>
                   </Link>
                   <button
                     onClick={handleLogout}
                     className="flex items-center space-x-2 px-4 py-2.5 text-xs font-bold text-red-400 hover:bg-red-500/10 w-full text-left"
                   >
                     <LogOut className="w-4 h-4" />
-                    <span>Déconnexion</span>
+                    <span>Logout</span>
                   </button>
                 </div>
               </div>
@@ -356,7 +356,7 @@ export function Navigation() {
                   className="flex items-center space-x-3 text-xs font-bold text-red-400 hover:text-red-300 w-full"
                 >
                   <LogOut className="w-4 h-4" />
-                  <span>Se déconnecter</span>
+                  <span>Logout</span>
                 </button>
               </div>
             </motion.div>

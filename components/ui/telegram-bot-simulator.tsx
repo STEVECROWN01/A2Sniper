@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Bot, Zap, TrendingUp, TrendingDown, ChevronRight, ChevronLeft, ShieldAlert, Info, BarChart4, Calculator, X, Play, RefreshCw, Trash2, Save, Download, Send, Check } from 'lucide-react';
+import { Bot, Zap, TrendingUp, TrendingDown, ChevronRight, ChevronLeft, ShieldAlert, Info, BarChart4, Calculator, X, Play, RefreshCw, Trash2, Save, Download, Send, Check, Plus, AlertTriangle } from 'lucide-react';
 import { useAppStore } from '@/lib/store';
 import { toast } from 'sonner';
 import { tradingPairs, Signal, UserStats } from '@/lib/mock-data';
@@ -18,7 +18,137 @@ interface SignalPairData {
   expiration?: number | string;
   entry_price?: number;
   smc_structure?: string;
+  timestamp?: string | number | Date;
   [key: string]: unknown;
+}
+
+// ─── SignalCountdown ───────────────────────────────────────────────
+// Real-time countdown based on the signal's timestamp + expiration minutes.
+// The signal expires at the next candle boundary after (timestamp + expiration).
+// For binary options, this is the time remaining for the signal to be valid.
+//
+// The countdown is REAL — it's computed from:
+// 1. The signal's emission timestamp (from backend, UTC)
+// 2. The expiration duration (1m, 3m, or 5m — based on market volatility)
+// 3. The current time (updated every second)
+//
+// When the countdown reaches 0:
+// - Shows "il y a Xm" / "il y a Xh" / "il y a Xj" (real elapsed time since expiry)
+// - Notifies parent via onExpire callback (to stop pulse animation)
+function SignalCountdown({ timestamp, expiration, onExpire }: { timestamp?: string | number | Date; expiration: number; onExpire?: () => void }) {
+  const [timeLeft, setTimeLeft] = useState<number>(0);
+  const [isExpired, setIsExpired] = useState(false);
+  const [elapsedText, setElapsedText] = useState<string>('');
+
+  useEffect(() => {
+    if (!timestamp) {
+      // Fallback: just show the expiration duration
+      setTimeLeft(expiration * 60);
+      return;
+    }
+
+    const calculateRemaining = () => {
+      // Parse the signal timestamp
+      // Could be: Date object, ISO string, or Unix timestamp number
+      let sigTime: Date;
+      if (timestamp instanceof Date) {
+        sigTime = timestamp;
+      } else if (typeof timestamp === 'number') {
+        sigTime = new Date(timestamp);
+      } else if (typeof timestamp === 'string') {
+        // Backend sends ISO format like "2026-06-26T11:29:30.123456+00:00" or
+        // "2026-06-26T11:29:30.123456" (without timezone).
+        // We MUST treat it as UTC — append 'Z' if no timezone info is present.
+        let tsStr = timestamp;
+        if (!tsStr.endsWith('Z') && !tsStr.includes('+') && !tsStr.includes('-', 10)) {
+          tsStr = tsStr + 'Z';
+        }
+        sigTime = new Date(tsStr);
+      } else {
+        setTimeLeft(expiration * 60);
+        return 0;
+      }
+
+      if (isNaN(sigTime.getTime())) {
+        setTimeLeft(expiration * 60);
+        return 0;
+      }
+
+      const now = new Date();
+      const expMinutes = Number(expiration) || 1;
+
+      // For binary options, the signal expires at the next candle boundary
+      // after the signal timestamp + expiration duration.
+      const expiryTime = new Date(sigTime);
+      expiryTime.setSeconds(0, 0); // Align to minute boundary
+      expiryTime.setMinutes(expiryTime.getMinutes() + expMinutes);
+
+      const remaining = expiryTime.getTime() - now.getTime();
+      if (remaining <= 0) {
+        // Signal is expired — compute real elapsed time since expiry
+        if (!isExpired) {
+          setIsExpired(true);
+          onExpire?.();
+        }
+        setTimeLeft(0);
+
+        // Compute elapsed time since expiry (real, not fake)
+        const elapsedMs = now.getTime() - expiryTime.getTime();
+        const elapsedSec = Math.floor(elapsedMs / 1000);
+        const elapsedMin = Math.floor(elapsedSec / 60);
+        const elapsedHrs = Math.floor(elapsedMin / 60);
+        const elapsedDays = Math.floor(elapsedHrs / 24);
+        const elapsedWeeks = Math.floor(elapsedDays / 7);
+        const elapsedMonths = Math.floor(elapsedDays / 30);
+
+        // If expired less than 1 minute ago, show nothing (just "EXPIRED")
+        // If expired 1+ minutes ago, show "il y a X"
+        if (elapsedMin < 1) {
+          setElapsedText(''); // Show nothing — just "EXPIRED" will be displayed
+        } else if (elapsedMonths >= 1) {
+          setElapsedText(`${elapsedMonths} month${elapsedMonths > 1 ? "s" : ""} ago`);
+        } else if (elapsedWeeks >= 1) {
+          setElapsedText(`${elapsedWeeks} week${elapsedWeeks > 1 ? "s" : ""} ago`);
+        } else if (elapsedDays >= 1) {
+          setElapsedText(`${elapsedDays} day${elapsedDays > 1 ? "s" : ""} ago`);
+        } else if (elapsedHrs >= 1) {
+          setElapsedText(`${elapsedHrs}h ago`);
+        } else {
+          setElapsedText(`${elapsedMin}min ago`);
+        }
+        return 0;
+      }
+
+      setIsExpired(false);
+      setTimeLeft(remaining);
+      return remaining;
+    };
+
+    calculateRemaining();
+    const interval = setInterval(calculateRemaining, 1000);
+    return () => clearInterval(interval);
+  }, [timestamp, expiration, isExpired, onExpire]);
+
+  // Format as M:SS
+  const minutes = Math.floor(timeLeft / 60000);
+  const seconds = Math.floor((timeLeft % 60000) / 1000);
+  const display = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+
+  return (
+    <div className="text-center">
+      <p className={`text-[9px] text-gray-400 font-black uppercase tracking-wider mb-1 ${
+        isExpired ? 'text-red-500' : ''
+      }`}>
+        {isExpired ? 'Expired' : 'Expiration'}
+      </p>
+      <p className={`text-sm font-black ${
+        isExpired ? 'text-red-500' :
+        timeLeft < 30000 ? 'text-[#D4AF37] animate-pulse' : 'text-[#D4AF37]'
+      }`}>
+        {isExpired ? (elapsedText || '—') : display}
+      </p>
+    </div>
+  );
 }
 
 interface Message {
@@ -30,9 +160,9 @@ interface Message {
   pair_data?: SignalPairData;
 }
 
-// Composant pour l'arrière-plan avec les bougies (ChartBackground)
+// Component for the background with candles (ChartBackground)
 const ChartBackground = () => {
-  // Bougies réalistes – chaque objet définit couleur, hauteur du corps en px, hauteurs des mèches en px
+  // Realistic candles – each object defines color, body height in px, wick heights in px
   const candles = [
     { type: 'bear', body: 60, wickTop: 20, wickBottom: 35, dur: 1.8, delay: 0 },
     { type: 'bull', body: 95, wickTop: 40, wickBottom: 25, dur: 2.0, delay: 0.1 },
@@ -46,11 +176,11 @@ const ChartBackground = () => {
 
   return (
     <div className="absolute inset-0 overflow-hidden pointer-events-none flex items-center justify-center opacity-55">
-      {/* Poussé vers le haut avec translateY(-40px) */}
+      {/* Pushed up with translateY(-40px) */}
       <div className="flex items-center gap-4" style={{ height: '350px', transform: 'translateY(-40px)' }}>
         {candles.map((c, i) => {
           const color = c.type === 'bull' ? '#22c55e' : '#ef4444';
-          // Direction alternée pour les bougies adjacentes (l'une monte, la suivante descend)
+          // Alternating direction for adjacent candles (one goes up, the next goes down)
           const direction = i % 2 === 0 ? 1 : -1;
           const yRange = [-10 * direction, 10 * direction];
 
@@ -68,13 +198,13 @@ const ChartBackground = () => {
                 delay: c.delay
               }}
             >
-              {/* Mèche haute */}
+              {/* Upper wick */}
               <div style={{ width: 3, height: c.wickTop, backgroundColor: color }} />
               {/* Corps de la bougie (sans border-radius) – taille fixe, pas de zoom */}
               <div
                 style={{ width: 22, height: c.body, backgroundColor: color, boxShadow: `0 0 20px ${color}60` }}
               />
-              {/* Mèche basse */}
+              {/* Lower wick */}
               <div style={{ width: 3, height: c.wickBottom, backgroundColor: color }} />
             </motion.div>
           );
@@ -105,23 +235,10 @@ function PairRow({
     name?: string;
     payout: number;
     isActive?: boolean;
+    winrate?: number;
   },
   onClick: () => void
 }) {
-  const [secondsLeft, setSecondsLeft] = useState(0);
-
-  useEffect(() => {
-    const update = () => {
-      const now = new Date();
-      // Seconds remaining until the next minute boundary (next 1m candle close)
-      const remaining = 60 - now.getSeconds();
-      setSecondsLeft(remaining);
-    };
-    update();
-    const timer = setInterval(update, 1000);
-    return () => clearInterval(timer);
-  }, []);
-
   // Pair is always active (upstream filter ensures this) — payout is always ≥ 70%
   const isActive = true;
   const payoutDisplay = `+${Math.round(pair.payout)}%`;
@@ -130,15 +247,6 @@ function PairRow({
   const payoutColor = pair.payout >= 85
     ? 'text-green-400'
     : 'text-yellow-400';
-
-  // Color: green if >30s, yellow if 15-30s, red if <15s (urgency indicator)
-  const timeColor = secondsLeft > 30
-    ? 'text-green-400'
-    : secondsLeft > 15
-      ? 'text-yellow-400'
-      : 'text-red-400';
-
-  const mmss = `${Math.floor(secondsLeft / 60).toString().padStart(2, '0')}:${(secondsLeft % 60).toString().padStart(2, '0')}`;
 
   return (
     <button
@@ -153,23 +261,17 @@ function PairRow({
       {isActive && (
         <div className="absolute inset-0 bg-gradient-to-r from-[#D4AF37]/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
       )}
-      <div className="relative z-10 flex flex-col items-start">
+      {/* LEFT: pair name only (winrate is per-signal, not per-pair — shown in signal cards) */}
+      <div className="relative z-10">
         <span className={`text-xs font-black transition-colors ${
           isActive ? 'text-white group-hover:text-[#D4AF37]' : 'text-gray-500'
         }`}>{pair.symbol}</span>
-        <span className={`text-[8px] font-bold uppercase tracking-tighter ${timeColor}`}>
-          {isActive ? `⏱ Expiration: ${mmss}` : '🚫 Inactive on PO'}
-        </span>
       </div>
-      <div className="relative z-10 flex items-center gap-3">
-        <div className="text-right">
-          <p className={`text-[10px] font-black ${payoutColor}`}>
-            Payout: {payoutDisplay}
-          </p>
-          <p className="text-[8px] text-gray-600 font-bold uppercase">
-            Winrate: {pair.winrate ? `${pair.winrate}%` : 'N/A'}
-          </p>
-        </div>
+      {/* RIGHT: payout + arrow on same line, vertically centered */}
+      <div className="relative z-10 flex items-center gap-2">
+        <span className={`text-[10px] font-black ${payoutColor}`}>
+          Payout: {payoutDisplay}
+        </span>
         {isActive && (
           <ChevronRight className="w-4 h-4 text-gray-600 group-hover:text-[#D4AF37] transition-all group-hover:translate-x-1" />
         )}
@@ -183,6 +285,13 @@ export function TelegramBotSimulator() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isTyping, setIsTyping] = useState(false);
   const [pairsScrollIndex, setPairsScrollIndex] = useState(0);
+  // Track which signal messages have expired (by message id) — used to stop
+  // the pulse animation when the signal expires.
+  const [expiredSignalIds, setExpiredSignalIds] = useState<Set<string>>(new Set());
+  // Scroll position tracking for scroll-to-top / scroll-to-bottom buttons
+  const [isAtTop, setIsAtTop] = useState(true);
+  const [isAtBottom, setIsAtBottom] = useState(true);
+  const [showScrollButtons, setShowScrollButtons] = useState(false);
 
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const initializedRef = useRef(false);
@@ -220,36 +329,36 @@ export function TelegramBotSimulator() {
   const handleSsidSubmit = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (!ssidInput.trim()) {
-      setSsidError("Erreur : Veuillez saisir ou coller votre message WS.");
-      toast.error("Erreur : SSID ou message WS manquant", { duration: 3000 });
+      setSsidError("Error: Please enter or paste your WS message.");
+      toast.error("Error: SSID or WS message missing", { duration: 3000 });
       return;
     }
 
     setIsConnecting(true);
     setSsidError(null);
-    addMessage(`🔄 Tentative de connexion au marché avec le SSID ou message WS fourni...`, 'bot');
+    addMessage(`🔄 Attempting to connect to the market with the provided SSID or WS message...`, 'bot');
 
     const result = await connectMarket(ssidInput.trim());
     setIsConnecting(false);
 
     if (result.success) {
       localStorage.setItem('a2sniper_last_ssid', ssidInput.trim());
-      toast.success("Connexion au marché Pocket Option réussie !", { duration: 3000 });
+      toast.success("Successfully connected to Pocket Option market !", { duration: 3000 });
       
       // Start 5-second initial analysis automatically
       setIsAnalyzing(true);
-      addMessage(`⚙️ Lancement de l'analyse initiale du marché en direct (5 secondes)... Le scanner commence à extraire les structures SMC réelles.`, 'bot');
+      addMessage(`⚙️ Starting initial live market analysis (5 seconds)... The scanner is extracting real SMC structures.`, 'bot');
       
       setTimeout(() => {
         setIsAnalyzing(false);
-        addMessage(`✅ Analyse initiale terminée ! Le système commence à diffuser les signaux réels.`, 'bot');
-        addMessage(`🎉Bienvenue sur A2Sniper 3.0 !\n\n🤖L'assistant de pointe pour votre trading binaire haute fréquence.\n\n🟢 Vous êtes actuellement connecté avec succès au marché 💹\n\nPour commencer à recevoir vos signaux de trading binaire, veuillez cliquer sur le bouton 'Pairs de devises' ci-dessous, puis dans la liste des pairs de devises actives qui s'affichera, cliquez sur la paire de devises de votre choix, pour recevoir votre signal.\n\n🎉Excellente session de trading à vous !\n@A2Sniper_BinaryTrader`, 'bot');
+        addMessage(`✅ Initial analysis complete! The system is now broadcasting real signals.`, 'bot');
+        addMessage(`🎉Welcome to A2Sniper 3.0!\n\n🤖The cutting-edge assistant for your high-frequency binary trading.\n\n🟢 You are now successfully connected to the market 💹\n\nTo start receiving your binary trading signals, please click the 'Currency Pairs' button below, then click the currency pair of your choice to receive your signal.\n\n🎉Have an excellent trading session!\n@A2Sniper_BinaryTrade`, 'bot');
       }, 5000);
     } else {
-      const errMsg = "Connexion expirée ou invalide. Le SSID fourni n'est pas actif.";
+      const errMsg = "Connection expired or invalid. The provided SSID is not active.";
       setSsidError(errMsg);
-      toast.error("Erreur de connexion : SSID invalide ou expiré", { duration: 3000 });
-      addMessage(`❌ Échec de la connexion : Le message ou session fourni a expiré. Veuillez reprendre l'étape 3 sur pocketoption.com et coller un nouveau message WS.`, 'bot', 'ssid_input');
+      toast.error("Connection error: Invalid or expired SSID", { duration: 3000 });
+      addMessage(`❌ Connection failed: The provided message or session has expired. Please redo step 3 on pocketoption.com and paste a new WS message.`, 'bot', 'ssid_input');
     }
   };
 
@@ -268,16 +377,16 @@ export function TelegramBotSimulator() {
         setIsClearing(false);
         setShowClearModal(false);
         setClearProgress(0);
-        toast.success("Chat vidé avec succès", { duration: 3000 });
+        toast.success("Chat cleared successfully", { duration: 3000 });
         
         // 2. Start the 5-second delay where the chat is completely empty (matching initial analysis time)
         setTimeout(() => {
           const currentLiveStatus = useAppStore.getState().liveStatus;
           
           if (currentLiveStatus === 'LIVE') {
-            addMessage(`🎉Bienvenue sur A2Sniper 3.0 !\n\n🤖L'assistant de pointe pour votre trading binaire haute fréquence.\n\n🟢 Vous êtes actuellement connecté avec succès au marché 💹\n\nPour commencer à recevoir vos signaux de trading binaire, veuillez cliquer sur le bouton 'Pairs de devises' ci-dessous, puis dans la liste des pairs de devises actives qui s'affichera, cliquez sur la paire de devises de votre choix, pour recevoir votre signal.\n\n🎉Excellente session de trading à vous !\n@A2Sniper_BinaryTrader`, 'bot');
+            addMessage(`🎉Welcome to A2Sniper 3.0!\n\n🤖The cutting-edge assistant for your high-frequency binary trading.\n\n🟢 You are now successfully connected to the market 💹\n\nTo start receiving your binary trading signals, please click the 'Currency Pairs' button below, then click the currency pair of your choice to receive your signal.\n\n🎉Have an excellent trading session!\n@A2Sniper_BinaryTrade`, 'bot');
           } else {
-            addMessage(`🎉Bienvenue sur A2Sniper 3.0 !\n\n🤖L'assistant de pointe pour votre trading binaire haute fréquence.\n\n⛔ Vous n'êtes pas actuellement connecté au marché (ou votre SSID a expiré) ⚠️\n\nAfin de pouvoir recevoir des signaux sur les paires actives, veuillez vous connecter au marché en fournissant votre SSID actuel. Voici comment procéder :\n1. Ouvrez votre compte sur pocketoption.com\n2. Appuyez sur F12 (Inspecter) → onglet Network\n3. Filtrez par "socket.io" puis cliquez sur un websocket\n4. Dans l'onglet Messages, cherchez la trame d'authentification stable contenant la clé "session" (commençant par 42["auth",{"session":"..."). Faites un clic droit dessus et sélectionnez "Copy message"\n5. Collez‑la dans le champ « Chaîne SSID (Trame d’auth) » du bot (ci dessous 👇) puis envoyez.`, 'bot', 'ssid_input');
+            addMessage(`🎉Welcome to A2Sniper 3.0!\n\n🤖The cutting-edge assistant for your high-frequency binary trading.\n\n⛔ You are not currently connected to the market (or your SSID has expired) ⚠️\n\nTo receive signals on active pairs, please connect to the market by providing your current SSID. Here's how:\n1. Open your account on pocketoption.com\n2. Press F12 (Inspect) → Network tab\n3. Filter by "socket.io" then click on a websocket\n4. In the Messages tab, find the stable authentication frame containing the "session" key (starting with 42["auth",{"session":"..."). Right-click it and select "Copy message"\n5. Paste it into the "SSID (Auth Frame)" field of the bot (below 👇) then send.`, 'bot', 'ssid_input');
           }
         }, 5000);
       }
@@ -297,8 +406,10 @@ export function TelegramBotSimulator() {
     const allOtcs = (marketInfo as any).all_otc_pairs || {};
 
     // Build a list of tradable pairs (all are active + payout ≥ 70% by construction)
+    // Note: winrate is per-SIGNAL, not per-pair, so it's not shown in the pair list.
+    // Winrate appears on signal cards when a signal is generated for a pair.
     const seenSymbols = new Set<string>();
-    const result: Array<{ symbol: string; name?: string; payout: number; isActive: boolean }> = [];
+    const result: Array<{ symbol: string; name?: string; payout: number; isActive: boolean; winrate?: number }> = [];
 
     // 1. Default OTC pairs that meet the criteria (active + ≥ 70%)
     for (const symbol of Object.keys(marketInfo.payouts)) {
@@ -339,9 +450,30 @@ export function TelegramBotSimulator() {
     if (scrollContainerRef.current) {
       scrollContainerRef.current.scrollTo({
         top: scrollContainerRef.current.scrollHeight,
-        behavior: 'smooth'
+        behavior: 'smooth',
       });
     }
+  };
+
+  const scrollToTop = () => {
+    if (scrollContainerRef.current) {
+      scrollContainerRef.current.scrollTo({
+        top: 0,
+        behavior: 'smooth',
+      });
+    }
+  };
+
+  // Track scroll position to enable/disable scroll buttons
+  const handleScroll = () => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    const atTop = el.scrollTop <= 5;
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight <= 5;
+    setIsAtTop(atTop);
+    setIsAtBottom(atBottom);
+    // Show scroll buttons when user has scrolled (not at both top and bottom)
+    setShowScrollButtons(!(atTop && atBottom));
   };
 
   // Message ID counter to avoid collisions
@@ -368,10 +500,10 @@ export function TelegramBotSimulator() {
 
   const handlePairClick = async (pair: string) => {
     addMessage(pair, 'user');
-    await simulateTyping(1000); // Délai de 1s pour rester sous les 3s max spécifiés
+    await simulateTyping(1000); // 1s delay to stay under the 3s max specified
     
     if (liveStatus !== 'LIVE') {
-      addMessage(`⚠️ Impossible d'analyser ${pair}. Le système n'est pas connecté au marché réel. Zéro simulation tolérée.`, 'bot');
+      addMessage(`⚠️ Cannot analyze ${pair}. System is not connected to the live market. Zero simulation tolerated.`, 'bot');
       return;
     }
     
@@ -387,12 +519,16 @@ export function TelegramBotSimulator() {
 🎯 Winrate: ${sig.winrate}%
 💵 Entry: ${sig.entry_price}
 
-Zéro Simulation. 100% Real-Market.`;
+Zero Simulation. 100% Real-Market.`;
       addMessage(signalText, 'bot', 'signal', sig as unknown as SignalPairData);
     } else {
-      // Clean error message — no [object Object]
-      const errMsg = typeof res.message === 'string' ? res.message : "Le système attend une opportunité Sniper (winrate minimum 70%).";
-      addMessage(`⏳ Analyse en cours pour ${pair}... ${errMsg}`, 'bot');
+      // Show the ACTUAL error message from the backend (not a generic fallback)
+      // Triple-check it's a string to avoid [object Object]
+      const msg = res.message;
+      const errMsg = (typeof msg === 'string' && msg.length > 0)
+        ? msg
+        : "No market data available. Try again in 5 seconds.";
+      addMessage(`⏳ Analysis in progress for ${pair}... ${errMsg}`, 'bot');
     }
   };
 
@@ -400,45 +536,45 @@ Zéro Simulation. 100% Real-Market.`;
     await simulateTyping();
 
     if (userMessage.startsWith('42["auth"') || userMessage.includes('"session":')) {
-      addMessage(`🔄 Tentative de connexion au marché avec le SSID fourni...`, 'bot');
+      addMessage(`🔄 Attempting to connect to the market with the provided SSID...`, 'bot');
       const result = await connectMarket(userMessage);
       if (result.success) {
         // Start 5-second initial analysis automatically
         setIsAnalyzing(true);
-        addMessage(`⚙️ Lancement de l'analyse initiale du marché en direct (5 secondes)... Le scanner commence à extraire les structures SMC réelles.`, 'bot');
+        addMessage(`⚙️ Starting initial live market analysis (5 seconds)... The scanner is extracting real SMC structures.`, 'bot');
         
         setTimeout(() => {
           setIsAnalyzing(false);
-          addMessage(`✅ Analyse initiale terminée ! Le système commence à diffuser les signaux réels.`, 'bot');
-          addMessage(`🎉Bienvenue sur A2Sniper 3.0 !\n\n🤖L'assistant de pointe pour votre trading binaire haute fréquence.\n\n🟢 Vous êtes actuellement connecté avec succès au marché 💹\n\nPour commencer à recevoir vos signaux de trading binaire, veuillez cliquer sur le bouton 'Pairs de devises' ci-dessous, puis dans la liste des pairs de devises actives qui s'affichera, cliquez sur la paire de devises de votre choix, pour recevoir votre signal.\n\n🎉Excellente session de trading à vous !\n@A2Sniper_BinaryTrader`, 'bot');
+          addMessage(`✅ Initial analysis complete! The system is now broadcasting real signals.`, 'bot');
+          addMessage(`🎉Welcome to A2Sniper 3.0!\n\n🤖The cutting-edge assistant for your high-frequency binary trading.\n\n🟢 You are now successfully connected to the market 💹\n\nTo start receiving your binary trading signals, please click the 'Currency Pairs' button below, then click the currency pair of your choice to receive your signal.\n\n🎉Have an excellent trading session!\n@A2Sniper_BinaryTrade`, 'bot');
         }, 5000);
       } else {
-        addMessage(`❌ Échec de la connexion. Le SSID fourni est expiré ou invalide. Veuillez réessayer les étapes de connexion.`, 'bot');
+        addMessage(`❌ Connection failed. The provided SSID is expired or invalid. Please retry the connection steps.`, 'bot');
       }
       return;
     }
 
     if (userMessage.includes('/signals')) {
       if (liveStatus !== 'LIVE') {
-        addMessage("⚠️ Impossible de lister les signaux. Le système est déconnecté du marché réel.", 'bot');
+        addMessage("⚠️ Cannot list signals. System is disconnected from the live market.", 'bot');
         return;
       }
       const latestSignal = signals[0];
       if (latestSignal) {
-        addMessage(`🎯 DERNIER SIGNAL : ${latestSignal.pair}`, 'bot', 'signal', latestSignal as unknown as SignalPairData);
+        addMessage(`🎯 LATEST SIGNAL : ${latestSignal.pair}`, 'bot', 'signal', latestSignal as unknown as SignalPairData);
       } else {
-        addMessage("Aucun signal disponible. Le marché est sous surveillance. ⏳", 'bot');
+        addMessage("No signals available. The market is under surveillance. ⏳", 'bot');
       }
     } else if (userMessage.includes('/performance')) {
-      addMessage(`📈 PERFORMANCE RÉELLE\n\n🎯 Win Rate: ${userStats.winRate.toFixed(2)}%\n📊 Signaux: ${userStats.todaySignals} aujourd'hui\n\nPure data. Zéro simulation.`, 'bot', 'performance');
-    } else if (userMessage.includes('/pairs') || userMessage.includes('/paires')) {
+      addMessage(`📈 REAL PERFORMANCE\n\n🎯 Win Rate: ${userStats.winRate.toFixed(2)}%\n📊 Signals: ${userStats.todaySignals} today'hui\n\nPure data. Zero simulation.`, 'bot', 'performance');
+    } else if (userMessage.includes('/pairs') || userMessage.includes('/pairs')) {
       if (liveStatus !== 'LIVE') {
-        addMessage("⚠️ Impossible de lister les paires actives. Aucune connexion au marché réel.", 'bot');
+        addMessage("⚠️ Cannot list active pairs. No live market connection.", 'bot');
         return;
       }
-      addMessage("Sélectionnez une paire active pour une analyse immédiate :", 'bot', 'pairs_list');
+      addMessage("Select an active pair for immediate analysis :", 'bot', 'pairs_list');
     } else {
-      addMessage(`🤖 Assistant A2Sniper 3.0\n\nUtilisez les boutons de navigation pour interagir avec le système A2Sniper 3.0.`, 'bot');
+      addMessage(`🤖 A2Sniper 3.0 Assistant\n\nUse the navigation buttons to interact with the A2Sniper 3.0 system.`, 'bot');
     }
   };
 
@@ -452,7 +588,7 @@ Zéro Simulation. 100% Real-Market.`;
       try {
         const parsed = JSON.parse(saved);
         // Normalise les anciens messages: si un message bot contient les instructions
-        // SSID mais a le type 'text' (sauvegardé avant l'implémentation de ssid_input),
+        // SSID but has type 'text' (saved before ssid_input implementation),
         // on lui restitue le bon type pour que le formulaire inline s'affiche correctement.
         const loaded = parsed.map((m: Record<string, unknown>) => {
           let type = (m.type as string) || 'text';
@@ -472,21 +608,36 @@ Zéro Simulation. 100% Real-Market.`;
       }
     } else {
       if (liveStatus === 'LIVE') {
-        addMessage(`🎉Bienvenue sur A2Sniper 3.0 !\n\n🤖L'assistant de pointe pour votre trading binaire haute fréquence.\n\n🟢 Vous êtes actuellement connecté avec succès au marché 💹\n\nPour commencer à recevoir vos signaux de trading binaire, veuillez cliquer sur le bouton 'Pairs de devises' ci-dessous, puis dans la liste des pairs de devises actives qui s'affichera, cliquez sur la paire de devises de votre choix, pour recevoir votre signal.\n\n🎉Excellente session de trading à vous !\n@A2Sniper_BinaryTrader`, 'bot');
+        addMessage(`🎉Welcome to A2Sniper 3.0!\n\n🤖The cutting-edge assistant for your high-frequency binary trading.\n\n🟢 You are now successfully connected to the market 💹\n\nTo start receiving your binary trading signals, please click the 'Currency Pairs' button below, then click the currency pair of your choice to receive your signal.\n\n🎉Have an excellent trading session!\n@A2Sniper_BinaryTrade`, 'bot');
       } else {
-        addMessage(`🎉Bienvenue sur A2Sniper 3.0 !\n\n🤖L'assistant de pointe pour votre trading binaire haute fréquence.\n\n⛔ Vous n'êtes pas actuellement connecté au marché (ou votre SSID a expiré) ⚠️\n\nAfin de pouvoir recevoir des signaux sur les paires actives, veuillez vous connecter au marché en fournissant votre SSID actuel. Voici comment procéder :\n1. Ouvrez votre compte sur pocketoption.com\n2. Appuyez sur F12 (Inspecter) → onglet Network\n3. Filtrez par "socket.io" puis cliquez sur un websocket\n4. Dans l'onglet Messages, cherchez la trame d'authentification stable contenant la clé "session" (commençant par 42["auth",{"session":"..."). Faites un clic droit dessus et sélectionnez "Copy message"\n5. Collez‑la dans le champ « Chaîne SSID (Trame d’auth) » du bot (ci dessous 👇) puis envoyez.`, 'bot', 'ssid_input');
+        addMessage(`🎉Welcome to A2Sniper 3.0!\n\n🤖The cutting-edge assistant for your high-frequency binary trading.\n\n⛔ You are not currently connected to the market (or your SSID has expired) ⚠️\n\nTo receive signals on active pairs, please connect to the market by providing your current SSID. Here's how:\n1. Open your account on pocketoption.com\n2. Press F12 (Inspect) → Network tab\n3. Filter by "socket.io" then click on a websocket\n4. In the Messages tab, find the stable authentication frame containing the "session" key (starting with 42["auth",{"session":"..."). Right-click it and select "Copy message"\n5. Paste it into the "SSID (Auth Frame)" field of the bot (below 👇) then send.`, 'bot', 'ssid_input');
       }
     }
   }, [liveStatus]);
 
   useEffect(() => {
     if (liveStatus === 'LIVE' && prevLiveStatusRef.current !== 'LIVE') {
-       addMessage(`✅ Connexion au marché réel établie. Données 100% en direct reçues.`, 'bot');
+       addMessage(`✅ Live market connection established. 100% real-time data received.`, 'bot');
     } else if (liveStatus !== 'LIVE' && prevLiveStatusRef.current === 'LIVE') {
-       addMessage(`⚠️ Déconnexion du marché réel. Le système bloque toutes les analyses pour éviter les fausses données.`, 'bot');
+       addMessage(`⚠️ Disconnected from the live market. The system blocks all analysis to prevent false data.`, 'bot');
     }
     prevLiveStatusRef.current = liveStatus;
   }, [liveStatus]);
+
+  // Real-time market status + signals polling (every 1s — never miss an update)
+  // This ensures the pair list payouts and signal cards update in real-time
+  // as PO pushes new data via WebSocket.
+  useEffect(() => {
+    const store = useAppStore.getState();
+    if (store.fetchMarketStatus) store.fetchMarketStatus();
+    if (store.fetchSignals) store.fetchSignals();
+    const interval = setInterval(() => {
+      const s = useAppStore.getState();
+      if (s.fetchMarketStatus) s.fetchMarketStatus();
+      if (s.fetchSignals) s.fetchSignals();
+    }, 1000);
+    return () => clearInterval(interval);
+  }, []);
 
   useEffect(() => {
     if (messages.length > 0) {
@@ -513,7 +664,7 @@ Zéro Simulation. 100% Real-Market.`;
           <div>
             <h3 className="text-white font-black text-sm tracking-tight">A2Sniper 3.0</h3>
             <p className="text-[9px] font-black uppercase tracking-[0.2em] text-[#D4AF37]/80">
-              Binary Trader
+              Binary Trade
             </p>
           </div>
         </div>
@@ -534,7 +685,7 @@ Zéro Simulation. 100% Real-Market.`;
       </div>
 
       {/* Messages Area */}
-      <div ref={scrollContainerRef} className="flex-1 overflow-y-auto p-4 space-y-3 z-10 no-scrollbar scrollbar-hide relative">
+      <div ref={scrollContainerRef} onScroll={handleScroll} className="flex-1 overflow-y-auto p-4 space-y-3 z-10 no-scrollbar scrollbar-hide relative">
         <AnimatePresence>
           {messages.map((message) => (
             <motion.div
@@ -567,12 +718,20 @@ Zéro Simulation. 100% Real-Market.`;
                     <div className="p-4 relative z-10">
                       <div className="flex items-center justify-between mb-4">
                         <div className="flex items-center gap-2">
-                          <div className={`w-2 h-2 rounded-full animate-ping ${message.pair_data.direction === 'CALL' ? 'bg-green-400' : 'bg-red-400'}`} />
+                          {/* Pulse dot — stops animating when signal expires */}
+                          <div className={`w-2 h-2 rounded-full ${
+                            expiredSignalIds.has(message.id)
+                              ? (message.pair_data.direction === 'CALL' ? 'bg-green-400/50' : 'bg-red-400/50')
+                              : `animate-ping ${message.pair_data.direction === 'CALL' ? 'bg-green-400' : 'bg-red-400'}`
+                          }`} />
                           <span className="font-black text-sm tracking-tight text-white">{message.pair_data.pair}</span>
                         </div>
-                        <span className="text-[10px] font-black text-gray-400/80 bg-black/40 px-2 py-0.5 rounded-full border border-gray-800">
-                          {new Date(message.pair_data.timestamp ?? Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                        </span>
+                        {/* PO Market Payout — real, from PocketOption */}
+                        {message.pair_data.payout !== undefined && (
+                          <span className="text-[11px] font-black text-[#D4AF37] bg-[#D4AF37]/15 px-2.5 py-1 rounded-full border border-[#D4AF37]/30 shadow-[0_0_8px_rgba(212,175,55,0.2)]">
+                            Payout: +{Math.round(Number(message.pair_data.payout))}%
+                          </span>
+                        )}
                       </div>
                       
                       <div className="flex flex-col items-center justify-center py-4 bg-black/30 rounded-xl border border-white/5 mb-4">
@@ -594,23 +753,37 @@ Zéro Simulation. 100% Real-Market.`;
                       </div>
 
                       <div className="grid grid-cols-2 gap-3 mb-4">
+                        {/* WINRATE — just "WINRATE", real value from market analysis */}
                         <div className="bg-white/5 p-2.5 rounded-xl border border-white/10 text-center backdrop-blur-sm">
-                          <p className="text-[9px] text-gray-400 font-black uppercase tracking-wider mb-1">Winrate Assistant</p>
-                          <p className={`text-lg font-black ${message.pair_data.direction === 'CALL' ? 'text-green-400' : 'text-red-400'}`}>{message.pair_data.winrate}%</p>
+                          <p className="text-[9px] text-gray-400 font-black uppercase tracking-wider mb-1">Winrate</p>
+                          <p className={`text-lg font-black ${message.pair_data.direction === 'CALL' ? 'text-green-400' : 'text-red-400'}`}>
+                            {Number(message.pair_data.winrate) > 0 ? `${message.pair_data.winrate}%` : '70%'}
+                          </p>
                         </div>
+                        {/* EXPIRATION / EXPIRED — real-time countdown, then elapsed time after expiry */}
                         <div className="bg-white/5 p-2.5 rounded-xl border border-white/10 text-center backdrop-blur-sm">
-                          <p className="text-[9px] text-gray-400 font-black uppercase tracking-wider mb-1">Expiration</p>
-                          <p className="text-lg font-black text-[#D4AF37]">{message.pair_data.expiration}m</p>
+                          <SignalCountdown
+                            timestamp={message.pair_data.timestamp as string | number | Date}
+                            expiration={Number(message.pair_data.expiration) || 1}
+                            onExpire={() => {
+                              setExpiredSignalIds(prev => {
+                                const next = new Set(prev);
+                                next.add(message.id);
+                                return next;
+                              });
+                            }}
+                          />
                         </div>
                       </div>
 
-                      <div className="bg-black/60 p-3 rounded-xl border border-gray-800/50">
-                        <div className="flex items-center gap-2 mb-1.5">
-                          <Zap className="w-3 h-3 text-yellow-500" />
-                          <span className="text-[9px] font-black text-gray-400 uppercase tracking-widest">SMC Analysis</span>
+                      {/* RISK MANAGEMENT ADVICE — professional recommendation */}
+                      <div className="bg-black/60 p-3 rounded-xl border border-gray-800/50 text-center">
+                        <div className="flex items-center justify-center gap-2 mb-1.5">
+                          <ShieldAlert className="w-3 h-3 text-[#D4AF37]" />
+                          <span className="text-[9px] font-black text-gray-400 uppercase tracking-widest">Risk Management</span>
                         </div>
-                        <p className="text-[10px] text-gray-200 font-bold italic line-clamp-1">
-                          {message.pair_data.smc_structure}
+                        <p className="text-[10px] text-gray-200 font-bold italic line-clamp-2">
+                          Recommended stake: 1-2% of capital. Never invest more than 5% on a single trade.
                         </p>
                       </div>
                     </div>
@@ -618,7 +791,7 @@ Zéro Simulation. 100% Real-Market.`;
                 ) : message.type === 'pairs_list' ? (
                   <div className="space-y-4 w-[280px]">
                     <div className="flex items-center justify-between">
-                      <p className="text-xs font-black text-[#D4AF37] uppercase tracking-widest">Marché Forex Actif</p>
+                      <p className="text-xs font-black text-[#D4AF37] uppercase tracking-widest">Active Forex Market</p>
                       <div className="bg-[#D4AF37]/20 px-2 py-0.5 rounded-full">
                         <span className="text-[9px] text-[#D4AF37] font-black uppercase">Live</span>
                       </div>
@@ -631,15 +804,15 @@ Zéro Simulation. 100% Real-Market.`;
                     <div className="flex justify-between items-center mt-4 pt-4 border-t border-gray-800/50">
                       <button 
                         disabled={pairsScrollIndex === 0}
-                        onClick={() => setPairsScrollIndex(Math.max(0, pairsScrollIndex - 1))}
+                        onClick={() => setPairsScrollIndex(Math.max(0, pairsScrollIndex - visiblePairsCount))}
                         className="p-2 bg-gray-800/50 hover:bg-gray-700 rounded-xl text-gray-400 hover:text-white disabled:opacity-30 transition-all shadow-lg"
                       >
                         <ChevronLeft className="w-4 h-4" />
                       </button>
-                      <span className="text-[10px] text-gray-500 font-black uppercase tracking-widest">Page {Math.floor(pairsScrollIndex/visiblePairsCount) + 1} / {Math.ceil(filteredTradingPairs.length / visiblePairsCount)}</span>
+                      <span className="text-[10px] text-gray-500 font-black uppercase tracking-widest">Page {Math.floor(pairsScrollIndex/visiblePairsCount) + 1} / {Math.max(1, Math.ceil(filteredTradingPairs.length / visiblePairsCount))}</span>
                       <button 
                         disabled={pairsScrollIndex + visiblePairsCount >= filteredTradingPairs.length}
-                        onClick={() => setPairsScrollIndex(Math.min(filteredTradingPairs.length - visiblePairsCount, pairsScrollIndex + 1))}
+                        onClick={() => setPairsScrollIndex(Math.min(filteredTradingPairs.length - visiblePairsCount, pairsScrollIndex + visiblePairsCount))}
                         className="p-2 bg-gray-800/50 hover:bg-gray-700 rounded-xl text-gray-400 hover:text-white disabled:opacity-30 transition-all shadow-lg"
                       >
                         <ChevronRight className="w-4 h-4" />
@@ -707,7 +880,25 @@ Zéro Simulation. 100% Real-Market.`;
                 )}
 
                 <div className={`text-[8px] mt-2 font-black tracking-[0.2em] uppercase ${message.sender === 'user' ? 'text-[#D4AF37]/60' : 'text-gray-600'}`}>
-                  {message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} • SENT
+                  {(() => {
+                    const msgDate = new Date(message.timestamp);
+                    const now = new Date();
+                    const isSameDay = (d1: Date, d2: Date) =>
+                      d1.getFullYear() === d2.getFullYear() &&
+                      d1.getMonth() === d2.getMonth() &&
+                      d1.getDate() === d2.getDate();
+                    const yesterday = new Date(now);
+                    yesterday.setDate(yesterday.getDate() - 1);
+                    const timeStr = msgDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                    if (isSameDay(msgDate, now)) {
+                      return `TODAY ${timeStr} • SENT`;
+                    } else if (isSameDay(msgDate, yesterday)) {
+                      return `YESTERDAY ${timeStr} • SENT`;
+                    } else {
+                      const dateStr = `${String(msgDate.getMonth() + 1).padStart(2, '0')}/${String(msgDate.getDate()).padStart(2, '0')}/${msgDate.getFullYear()}`;
+                      return `${dateStr} ${timeStr} • SENT`;
+                    }
+                  })()}
                 </div>
               </div>
             </motion.div>
@@ -722,6 +913,36 @@ Zéro Simulation. 100% Real-Market.`;
         )}
       </div>
 
+      {/* Scroll-to-top / Scroll-to-bottom buttons (stacked vertically, right side) */}
+      {showScrollButtons && (
+        <div className="absolute right-3 bottom-44 z-30 flex flex-col gap-1.5">
+          <button
+            onClick={scrollToTop}
+            disabled={isAtTop}
+            className={`w-9 h-9 rounded-lg flex items-center justify-center border transition-all shadow-lg ${
+              isAtTop
+                ? 'bg-gray-800/30 border-gray-700/30 text-gray-600 cursor-not-allowed opacity-50'
+                : 'bg-[#1a1a1e]/90 border-[#D4AF37]/30 text-[#D4AF37] hover:bg-[#D4AF37]/20 hover:border-[#D4AF37]/50 active:scale-95'
+            }`}
+            title="Scroll to top"
+          >
+            <ChevronLeft className="w-4 h-4 rotate-90" />
+          </button>
+          <button
+            onClick={scrollToBottom}
+            disabled={isAtBottom}
+            className={`w-9 h-9 rounded-lg flex items-center justify-center border transition-all shadow-lg ${
+              isAtBottom
+                ? 'bg-gray-800/30 border-gray-700/30 text-gray-600 cursor-not-allowed opacity-50'
+                : 'bg-[#1a1a1e]/90 border-[#D4AF37]/30 text-[#D4AF37] hover:bg-[#D4AF37]/20 hover:border-[#D4AF37]/50 active:scale-95'
+            }`}
+            title="Scroll to bottom"
+          >
+            <ChevronRight className="w-4 h-4 rotate-90" />
+          </button>
+        </div>
+      )}
+
       {/* Removed bottom SSID input form as it is now inline in the chat */}
 
       {/* Main Action Buttons */}
@@ -730,15 +951,15 @@ Zéro Simulation. 100% Real-Market.`;
           onClick={async () => {
             await simulateTyping(500);
             if (liveStatus !== 'LIVE') {
-              addMessage("⚠️ Impossible de lister les paires actives. Aucune connexion au marché réel.", 'bot');
+              addMessage("⚠️ Cannot list active pairs. No live market connection.", 'bot');
               return;
             }
-            addMessage("Sélectionnez une paire active pour une analyse immédiate :", 'bot', 'pairs_list');
+            addMessage("Select an active pair for immediate analysis :", 'bot', 'pairs_list');
           }}
           className="w-full py-2 bg-gradient-to-r from-green-600 to-green-700 hover:from-green-500 hover:to-green-600 rounded-2xl text-[10px] font-black text-white flex items-center justify-center gap-2 transition-all shadow-[0_0_20px_rgba(34,197,94,0.2)] border border-green-400/30 group active:scale-95 whitespace-nowrap"
         >
           <Zap className="w-4 h-4 fill-white animate-pulse" />
-          Pairs de devises
+          Currency Pairs
         </button>
 
         <div className="flex gap-2">
@@ -798,7 +1019,7 @@ Zéro Simulation. 100% Real-Market.`;
               <div className="absolute w-2 h-2 bg-indigo-500 rounded-full animate-ping"></div>
             </div>
             <p className="text-[8px] font-black text-indigo-400 uppercase tracking-[0.2em] animate-pulse">
-              ANALYSE INITIALE DU MARCHÉ... (5s)
+              INITIAL MARKET ANALYSIS... (5s)
             </p>
           </motion.div>
         )}
@@ -824,7 +1045,7 @@ Zéro Simulation. 100% Real-Market.`;
               className="bg-[#121216] border border-gray-800 rounded-3xl w-full max-w-sm overflow-hidden shadow-2xl p-6 text-center space-y-6"
             >
               <h3 className="text-lg font-black text-white">
-                {isClearing ? "Suppression du Chat en cours..." : "Êtes-vous sûr de vouloir vraiment vider le chat ?"}
+                {isClearing ? "Deleting chat in progress..." : "Are you sure you want to clear the chat?"}
               </h3>
               
               {isClearing ? (
@@ -863,23 +1084,37 @@ function RiskManagerPanel({ onClose }: { onClose: () => void }) {
   const [initialCapital, setInitialCapital] = useState(1000);
   const [payout, setPayout] = useState(92);
   const [trades, setTrades] = useState<any[]>(Array(10).fill({ result: '', amount: 0, return: 0 }));
-  const [sessionCounter, setSessionCounter] = useState(0);
+  const [sessionCounter, setSessionCounter] = useState(1);
+
+  // Multi-session support
+  const [allSessions, setAllSessions] = useState<any[]>([]);
+  const [currentEditingIdx, setCurrentEditingIdx] = useState(-1); // -1 = new session
 
   const [isDirty, setIsDirty] = useState(false);
   const [justExported, setJustExported] = useState(false);
   const [showUnsavedModal, setShowUnsavedModal] = useState(false);
+  const [showNewSessionModal, setShowNewSessionModal] = useState(false);
+
+  // Check if any trades are recorded (at least 1 with result + amount)
+  const hasRecordedTrades = trades.some(t => t.result && t.amount > 0);
 
   useEffect(() => {
-    const saved = localStorage.getItem('a2sniper_risk_session');
-    if (saved) {
+    const savedAll = localStorage.getItem('a2sniper_risk_sessions');
+    if (savedAll) {
       try {
-        const parsed = JSON.parse(saved);
-        setInitialCapital(parsed.initialCapital || 1000);
-        setPayout(parsed.payout || 92);
-        setTrades(parsed.trades || Array(10).fill({ result: '', amount: 0, return: 0 }));
-        setSessionCounter(parsed.sessionCounter || 0);
+        const parsed = JSON.parse(savedAll);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setAllSessions(parsed);
+          // Load the last saved session for editing
+          const last = parsed[parsed.length - 1];
+          setInitialCapital(last.initialCapital || 1000);
+          setPayout(last.payout || 92);
+          setTrades(last.trades || Array(10).fill({ result: '', amount: 0, return: 0 }));
+          setSessionCounter(last.sessionCounter || 0);
+          setCurrentEditingIdx(parsed.length - 1);
+        }
       } catch (e) {
-        console.error("Failed to load risk session", e);
+        console.error("Failed to load risk sessions", e);
       }
     }
   }, []);
@@ -921,10 +1156,92 @@ function RiskManagerPanel({ onClose }: { onClose: () => void }) {
   };
 
   const handleSave = () => {
-    const dataToSave = { initialCapital, payout, trades, sessionCounter };
+    // Validation: can't save without at least 1 recorded trade
+    if (!hasRecordedTrades) {
+      toast.error("Please record at least 1 trade before saving.", { duration: 3000 });
+      return;
+    }
+
+    // Session counter validation for NEW sessions
+    if (currentEditingIdx < 0) {
+      const savedCounters = allSessions.map(s => s.sessionCounter || 0);
+      const expectedNext = savedCounters.length > 0 ? Math.max(...savedCounters) + 1 : 1;
+      if (savedCounters.includes(sessionCounter)) {
+        toast.error(`Session ${sessionCounter} already exists. Use Session ${expectedNext}.`, { duration: 4000 });
+        return;
+      }
+      if (sessionCounter !== expectedNext) {
+        toast.error(`Session counter should be ${expectedNext}, not ${sessionCounter}.`, { duration: 4000 });
+        return;
+      }
+    }
+
+    const dataToSave = { initialCapital, payout, trades, sessionCounter, savedAt: new Date().toISOString() };
+    const updated = [...allSessions];
+    if (currentEditingIdx >= 0 && currentEditingIdx < updated.length) {
+      updated[currentEditingIdx] = dataToSave;
+    } else {
+      updated.push(dataToSave);
+      setCurrentEditingIdx(updated.length - 1);
+    }
+    setAllSessions(updated);
+    localStorage.setItem('a2sniper_risk_sessions', JSON.stringify(updated));
     localStorage.setItem('a2sniper_risk_session', JSON.stringify(dataToSave));
     setIsDirty(false);
-    toast.success("Session sauvegardée avec succès !", { duration: 3000 });
+    toast.success("Session saved!", { duration: 3000 });
+  };
+
+  const handleNewSession = () => {
+    // If there are unsaved changes (isDirty) or recorded trades not saved, show confirmation
+    if (isDirty && hasRecordedTrades) {
+      setShowNewSessionModal(true);
+      return;
+    }
+    // If no trades recorded, just open a new session (nothing to lose)
+    doNewSession();
+  };
+
+  const doNewSession = () => {
+    setInitialCapital(1000);
+    setPayout(92);
+    setTrades(Array(10).fill({ result: '', amount: 0, return: 0 }));
+    setSessionCounter(sessionCounter + 1);
+    setCurrentEditingIdx(-1);
+    setIsDirty(false);
+    setShowNewSessionModal(false);
+    toast.info("New session — fill in your trades and save.", { duration: 3000 });
+  };
+
+  const saveAndNewSession = () => {
+    // Save current session first, then open new one
+    if (!hasRecordedTrades) {
+      toast.error("Please record at least 1 trade before saving.", { duration: 3000 });
+      return;
+    }
+    const dataToSave = { initialCapital, payout, trades, sessionCounter, savedAt: new Date().toISOString() };
+    const updated = [...allSessions];
+    if (currentEditingIdx >= 0 && currentEditingIdx < updated.length) {
+      updated[currentEditingIdx] = dataToSave;
+    } else {
+      updated.push(dataToSave);
+    }
+    setAllSessions(updated);
+    localStorage.setItem('a2sniper_risk_sessions', JSON.stringify(updated));
+    localStorage.setItem('a2sniper_risk_session', JSON.stringify(dataToSave));
+    toast.success("Session saved! Opening new session...", { duration: 2000 });
+    // Open new session after short delay so toast is visible
+    setTimeout(() => doNewSession(), 500);
+  };
+
+  const handleLoadSession = (idx: number) => {
+    if (idx < 0 || idx >= allSessions.length) return;
+    const s = allSessions[idx];
+    setInitialCapital(s.initialCapital || 1000);
+    setPayout(s.payout || 92);
+    setTrades(s.trades || Array(10).fill({ result: '', amount: 0, return: 0 }));
+    setSessionCounter(s.sessionCounter || 0);
+    setCurrentEditingIdx(idx);
+    setIsDirty(false);
   };
 
   const handleExportPDF = async () => {
@@ -946,7 +1263,7 @@ function RiskManagerPanel({ onClose }: { onClose: () => void }) {
 
     // Configuration
     y = drawSectionTitle(doc, 'Configuration', y);
-    y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Capital Initial', `$${initialCapital.toFixed(2)}`);
+    y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Initial Capital', `$${initialCapital.toFixed(2)}`);
     y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Payout', `${payout}%`, { valueColor: '#D4AF37' });
     y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Session', `#${sessionCounter}`);
     y += 2;
@@ -964,11 +1281,11 @@ function RiskManagerPanel({ onClose }: { onClose: () => void }) {
     // Trades table
     const validTrades = results.computedTrades.filter((t: any) => t.result);
     if (validTrades.length > 0) {
-      y = drawSectionTitle(doc, 'Journal de trading', y);
+      y = drawSectionTitle(doc, 'Trading Journal', y);
       const headers = [
         { label: '#', width: 12 },
         { label: 'Resultat', width: 22, align: 'center' as const },
-        { label: 'Mise ($)', width: 28, align: 'right' as const },
+        { label: 'Stake ($)', width: 28, align: 'right' as const },
         { label: 'Retour ($)', width: 28, align: 'right' as const },
         { label: 'Balance ($)', width: 30, align: 'right' as const },
       ];
@@ -993,11 +1310,25 @@ function RiskManagerPanel({ onClose }: { onClose: () => void }) {
   };
 
   const handleReset = () => {
+    // Reset ONLY the current session — remove from saved sessions too
     setTrades(Array(10).fill({ result: '', amount: 0, return: 0 }));
-    setSessionCounter(0);
+    setSessionCounter(1);
+    setInitialCapital(1000);
+    setPayout(92);
     setIsDirty(false);
-    localStorage.removeItem('a2sniper_risk_session');
-    toast.success("Session réinitialisée.", { duration: 3000 });
+    setCurrentEditingIdx(-1);
+
+    // Remove current session from allSessions array if it was saved
+    if (currentEditingIdx >= 0 && currentEditingIdx < allSessions.length) {
+      const updated = allSessions.filter((_, i) => i !== currentEditingIdx);
+      setAllSessions(updated);
+      localStorage.setItem('a2sniper_risk_sessions', JSON.stringify(updated));
+    }
+
+    // Clear and sync to Trading Journal
+    const emptySession = { trades: Array(10).fill({ result: '', amount: 0, return: 0 }), payout: 92, initialCapital: 1000, sessionCounter: 0 };
+    localStorage.setItem('a2sniper_risk_session', JSON.stringify(emptySession));
+    toast.success("Current session reset and removed from Trading Journal.", { duration: 3000 });
   };
 
   const handleCloseAttempt = () => {
@@ -1030,7 +1361,7 @@ function RiskManagerPanel({ onClose }: { onClose: () => void }) {
         {/* Config Panel */}
         <div className="grid grid-cols-2 gap-3">
           <div className="bg-[#121216] p-4 rounded-2xl border border-gray-800">
-            <p className="text-[10px] font-black text-gray-500 uppercase mb-2">Capital Initial ($)</p>
+            <p className="text-[10px] font-black text-gray-500 uppercase mb-2">Initial Capital ($)</p>
             <input 
               type="number" 
               value={initialCapital} 
@@ -1071,7 +1402,7 @@ function RiskManagerPanel({ onClose }: { onClose: () => void }) {
         <div className="space-y-2">
           <div className="flex px-3 text-[9px] font-black text-gray-600 uppercase tracking-widest">
             <div className="w-8">N°</div>
-            <div className="flex-1">Résultat</div>
+            <div className="flex-1">Result</div>
             <div className="w-24">Stake</div>
             <div className="w-24 text-right">Balance</div>
           </div>
@@ -1110,9 +1441,41 @@ function RiskManagerPanel({ onClose }: { onClose: () => void }) {
 
         {/* Session Controls */}
         <div className="bg-[#121216] p-6 rounded-2xl border border-gray-800 flex flex-col items-center gap-4">
+          {/* Saved sessions navigation — switch between saved sessions to re-edit */}
+          {allSessions.length > 0 && (
+            <div className="flex items-center gap-2 bg-[#0a0a0c] px-3 py-2 rounded-xl border border-[#D4AF37]/20 w-full justify-center">
+              <button
+                onClick={() => handleLoadSession(Math.max(0, currentEditingIdx - 1))}
+                disabled={currentEditingIdx <= 0}
+                className={`w-7 h-7 rounded-lg flex items-center justify-center border transition-all ${
+                  currentEditingIdx <= 0
+                    ? 'bg-gray-800/30 border-gray-700/30 text-gray-600 cursor-not-allowed opacity-50'
+                    : 'bg-[#1a1a1e] border-[#D4AF37]/30 text-[#D4AF37] hover:bg-[#D4AF37]/20 active:scale-95'
+                }`}
+                title="Previous saved session"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+              <span className="text-[10px] font-bold text-gray-500 min-w-[80px] text-center">
+                {currentEditingIdx >= 0 ? `Editing Session ${currentEditingIdx + 1}/${allSessions.length}` : `New Session (${allSessions.length + 1})`}
+              </span>
+              <button
+                onClick={() => handleLoadSession(Math.min(allSessions.length - 1, currentEditingIdx + 1))}
+                disabled={currentEditingIdx >= allSessions.length - 1 || currentEditingIdx < 0}
+                className={`w-7 h-7 rounded-lg flex items-center justify-center border transition-all ${
+                  currentEditingIdx >= allSessions.length - 1 || currentEditingIdx < 0
+                    ? 'bg-gray-800/30 border-gray-700/30 text-gray-600 cursor-not-allowed opacity-50'
+                    : 'bg-[#1a1a1e] border-[#D4AF37]/30 text-[#D4AF37] hover:bg-[#D4AF37]/20 active:scale-95'
+                }`}
+                title="Next saved session"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
+          )}
           <p className="text-[10px] font-black text-gray-500 uppercase tracking-[0.2em]">Session Counter</p>
           <div className="flex items-center gap-8">
-            <button onClick={() => { setSessionCounter(Math.max(0, sessionCounter - 1)); setIsDirty(true); }} className="p-3 bg-gray-800 rounded-full hover:bg-gray-700 transition-colors">
+            <button onClick={() => { setSessionCounter(Math.max(1, sessionCounter - 1)); setIsDirty(true); }} className="p-3 bg-gray-800 rounded-full hover:bg-gray-700 transition-colors">
               <ChevronLeft className="w-6 h-6 text-white" />
             </button>
             <span className="text-5xl font-black text-white tabular-nums drop-shadow-[0_0_20px_rgba(255,255,255,0.2)]">{sessionCounter}</span>
@@ -1129,14 +1492,59 @@ function RiskManagerPanel({ onClose }: { onClose: () => void }) {
         </div>
       </div>
 
-      <div className="p-4 bg-[#0a0a0c] border-t border-gray-800 grid grid-cols-2 gap-3">
-        <button onClick={handleSave} className="py-3 bg-[#1a1a1e] border border-gray-800 rounded-2xl text-[10px] font-black text-white flex items-center justify-center gap-2 hover:bg-[#25252b] transition-all">
-          <Save className={`w-4 h-4 ${isDirty ? 'text-yellow-500 animate-pulse' : 'text-[#D4AF37]'}`} /> SAUVEGARDER
+      <div className="p-4 bg-[#0a0a0c] border-t border-gray-800 grid grid-cols-3 gap-2">
+        <button onClick={handleNewSession} className="py-3 bg-[#1a1a1e] border border-[#D4AF37]/30 rounded-2xl text-[10px] font-black text-[#D4AF37] flex items-center justify-center gap-1.5 hover:bg-[#D4AF37]/10 transition-all">
+          <Plus className="w-3.5 h-3.5" /> NEW SESSION
         </button>
-        <button onClick={handleExportPDF} className={`py-2 rounded-2xl text-[10px] font-black text-black flex items-center justify-center gap-2 transition-all ${justExported ? 'bg-green-500 shadow-lg shadow-green-500/20' : 'bg-[#D4AF37] hover:bg-[#c5a059] shadow-lg shadow-[#D4AF37]/20'}`}>
-          {justExported ? <Check className="w-4 h-4" /> : <Download className="w-4 h-4 text-black" />} {justExported ? 'EXPORTÉ !' : 'EXPORTER EN PDF'}
+        <button onClick={handleSave} className="py-3 bg-[#1a1a1e] border border-gray-800 rounded-2xl text-[10px] font-black text-white flex items-center justify-center gap-1.5 hover:bg-[#25252b] transition-all">
+          <Save className={`w-3.5 h-3.5 ${isDirty ? 'text-yellow-500 animate-pulse' : 'text-[#D4AF37]'}`} /> SAVE
+        </button>
+        <button onClick={handleExportPDF} className={`py-2 rounded-2xl text-[10px] font-black text-black flex items-center justify-center gap-1.5 transition-all ${justExported ? 'bg-green-500 shadow-lg shadow-green-500/20' : 'bg-[#D4AF37] hover:bg-[#c5a059] shadow-lg shadow-[#D4AF37]/20'}`}>
+          {justExported ? <Check className="w-3.5 h-3.5" /> : <Download className="w-3.5 h-3.5 text-black" />} {justExported ? 'EXPORTED!' : 'EXPORT PDF'}
         </button>
       </div>
+
+      {/* New Session Confirmation Modal */}
+      <AnimatePresence>
+        {showNewSessionModal && (
+          <div className="absolute inset-0 z-[60] bg-black/80 backdrop-blur-sm flex items-center justify-center p-6">
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-[#121216] border border-[#D4AF37]/30 rounded-2xl p-6 max-w-sm w-full space-y-4"
+            >
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="w-5 h-5 text-[#D4AF37]" />
+                <h3 className="text-white font-black text-sm uppercase tracking-widest">Unsaved Session</h3>
+              </div>
+              <p className="text-xs text-gray-400 leading-relaxed">
+                Your current session has unsaved trades. Do you want to save this session before starting a new one, or reset it?
+              </p>
+              <div className="grid grid-cols-2 gap-3 pt-2">
+                <button
+                  onClick={() => { doNewSession(); }}
+                  className="py-3 bg-red-500/10 border border-red-500/30 rounded-xl text-[10px] font-black text-red-400 hover:bg-red-500/20 transition-all"
+                >
+                  Reset Session
+                </button>
+                <button
+                  onClick={saveAndNewSession}
+                  className="py-3 bg-[#D4AF37] border border-[#D4AF37] rounded-xl text-[10px] font-black text-black hover:bg-[#c5a059] transition-all flex items-center justify-center gap-1.5"
+                >
+                  <Plus className="w-3.5 h-3.5" /> Save & New
+                </button>
+              </div>
+              <button
+                onClick={() => setShowNewSessionModal(false)}
+                className="w-full text-[10px] text-gray-500 hover:text-white transition-colors py-1"
+              >
+                Cancel
+              </button>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       {/* Unsaved Changes Confirmation Modal */}
       <AnimatePresence>
@@ -1148,7 +1556,7 @@ function RiskManagerPanel({ onClose }: { onClose: () => void }) {
               exit={{ scale: 0.9, opacity: 0 }}
               className="bg-[#121216] border border-gray-800 rounded-3xl w-full max-w-sm overflow-hidden shadow-2xl p-6 text-center space-y-6"
             >
-              <h3 className="text-base font-black text-white">Voulez-vous vraiment fermer le risk manager sans avoir sauvegardé vos trades ?</h3>
+              <h3 className="text-base font-black text-white">Do you really want to close the risk manager without saving your trades?</h3>
               <div className="flex gap-3">
                 <button 
                   onClick={() => {
@@ -1158,7 +1566,7 @@ function RiskManagerPanel({ onClose }: { onClose: () => void }) {
                   }}
                   className="flex-1 py-3 bg-[#D4AF37] hover:bg-[#c5a059] text-black font-black text-[11px] rounded-xl transition-all shadow-[0_0_20px_rgba(212,175,55,0.4)] uppercase tracking-wider leading-tight"
                 >
-                  Sauvegarder & Fermer
+                  Save & Close
                 </button>
                 <button 
                   onClick={() => {
@@ -1180,29 +1588,29 @@ function RiskManagerPanel({ onClose }: { onClose: () => void }) {
 
 // Composant Trading Journal
 function TradingJournalPanel({ onClose }: { onClose: () => void }) {
-  interface TradeEntry {
-    result: string;
-    amount: number;
-    return: number;
-    balance?: string | number;
-  }
-
-  interface SessionData {
-    trades: TradeEntry[];
-    payout: number;
-    initialCapital: number;
-    sessionCounter: number;
-  }
-  const [sessionData, setSessionData] = useState<SessionData | null>(null);
+  interface TradeEntry { result: string; amount: number; return: number; balance?: string | number; }
+  interface SessionData { trades: TradeEntry[]; payout: number; initialCapital: number; sessionCounter: number; savedAt?: string; }
+  const [allSessions, setAllSessions] = useState<SessionData[]>([]);
+  const [currentSessionIdx, setCurrentSessionIdx] = useState(0);
 
   useEffect(() => {
-    const saved = localStorage.getItem('a2sniper_risk_session');
-    if (saved) {
+    const savedAll = localStorage.getItem('a2sniper_risk_sessions');
+    if (savedAll) {
       try {
-        setSessionData(JSON.parse(saved));
+        const parsed = JSON.parse(savedAll);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setAllSessions(parsed);
+          setCurrentSessionIdx(parsed.length - 1);
+        }
       } catch (e) {}
     }
+    if (allSessions.length === 0) {
+      const saved = localStorage.getItem('a2sniper_risk_session');
+      if (saved) { try { setAllSessions([JSON.parse(saved)]); setCurrentSessionIdx(0); } catch (e) {} }
+    }
   }, []);
+
+  const sessionData = allSessions[currentSessionIdx] || null;
 
   const getStats = () => {
     if (!sessionData) return { wins: 0, losses: 0, profit: 0, balance: 0, capital: 0 };
@@ -1254,24 +1662,32 @@ function TradingJournalPanel({ onClose }: { onClose: () => void }) {
         {!sessionData ? (
           <div className="flex flex-col items-center justify-center h-full text-center space-y-4 opacity-50">
             <Info className="w-12 h-12 text-gray-500" />
-            <p className="text-sm font-bold text-gray-400">Aucune session sauvegardée.</p>
-            <p className="text-xs text-gray-500">Utilisez le Risk Manager pour planifier et sauvegarder vos trades.</p>
+            <p className="text-sm font-bold text-gray-400">No saved sessions.</p>
+            <p className="text-xs text-gray-500">Utilisez le Risk Manager to plan et sauvegarder vos trades.</p>
           </div>
         ) : (
           <>
             {/* Vue d'ensemble */}
             <div className="bg-gradient-to-br from-[#D4AF37]/10 to-[#C5A059]/10 border border-[#D4AF37]/20 p-5 rounded-2xl space-y-4">
               <div className="flex justify-between items-center border-b border-[#D4AF37]/20 pb-3">
-                <span className="text-xs font-black text-[#D4AF37] uppercase tracking-widest">Aperçu Global</span>
-                <span className="text-[10px] font-bold text-gray-500">Session {sessionData.sessionCounter}</span>
+                <span className="text-xs font-black text-[#D4AF37] uppercase tracking-widest">Global Overview</span>
+                <div className="flex items-center gap-2">
+                  <button onClick={() => setCurrentSessionIdx(Math.max(0, currentSessionIdx - 1))} disabled={currentSessionIdx === 0} className={`w-7 h-7 rounded-lg flex items-center justify-center border transition-all ${currentSessionIdx === 0 ? 'bg-gray-800/30 border-gray-700/30 text-gray-600 cursor-not-allowed opacity-50' : 'bg-[#1a1a1e] border-[#D4AF37]/30 text-[#D4AF37] hover:bg-[#D4AF37]/20 active:scale-95'}`} title="Previous session">
+                    <ChevronLeft className="w-4 h-4" />
+                  </button>
+                  <span className="text-[10px] font-bold text-gray-500 min-w-[60px] text-center">Session {currentSessionIdx + 1}/{allSessions.length}</span>
+                  <button onClick={() => setCurrentSessionIdx(Math.min(allSessions.length - 1, currentSessionIdx + 1))} disabled={currentSessionIdx === allSessions.length - 1} className={`w-7 h-7 rounded-lg flex items-center justify-center border transition-all ${currentSessionIdx === allSessions.length - 1 ? 'bg-gray-800/30 border-gray-700/30 text-gray-600 cursor-not-allowed opacity-50' : 'bg-[#1a1a1e] border-[#D4AF37]/30 text-[#D4AF37] hover:bg-[#D4AF37]/20 active:scale-95'}`} title="Next session">
+                    <ChevronRight className="w-4 h-4" />
+                  </button>
+                </div>
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <p className="text-[10px] text-gray-400 font-bold uppercase mb-1">Capital Initial</p>
+                  <p className="text-[10px] text-gray-400 font-bold uppercase mb-1">Initial Capital</p>
                   <p className="text-lg font-black text-white">${stats.capital.toFixed(2)}</p>
                 </div>
                 <div>
-                  <p className="text-[10px] text-gray-400 font-bold uppercase mb-1">Balance Actuelle</p>
+                  <p className="text-[10px] text-gray-400 font-bold uppercase mb-1">Current Balance</p>
                   <p className="text-lg font-black text-[#D4AF37]">${stats.balance.toFixed(2)}</p>
                 </div>
                 <div>
@@ -1291,11 +1707,11 @@ function TradingJournalPanel({ onClose }: { onClose: () => void }) {
               </div>
             </div>
 
-            {/* Historique des Trades */}
+            {/* Trade History */}
             <div>
-              <p className="text-xs font-black text-gray-400 uppercase tracking-widest mb-3">Historique Détaillé</p>
+              <p className="text-xs font-black text-gray-400 uppercase tracking-widest mb-3">Detailed History</p>
               {validTrades.length === 0 ? (
-                <p className="text-xs text-gray-500 italic text-center py-4 bg-[#121216] rounded-xl">Aucun trade enregistré dans cette session.</p>
+                <p className="text-xs text-gray-500 italic text-center py-4 bg-[#121216] rounded-xl">No trades recorded in this session.</p>
               ) : (
                 <div className="space-y-2">
                   {validTrades.map((t, idx: number) => {
@@ -1308,7 +1724,7 @@ function TradingJournalPanel({ onClose }: { onClose: () => void }) {
                             #{idx + 1}
                           </div>
                           <div>
-                            <p className="text-xs font-black text-white">Mise: ${t.amount}</p>
+                            <p className="text-xs font-black text-white">Stake: ${t.amount}</p>
                             <p className={`text-[10px] font-bold ${isWin ? 'text-green-500' : 'text-red-500'}`}>
                               {t.result}
                             </p>
@@ -1336,18 +1752,18 @@ function TradingJournalPanel({ onClose }: { onClose: () => void }) {
 function InfoModal({ type, onClose, stats }: { type: 'DISCLAIMER' | 'AIDE' | 'PERF' | null, onClose: () => void, stats: UserStats }) {
   const content = {
     DISCLAIMER: {
-      title: "Risque & Conformité",
+      title: "Risk & Compliance",
       icon: <ShieldAlert className="w-8 h-8 text-red-500" />,
       body: (
         <div className="text-left space-y-4">
-          <p className="font-bold text-red-400 uppercase tracking-widest text-[10px]">Attention : Risque élevé</p>
-          <p>Le trading sur options binaires et Forex comporte un niveau de risque très élevé et peut ne pas convenir à tous les investisseurs.</p>
+          <p className="font-bold text-red-400 uppercase tracking-widest text-[10px]">Warning: High Risk</p>
+          <p>Trading binary options and Forex carries a very high level of risk and may not be suitable for all investors.</p>
           <ul className="list-disc pl-4 space-y-2 text-gray-300">
-            <li>L'effet de levier peut jouer aussi bien en votre faveur qu'en votre défaveur.</li>
-            <li>Avant de trader, examinez attentivement vos objectifs, votre expérience et votre gestion du risque.</li>
+            <li>Leverage can work both in your favor and against you.</li>
+            <li>Before trading, carefully consider your objectives, experience, and risk management.</li>
             <li><strong>Ne tradez jamais</strong> avec de l'argent que vous ne pouvez pas vous permettre de perdre.</li>
           </ul>
-          <p className="italic text-gray-500 pt-2 border-t border-gray-800">L'Assistant A2Sniper fournit des analyses de pointe basées sur des algorithmes HFT, mais ne garantit en aucun cas des profits futurs.</p>
+          <p className="italic text-gray-500 pt-2 border-t border-gray-800">The A2Sniper Assistant provides cutting-edge analysis based on HFT algorithms, but does not guarantee future profits in any way.</p>
         </div>
       )
     },
@@ -1356,13 +1772,13 @@ function InfoModal({ type, onClose, stats }: { type: 'DISCLAIMER' | 'AIDE' | 'PE
       icon: <Info className="w-8 h-8 text-[#D4AF37]" />,
       body: (
         <div className="text-left space-y-4">
-          <p className="font-bold text-[#D4AF37] uppercase tracking-widest text-[10px]">Étapes de déploiement</p>
+          <p className="font-bold text-[#D4AF37] uppercase tracking-widest text-[10px]">Deployment Steps</p>
           <ol className="list-decimal pl-4 space-y-3 text-gray-300">
-            <li><strong>Connectivité</strong> : Assurez-vous d'avoir fourni un SSID valide et que le voyant 'CONNECTED' est vert.</li>
-            <li><strong>Analyse</strong> : Cliquez sur <span className="text-[#D4AF37]">Pairs de devises</span> pour voir les opportunités actuelles du marché.</li>
-            <li><strong>Exécution</strong> : Suivez la direction signalée (<span className="text-green-400">CALL</span> ou <span className="text-red-400">PUT</span>) et le temps d'expiration exact affiché.</li>
-            <li><strong>Gestion du risque</strong> : Utilisez l'outil <span className="text-red-400">Risk Manager</span> pour planifier vos sessions et protéger votre capital.</li>
-            <li><strong>Stratégie</strong> : Notre système utilise un consensus tripartite validant les structures SMC et zones institutionnelles avant de délivrer un signal.</li>
+            <li><strong>Connectivity</strong> : Make sure you have provided a valid SSID and that the 'CONNECTED' indicator is green.</li>
+            <li><strong>Analyze</strong>: Click on <span className="text-[#D4AF37]">Currency Pairs</span> to see current market opportunities.</li>
+            <li><strong>Execution</strong> : Follow the signaled direction (<span className="text-green-400">CALL</span> or <span className="text-red-400">PUT</span>) and the exact expiration time displayed.</li>
+            <li><strong>Risk Management</strong> : Use the <span className="text-red-400">Risk Manager</span> to plan your sessions and protect your capital.</li>
+            <li><strong>Strategy</strong> : Our system uses a tripartite consensus validating SMC structures and institutional zones before delivering a signal.</li>
           </ol>
         </div>
       )
@@ -1372,32 +1788,32 @@ function InfoModal({ type, onClose, stats }: { type: 'DISCLAIMER' | 'AIDE' | 'PE
       icon: <BarChart4 className="w-8 h-8 text-[#D4AF37]" />,
       body: (
         <div className="text-left space-y-4">
-          <p className="font-bold text-[#D4AF37] uppercase tracking-widest text-[10px]">Statistiques en temps réel</p>
+          <p className="font-bold text-[#D4AF37] uppercase tracking-widest text-[10px]">Real-time Statistics</p>
           <div className="bg-black/50 border border-gray-800 rounded-xl p-4 space-y-3">
             <div className="flex justify-between items-center">
               <span className="text-gray-400">Winrate Global</span>
               <span className="font-black text-green-400 text-lg">{stats.winRate.toFixed(2)}%</span>
             </div>
             <div className="flex justify-between items-center">
-              <span className="text-gray-400">Signaux du jour</span>
+              <span className="text-gray-400">Today's Signals</span>
               <span className="font-black text-white">{stats.todaySignals}</span>
             </div>
             <div className="flex justify-between items-center">
-              <span className="text-gray-400">Profit estimé (lot $10)</span>
+              <span className="text-gray-400">Estimated Profit ($10 lot)</span>
               <span className="font-black text-[#D4AF37]">+${(stats.todaySignals * 0.92 * 10 * (stats.winRate / 100)).toFixed(2)}</span>
             </div>
           </div>
           <ul className="space-y-2 text-xs text-gray-400 pt-2 border-t border-gray-800">
             <li className="flex items-center gap-2">
               <div className="w-1.5 h-1.5 bg-green-500 rounded-full"></div>
-              Précision Algorithmique : {stats.winRate > 0 ? `${stats.winRate.toFixed(1)}%` : 'N/A'}
+              Algorithm Accuracy : {stats.winRate > 0 ? `${stats.winRate.toFixed(1)}%` : 'N/A'}
             </li>
             <li className="flex items-center gap-2">
               <div className="w-1.5 h-1.5 bg-green-500 rounded-full"></div>
-              Latence Exécution : &lt; 150ms
+              Execution Latency : &lt; 150ms
             </li>
           </ul>
-          <p className="text-[10px] text-gray-600 font-bold uppercase text-center mt-2">Données extraites directement du Kernel A2Sniper AI.</p>
+          <p className="text-[10px] text-gray-600 font-bold uppercase text-center mt-2">Data extracted directly from the A2Sniper AI Kernel.</p>
         </div>
       )
     }

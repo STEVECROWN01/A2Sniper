@@ -17,6 +17,7 @@ export function SignalCard({ signal }: SignalCardProps) {
   const [showDetails, setShowDetails] = useState(false);
   const [timeLeft, setTimeLeft] = useState(0);
   const [isExpiring, setIsExpiring] = useState(false);
+  const [elapsedSinceExpiry, setElapsedSinceExpiry] = useState<string>('');
 
   useEffect(() => {
     if (signal.status === 'ACTIVE') {
@@ -25,16 +26,12 @@ export function SignalCard({ signal }: SignalCardProps) {
         const clockOffset = useAppStore.getState().clockOffset || 0;
         const now = Date.now() + clockOffset;
         
-        // Find the next candle boundary after signal creation
-        const signalTime = signal.timestamp.getTime();
-        const minutes = signal.timestamp.getMinutes();
-        const minutesToBoundary = signal.expiration - (minutes % signal.expiration);
-        
-        const boundaryDate = new Date(signal.timestamp);
-        boundaryDate.setSeconds(0, 0);
-        boundaryDate.setMinutes(boundaryDate.getMinutes() + minutesToBoundary);
-        
-        const remaining = boundaryDate.getTime() - now;
+        // Expiry = signal timestamp + expiration minutes
+        // Each signal expires at its OWN time — different countdown per signal
+        const expMinutes = Number(signal.expiration) || 1;
+        const expiryTime = signal.timestamp.getTime() + (expMinutes * 60 * 1000);
+
+        const remaining = expiryTime - now;
         return remaining <= 0 ? 0 : remaining;
       };
 
@@ -55,6 +52,42 @@ export function SignalCard({ signal }: SignalCardProps) {
 
       return () => clearInterval(interval);
     }
+
+    // For non-active signals, compute "Expire il y a X" (time elapsed since expiry)
+    // (TypeScript already narrowed away 'ACTIVE' — this branch handles WON/LOST/EXPIRED)
+    {
+      const computeElapsed = () => {
+        const clockOffset = useAppStore.getState().clockOffset || 0;
+        const now = Date.now() + clockOffset;
+        // Expiry time = signal timestamp + expiration minutes
+        // For non-active signals, the signal.timestamp is the emission time.
+        // The actual expiry is the next candle boundary after that.
+        const minutes = signal.timestamp.getMinutes();
+        const minutesToBoundary = signal.expiration - (minutes % signal.expiration);
+        const boundaryDate = new Date(signal.timestamp);
+        boundaryDate.setSeconds(0, 0);
+        boundaryDate.setMinutes(boundaryDate.getMinutes() + minutesToBoundary);
+        const elapsedMs = now - boundaryDate.getTime();
+        if (elapsedMs < 0) return '';
+        const seconds = Math.floor(elapsedMs / 1000);
+        const minutes2 = Math.floor(seconds / 60);
+        const hours = Math.floor(minutes2 / 60);
+        const days = Math.floor(hours / 24);
+        const weeks = Math.floor(days / 7);
+        const months = Math.floor(days / 30);
+        if (months >= 1) return `${months} month${months > 1 ? 's' : ''} ago`;
+        if (weeks >= 1) return `${weeks} week${weeks > 1 ? 's' : ''} ago`;
+        if (days >= 1) return `${days} day${days > 1 ? 's' : ''} ago`;
+        if (hours >= 1) return `${hours}h ago`;
+        if (minutes2 >= 1) return `${minutes2}min ago`;
+        return `${seconds}s ago`;
+      };
+      setElapsedSinceExpiry(computeElapsed());
+      const interval = setInterval(() => {
+        setElapsedSinceExpiry(computeElapsed());
+      }, 1000);
+      return () => clearInterval(interval);
+    }
     // Use signal.id as dependency so timer only resets when a new signal arrives,
     // not on every re-render of the parent component
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -67,32 +100,32 @@ export function SignalCard({ signal }: SignalCardProps) {
   };
 
   const handleCopySignal = () => {
-    const signalText = `SIGNAL TRADING - A2Sniper
-Paire: ${signal.pair}
+    const signalText = `TRADING SIGNAL - A2Sniper
+Pair: ${signal.pair}
 Direction: ${signal.direction === 'CALL' ? 'CALL' : 'PUT'}
 Expiration: ${signal.expiration} minutes
-Score: ${signal.score ?? '-'}/10 | Winrate: ${signal.winrate}% | Payout: ${signal.payout}%
-Prix d'entree: ${signal.entry_price.toFixed(4)}
+Winrate: ${signal.winrate}% | Payout: ${signal.payout}%
+Entry Price: ${signal.entry_price.toFixed(4)}
 
-ANALYSE :
-  Structure : ${signal.smc_structure}
-  Zone      : ${signal.smc_zone}
-  Pattern   : ${signal.chart_pattern}
-  Fibonacci : ${signal.fibonacci}
-  RSI       : ${signal.rsi_status}
+ANALYSIS:
+  Structure: ${signal.smc_structure}
+  Zone:      ${signal.smc_zone}
+  Pattern:   ${signal.chart_pattern}
+  Fibonacci: ${signal.fibonacci}
+  RSI:       ${signal.rsi_status}
 
-Timestamp: ${signal.timestamp.toLocaleString('fr-FR')}
+Timestamp: ${signal.timestamp.toLocaleString('en-US')}
 #${signal.pair.replace('/', '').replace(' OTC', '')} #${signal.direction} #${signal.expiration}MIN`;
 
     navigator.clipboard.writeText(signalText).then(
-      () => toast.success('Signal copié dans le presse-papiers !'),
-      () => toast.error('Impossible de copier le signal. Vérifiez les permissions du presse-papiers.')
+      () => toast.success('Signal copied to clipboard!'),
+      () => toast.error('Cannot copy signal. Check clipboard permissions.')
     );
   };
 
   const handleTrade = () => {
     window.open('https://po.trade', '_blank');
-    toast.info('Redirection vers Pocket Option...');
+    toast.info('Redirecting to Pocket Option...');
   };
 
   const handleMarkResult = (result: 'WON' | 'LOST') => {
@@ -103,7 +136,7 @@ Timestamp: ${signal.timestamp.toLocaleString('fr-FR')}
     const resultPrice = signal.entry_price;
     
     updateSignalStatus(signal.id, result, { result_price: resultPrice, profit_loss: profitLoss });
-    toast.success(`Signal marqué comme ${result === 'WON' ? 'gagné' : 'perdu'} !`);
+    toast.success(`Signal marked as ${result === 'WON' ? 'won' : 'lost'}!`);
   };
 
   return (
@@ -180,13 +213,13 @@ Timestamp: ${signal.timestamp.toLocaleString('fr-FR')}
         {/* Prix et Temps */}
         <div className="flex items-center justify-between p-3.5 bg-[#050507] rounded-xl mb-4 border border-white/5">
           <div>
-            <p className="text-[8px] text-gray-500 uppercase font-black mb-0.5 tracking-wider">Prix d&apos;entrée</p>
+            <p className="text-[8px] text-gray-500 uppercase font-black mb-0.5 tracking-wider">Entry Price</p>
             <p className="text-sm font-mono font-black text-white">{signal.entry_price.toFixed(5)}</p>
           </div>
           
           <div className="text-right">
             <p className="text-[8px] text-gray-500 uppercase font-black mb-0.5 tracking-wider">
-              {signal.status === 'ACTIVE' ? 'Temps restant' : 'Expiration'}
+              {signal.status === 'ACTIVE' ? 'Time Left' : 'Expired'}
             </p>
             <div className="flex items-center justify-end space-x-1">
               <Clock className={`w-3.5 h-3.5 ${isExpiring ? 'text-[#D4AF37] animate-pulse' : 'text-gray-400'}`} />
@@ -197,31 +230,34 @@ Timestamp: ${signal.timestamp.toLocaleString('fr-FR')}
           </div>
         </div>
 
-        {/* Result status — show Pending if is_win is unknown, otherwise show P&L */}
-        {signal.is_win === null || signal.is_win === undefined ? (
-          signal.status !== 'ACTIVE' && (
-            <div className="flex items-center justify-between mb-4 px-3 py-2 bg-[#050507] border border-dashed border-yellow-500/20 rounded-xl">
-              <span className="text-[10px] text-gray-500 font-bold uppercase">Résultat</span>
-              <span className="text-xs font-black text-yellow-500">En attente</span>
-            </div>
-          )
-        ) : signal.profit_loss !== undefined ? (
-          <div className="flex items-center justify-between mb-4 px-3 py-2 bg-[#050507] border border-dashed border-white/10 rounded-xl">
-            <span className="text-[10px] text-gray-500 font-bold uppercase">Résultat Brut</span>
-            <span className={`text-xs font-black ${signal.profit_loss > 0 ? 'text-green-500' : 'text-red-500'}`}>
-              {signal.profit_loss > 0 ? '+' : ''}${Math.abs(signal.profit_loss).toFixed(2)}
-            </span>
-          </div>
+        {/* ─── Zone: Trade Now / Elapsed time ─── */}
+        {/* Active signal → "Trade Now" button (replaces old duplicate result zone) */}
+        {/* Expired signal → "X ago" elapsed time */}
+        {signal.status === 'ACTIVE' ? (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              handleTrade();
+            }}
+            className="w-full mb-4 bg-gradient-to-r from-[#D4AF37] to-[#C5A059] text-black px-4 py-3 rounded-xl text-sm font-black uppercase tracking-wider hover:from-[#c5a059] hover:to-[#D4AF37] transition-all flex items-center justify-center space-x-2 shadow-[0_0_20px_rgba(212,175,55,0.25)]"
+          >
+            <Zap className="w-4 h-4 fill-current" />
+            <span>Trade Now</span>
+            <ExternalLink className="w-3.5 h-3.5" />
+          </button>
         ) : (
-          <div className="flex items-center justify-between mb-4 px-3 py-2 bg-[#050507] border border-dashed border-white/10 rounded-xl">
-            <span className="text-[10px] text-gray-500 font-bold uppercase">Résultat</span>
-            <span className={`text-xs font-black ${signal.is_win ? 'text-green-500' : 'text-red-500'}`}>
-              {signal.is_win ? 'GAGNÉ' : 'PERDU'}
+          <div className="flex items-center justify-between mb-4 px-3 py-2.5 bg-[#050507] border border-white/5 rounded-xl">
+            <span className="text-[10px] text-gray-500 font-bold uppercase tracking-wider flex items-center gap-1.5">
+              <Clock className="w-3 h-3" />
+              Expired
+            </span>
+            <span className="text-xs font-black text-gray-400">
+              {elapsedSinceExpiry || '—'}
             </span>
           </div>
         )}
 
-        {/* Actions */}
+        {/* Actions — Copy + manual result mark (for active only) */}
         <div className="flex items-center space-x-2">
           <button
             onClick={(e) => {
@@ -231,7 +267,7 @@ Timestamp: ${signal.timestamp.toLocaleString('fr-FR')}
             className="flex-1 bg-white/5 text-gray-300 px-3 py-2 rounded-xl text-xs font-bold uppercase tracking-wider hover:bg-white/10 transition-colors flex items-center justify-center space-x-1"
           >
             <Copy className="w-3.5 h-3.5" />
-            <span>Copier</span>
+            <span>Copy</span>
           </button>
           
           {signal.status === 'ACTIVE' && (
@@ -239,21 +275,10 @@ Timestamp: ${signal.timestamp.toLocaleString('fr-FR')}
               <button
                 onClick={(e) => {
                   e.stopPropagation();
-                  handleTrade();
-                }}
-                className="flex-1 bg-gradient-to-r from-[#D4AF37] to-[#C5A059] text-black px-3 py-2 rounded-xl text-xs font-black uppercase tracking-wider hover:from-[#c5a059] hover:to-[#D4AF37] transition-all flex items-center justify-center space-x-1"
-              >
-                <ExternalLink className="w-3.5 h-3.5" />
-                <span>Trader</span>
-              </button>
-              
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
                   handleMarkResult('WON');
                 }}
                 className="p-2 bg-green-500/10 text-green-500 border border-green-500/20 rounded-xl hover:bg-green-500 hover:text-black transition-all"
-                title="Marquer gagné"
+                title="Mark as won"
               >
                 <Check className="w-4 h-4" />
               </button>
@@ -264,7 +289,7 @@ Timestamp: ${signal.timestamp.toLocaleString('fr-FR')}
                   handleMarkResult('LOST');
                 }}
                 className="p-2 bg-red-500/10 text-red-500 border border-red-500/20 rounded-xl hover:bg-red-500 hover:text-black transition-all"
-                title="Marquer perdu"
+                title="Mark as lost"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -291,7 +316,7 @@ Timestamp: ${signal.timestamp.toLocaleString('fr-FR')}
               <div className="flex items-center justify-between mb-6 border-b border-white/5 pb-4">
                 <h2 className="text-md font-black text-white uppercase tracking-wider flex items-center gap-2">
                   <Zap className="w-4 h-4 text-[#D4AF37]" />
-                  Détails du Signal Sniper
+                  Signal Details
                 </h2>
                 <button
                   onClick={() => setShowDetails(false)}
@@ -335,26 +360,36 @@ Timestamp: ${signal.timestamp.toLocaleString('fr-FR')}
 
                 {/* Entry Price */}
                 <div className="p-3 bg-[#050507] rounded-xl border border-white/5">
-                  <p className="text-[9px] text-gray-500 font-bold uppercase tracking-wider mb-1">Prix d&apos;entrée SNIPER</p>
+                  <p className="text-[9px] text-gray-500 font-bold uppercase tracking-wider mb-1">Sniper Entry Price</p>
                   <p className="text-md font-mono font-black text-white">{signal.entry_price.toFixed(5)}</p>
                 </div>
+
+                {/* Countdown Timer — real-time remaining for active signals */}
+                {signal.status === 'ACTIVE' && (
+                  <div className="p-3 bg-[#050507] rounded-xl border border-[#D4AF37]/20">
+                    <p className="text-[9px] text-gray-500 font-bold uppercase tracking-wider mb-1">Time Remaining</p>
+                    <p className={`text-lg font-black font-mono ${timeLeft < 30000 ? 'text-[#D4AF37] animate-pulse' : 'text-white'}`}>
+                      {formatTime(timeLeft)}
+                    </p>
+                  </div>
+                )}
 
                 {/* Algorithmic Details */}
                 <div className="p-4 bg-[#050507] border border-white/5 rounded-xl space-y-2.5 font-bold text-xs">
                   <div className="flex items-center gap-2 mb-3">
                     <Zap className="w-4 h-4 text-[#D4AF37] fill-[#D4AF37]" />
-                    <h4 className="font-black text-white uppercase text-[10px] tracking-widest">Moteur Neuronal v3.0</h4>
+                    <h4 className="font-black text-white uppercase text-[10px] tracking-widest">Neural Engine v3.0</h4>
                   </div>
-                  <div className="flex justify-between text-gray-400"><span className="uppercase text-[9px] tracking-wider">Structure :</span> <span className="font-black text-white uppercase">{signal.smc_structure}</span></div>
-                  <div className="flex justify-between text-gray-400"><span className="uppercase text-[9px] tracking-wider">Zone SMC :</span> <span className="font-black text-white uppercase">{signal.smc_zone}</span></div>
-                  <div className="flex justify-between text-gray-400"><span className="uppercase text-[9px] tracking-wider">Pattern Chartiste :</span> <span className="font-black text-white uppercase">{signal.chart_pattern}</span></div>
-                  <div className="flex justify-between text-gray-400"><span className="uppercase text-[9px] tracking-wider">Niveaux Fibonacci :</span> <span className="font-black text-white uppercase">{signal.fibonacci}</span></div>
-                  <div className="flex justify-between text-gray-400"><span className="uppercase text-[9px] tracking-wider">Indicateur RSI :</span> <span className="font-black text-white uppercase">{signal.rsi_status}</span></div>
+                  <div className="flex justify-between text-gray-400"><span className="uppercase text-[9px] tracking-wider">Structure:</span> <span className="font-black text-white uppercase">{signal.smc_structure}</span></div>
+                  <div className="flex justify-between text-gray-400"><span className="uppercase text-[9px] tracking-wider">SMC Zone:</span> <span className="font-black text-white uppercase">{signal.smc_zone}</span></div>
+                  <div className="flex justify-between text-gray-400"><span className="uppercase text-[9px] tracking-wider">Chart Pattern:</span> <span className="font-black text-white uppercase">{signal.chart_pattern}</span></div>
+                  <div className="flex justify-between text-gray-400"><span className="uppercase text-[9px] tracking-wider">Fibonacci Levels:</span> <span className="font-black text-white uppercase">{signal.fibonacci}</span></div>
+                  <div className="flex justify-between text-gray-400"><span className="uppercase text-[9px] tracking-wider">RSI Indicator:</span> <span className="font-black text-white uppercase">{signal.rsi_status}</span></div>
                 </div>
 
                 {signal.result_price && (
                   <div className="p-3 bg-[#050507] rounded-xl border border-white/5">
-                    <p className="text-[9px] text-gray-500 font-bold uppercase tracking-wider mb-1">Prix de sortie</p>
+                    <p className="text-[9px] text-gray-500 font-bold uppercase tracking-wider mb-1">Exit Price</p>
                     <p className="text-md font-mono font-black text-white">{signal.result_price.toFixed(5)}</p>
                   </div>
                 )}
@@ -364,7 +399,7 @@ Timestamp: ${signal.timestamp.toLocaleString('fr-FR')}
                     signal.profit_loss > 0 ? 'bg-green-500/10 border-green-500/20' : 'bg-red-500/10 border-red-500/20'
                   }`}>
                     <p className={`text-[9px] font-bold uppercase mb-1 ${signal.profit_loss > 0 ? 'text-green-500' : 'text-red-500'}`}>
-                      Résultat Financier
+                      Financial Result
                     </p>
                     <p className={`text-md font-black ${signal.profit_loss > 0 ? 'text-green-400' : 'text-red-400'}`}>
                       {signal.profit_loss > 0 ? '+' : ''}${signal.profit_loss.toFixed(2)}
@@ -374,9 +409,9 @@ Timestamp: ${signal.timestamp.toLocaleString('fr-FR')}
 
                 {/* Time stamp */}
                 <div className="p-3 bg-[#050507] rounded-xl border border-white/5">
-                  <p className="text-[9px] text-gray-500 font-bold uppercase mb-1">Date d&apos;émission</p>
+                  <p className="text-[9px] text-gray-500 font-bold uppercase mb-1">Issue Date</p>
                   <p className="text-xs font-bold text-gray-300">
-                    {signal.timestamp.toLocaleString('fr-FR')}
+                    {signal.timestamp.toLocaleString('en-US')}
                   </p>
                 </div>
 
@@ -387,7 +422,7 @@ Timestamp: ${signal.timestamp.toLocaleString('fr-FR')}
                     className="flex-1 bg-white/5 text-gray-300 px-4 py-3 rounded-xl text-xs font-bold uppercase tracking-wider hover:bg-white/10 transition-colors flex items-center justify-center space-x-2"
                   >
                     <Copy className="w-4 h-4" />
-                    <span>Copier</span>
+                    <span>Copy</span>
                   </button>
                   
                   {signal.status === 'ACTIVE' && (
@@ -396,7 +431,7 @@ Timestamp: ${signal.timestamp.toLocaleString('fr-FR')}
                       className="flex-1 bg-gradient-to-r from-[#D4AF37] to-[#C5A059] text-black px-4 py-3 rounded-xl text-xs font-black uppercase tracking-wider hover:from-[#c5a059] hover:to-[#D4AF37] transition-all flex items-center justify-center space-x-2"
                     >
                       <ExternalLink className="w-4 h-4" />
-                      <span>Trader</span>
+                      <span>Trade</span>
                     </button>
                   )}
                 </div>

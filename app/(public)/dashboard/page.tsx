@@ -56,7 +56,7 @@ export default function DashboardPage() {
       } catch (err) {
         if (!cancelled) {
           setIsLoading(false);
-          setApiError('Impossible de charger les données. Vérifiez votre connexion.');
+          setApiError('Cannot load data. Check your connection.');
         }
       }
     };
@@ -66,7 +66,7 @@ export default function DashboardPage() {
     const apiTimer = setInterval(() => {
       fetchSignals().catch(() => {});
       fetchPerformance().catch(() => {});
-    }, 30000); // Refresh every 30s instead of 5s to reduce load
+    }, 2000); // Real-time refresh every 2s (was 30s)
 
     return () => {
       cancelled = true;
@@ -110,7 +110,7 @@ export default function DashboardPage() {
     try {
       await Promise.all([fetchSignals(), fetchPerformance()]);
     } catch {
-      setApiError('Erreur lors du rafraîchissement.');
+      setApiError('Error during refresh.');
     }
     setTimeout(() => {
       setIsRefreshing(false);
@@ -126,7 +126,7 @@ export default function DashboardPage() {
       userId: user?.id,
       avatarUrl: user?.avatar,
     };
-    const doc = createBrandedPDF('Rapport Dashboard', 'Vue d\'ensemble des performances et signaux', pdfUser);
+    const doc = createBrandedPDF('Dashboard Report', 'Performance and signals overview', pdfUser);
     let y = 58;
 
     // User info card
@@ -140,20 +140,20 @@ export default function DashboardPage() {
     y = drawStatCard(doc, startX, y, cardW, 'Total Trades', String(totalTrades));
     y = drawStatCard(doc, startX + cardW + cardGap, y - 21, cardW, 'Trades Gagnes', String(wonTrades), { valueColor: '#22C55E' });
     y = drawStatCard(doc, startX + (cardW + cardGap) * 2, y - 21, cardW, 'Win Rate', `${winRate.toFixed(1)}%`, { valueColor: '#D4AF37' });
-    y = drawStatCard(doc, startX + (cardW + cardGap) * 3, y - 21, cardW, 'Signaux Actifs', String(activeSignals), { valueColor: '#3B82F6' });
+    y = drawStatCard(doc, startX + (cardW + cardGap) * 3, y - 21, cardW, 'Active Signals', String(activeSignals), { valueColor: '#3B82F6' });
     y += 3;
-    y = drawStatCard(doc, startX, y, cardW, 'Profit Aujourd\'hui', `$${todayProfit.toFixed(2)}`, { valueColor: todayProfit >= 0 ? '#22C55E' : '#EF4444' });
-    y = drawStatCard(doc, startX + cardW + cardGap, y - 21, cardW, 'Winrate Moyen', `${(avgWinrate || 0).toFixed(1)}%`, { valueColor: '#D4AF37' });
+    y = drawStatCard(doc, startX, y, cardW, "Today's Profit", `$${todayProfit.toFixed(2)}`, { valueColor: todayProfit >= 0 ? '#22C55E' : '#EF4444' });
+    y = drawStatCard(doc, startX + cardW + cardGap, y - 21, cardW, 'Average Winrate', `${(avgWinrate || 0).toFixed(1)}%`, { valueColor: '#D4AF37' });
 
     // Signals Table
     y += 6;
-    y = drawSectionTitle(doc, 'Derniers Signaux', y);
+    y = drawSectionTitle(doc, 'Latest Signals', y);
     if (signals.length > 0) {
       const headers = [
-        { label: 'Paire', width: 30 },
+        { label: 'Pair', width: 30 },
         { label: 'Direction', width: 22, align: 'center' as const },
         { label: 'Winrate', width: 22, align: 'center' as const },
-        { label: 'Statut', width: 22, align: 'center' as const },
+        { label: 'Status', width: 22, align: 'center' as const },
         { label: 'Payout', width: 20, align: 'right' as const },
       ];
       const rows = signals.slice(0, 20).map(s => [
@@ -167,7 +167,7 @@ export default function DashboardPage() {
     } else {
       doc.setFontSize(8);
       doc.setTextColor(107, 114, 128);
-      doc.text('Aucun signal disponible.', PAGE.marginL + 4, y + 4);
+      doc.text('No signals available.', PAGE.marginL + 4, y + 4);
       y += 10;
     }
 
@@ -175,7 +175,7 @@ export default function DashboardPage() {
     savePDF(doc, `a2sniper-dashboard-${dateStr}.pdf`, pdfUser);
     setJustExported(true);
     setTimeout(() => setJustExported(false), 2500);
-    toast.success('Rapport PDF exporte avec succes !');
+    toast.success('PDF report exported successfully!');
   };
 
   const TechnicalGauge = ({ value }: { value: number }) => {
@@ -226,7 +226,7 @@ export default function DashboardPage() {
         </div>
         <div className="mt-4 text-center">
           <div className="bg-[#D4AF37]/10 text-[#D4AF37] border border-[#D4AF37]/30 px-5 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest">
-            Signal Fort
+            Strong Signal
           </div>
         </div>
       </div>
@@ -256,7 +256,7 @@ export default function DashboardPage() {
         </div>
         <div className="flex items-center justify-center py-12">
           <Loader2 className="w-8 h-8 text-[#D4AF37] animate-spin" />
-          <span className="ml-3 text-gray-400 font-bold">Chargement des données...</span>
+          <span className="ml-3 text-gray-400 font-bold">Loading data...</span>
         </div>
       </div>
     );
@@ -284,9 +284,9 @@ export default function DashboardPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-10">
           <div>
             <h1 className="text-3xl font-black text-white uppercase tracking-tight">
-              Tableau de Bord
+              Dashboard
             </h1>
-            <p className="text-sm text-gray-400 mt-1">Surveillance en temps réel du flux de signaux neuronaux.</p>
+            <p className="text-sm text-gray-400 mt-1">Real-time monitoring of the neural signal stream.</p>
           </div>
 
           <div className="flex items-center gap-3">
@@ -301,7 +301,7 @@ export default function DashboardPage() {
             <button
               onClick={handleExport}
               className={`p-3 rounded-xl transition-all ${justExported ? 'bg-green-500 text-white' : 'bg-[#0a0a0c] border border-white/5 hover:bg-white/[0.03] text-gray-400 hover:text-white'}`}
-              title={justExported ? 'PDF exporté !' : 'Exporter en PDF'}
+              title={justExported ? 'PDF exported!' : 'Export en PDF'}
             >
               {justExported ? <Check className="w-5 h-5" /> : <Download className="w-5 h-5" />}
             </button>
@@ -312,8 +312,8 @@ export default function DashboardPage() {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6 mb-10">
           {[
             { label: 'Win Rate Global', value: winRate > 0 ? `${winRate.toFixed(1)}%` : 'N/A', icon: Target, color: 'text-[#D4AF37] bg-[#D4AF37]/10' },
-            { label: 'Signaux Actifs', value: activeSignals, icon: Zap, color: 'text-yellow-500 bg-yellow-500/10' },
-            { label: 'Profit Jour', value: `$${todayProfit.toFixed(0)}`, icon: DollarSign, color: 'text-green-500 bg-green-500/10' },
+            { label: 'Active Signals', value: activeSignals, icon: Zap, color: 'text-yellow-500 bg-yellow-500/10' },
+            { label: "Today's Profit", value: `$${todayProfit.toFixed(0)}`, icon: DollarSign, color: 'text-green-500 bg-green-500/10' },
             { label: 'Volume 24h', value: todaySignals.length, icon: BarChart3, color: 'text-purple-500 bg-purple-500/10' }
           ].map((stat, i) => (
             <motion.div
@@ -327,7 +327,7 @@ export default function DashboardPage() {
                 <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${stat.color}`}>
                   <stat.icon className="w-5 h-5" />
                 </div>
-                <span className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Réel</span>
+                <span className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Real</span>
               </div>
               <p className="text-xs text-gray-400 font-bold uppercase tracking-wider">{stat.label}</p>
               <p className="text-2xl font-black text-white mt-1 tracking-tight">{stat.value}</p>
@@ -347,21 +347,21 @@ export default function DashboardPage() {
                </div>
                <h2 className="text-lg font-black text-white uppercase tracking-wider mb-8 flex items-center gap-3">
                  <BarChart3 className="w-5 h-5 text-[#D4AF37]" />
-                 Analyse Technique du Marché
+                 Market Technical Analysis
                </h2>
                 <div className="flex flex-col md:flex-row items-center gap-12">
                   <TechnicalGauge value={gaugeValue} />
                   <div className="flex-1 space-y-6 w-full">
                     <div className="bg-[#050507] p-4 rounded-2xl border border-white/5">
-                      <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest mb-1">Winrate Moyen (Analyse)</p>
+                      <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest mb-1">Average Winrate (Analysis)</p>
                       <p className="text-md font-black text-transparent bg-clip-text bg-gradient-to-r from-[#D4AF37] to-[#F3E5AB]">
-                        {avgWinrate > 0 ? `${avgWinrate.toFixed(1)}%` : 'Données insuffisantes'}
+                        {avgWinrate > 0 ? `${avgWinrate.toFixed(1)}%` : 'Data insuffisantes'}
                       </p>
                     </div>
                     <div className="bg-[#050507] p-4 rounded-2xl border border-white/5">
-                      <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest mb-1">Intégrité des Données</p>
+                      <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest mb-1">Data Integrity</p>
                       <p className={`text-md font-black ${liveStatus === 'LIVE' ? 'text-green-500' : 'text-gray-500'}`}>
-                        {liveStatus === 'LIVE' ? 'WebSocket Pocket Option Connecté' : 'WebSocket Déconnecté'}
+                        {liveStatus === 'LIVE' ? 'Pocket Option WebSocket Connected' : 'WebSocket Disconnected'}
                       </p>
                     </div>
                   </div>
@@ -370,7 +370,7 @@ export default function DashboardPage() {
 
             {/* Recent Signals Summary */}
             <div className="bg-[#0a0a0c]/80 border border-white/5 p-8 rounded-3xl backdrop-blur-md">
-              <h2 className="text-lg font-black text-white uppercase tracking-wider mb-6">Flux de Signaux Sniper</h2>
+              <h2 className="text-lg font-black text-white uppercase tracking-wider mb-6">Sniper Signal Feed</h2>
               <div className="space-y-4">
                 {signals.length > 0 ? (
                   signals.slice(0, 5).map((signal, i) => (
@@ -383,7 +383,7 @@ export default function DashboardPage() {
                         </div>
                         <div>
                           <p className="font-bold text-white tracking-tight">{signal.pair}</p>
-                          <p className="text-[10px] text-gray-500 font-bold uppercase">{signal.smc_structure || 'Analyse en cours'}</p>
+                          <p className="text-[10px] text-gray-500 font-bold uppercase">{signal.smc_structure || 'Analysis en cours'}</p>
                         </div>
                       </div>
                       <div className="text-right">
@@ -393,7 +393,7 @@ export default function DashboardPage() {
                     </div>
                   ))
                 ) : (
-                  <p className="text-sm text-gray-500 font-bold text-center py-6">Aucun signal récent détecté.</p>
+                  <p className="text-sm text-gray-500 font-bold text-center py-6">No recent signals detected.</p>
                 )}
               </div>
             </div>
@@ -407,25 +407,25 @@ export default function DashboardPage() {
                <div className="absolute top-0 right-0 p-8 opacity-[0.03] pointer-events-none">
                  <Zap className="w-64 h-64 text-white" />
                </div>
-               <h3 className="font-black text-lg uppercase tracking-wider mb-2 text-transparent bg-clip-text bg-gradient-to-r from-[#D4AF37] to-[#F3E5AB]">Compte Founders</h3>
-               <p className="text-xs text-gray-400 font-bold mb-6">Tous les moteurs de sniping sont pleinement opérationnels.</p>
+               <h3 className="font-black text-lg uppercase tracking-wider mb-2 text-transparent bg-clip-text bg-gradient-to-r from-[#D4AF37] to-[#F3E5AB]">Founders Account</h3>
+               <p className="text-xs text-gray-400 font-bold mb-6">All sniping engines are fully operational.</p>
                <div className="space-y-4">
                  <div className="flex justify-between text-xs font-bold text-gray-400">
-                   <span>Statut Système:</span>
+                   <span>System Status:</span>
                    <span className={connectionStatus === 'Connected' ? 'text-green-400' : connectionStatus === 'Disconnected' ? 'text-red-400' : 'text-yellow-400'}>
-                     {connectionStatus === 'Connected' ? 'Connecté' : connectionStatus === 'Disconnected' ? 'Déconnecté' : 'Vérification...'}
+                     {connectionStatus === 'Connected' ? 'Connected' : connectionStatus === 'Disconnected' ? 'Disconnected' : 'Checking...'}
                    </span>
                  </div>
                  <div className="flex justify-between text-xs font-bold text-gray-400">
-                   <span>Uptime Système:</span>
+                   <span>System Uptime:</span>
                    <span className="text-white">N/A</span>
                  </div>
                  <div className="flex justify-between text-xs font-bold text-gray-400">
-                   <span>Délai Exécution:</span>
+                   <span>Execution Delay:</span>
                    <span className="text-white">N/A</span>
                  </div>
                  <div className="flex justify-between text-xs font-bold text-gray-400">
-                   <span>Version Moteur:</span>
+                   <span>Engine Version:</span>
                    <span className="text-[#D4AF37]">N/A</span>
                  </div>
                </div>
@@ -435,21 +435,21 @@ export default function DashboardPage() {
             <div className="bg-[#0a0a0c]/80 border border-white/5 p-8 rounded-3xl backdrop-blur-md">
               <h3 className="font-black text-white uppercase tracking-wider mb-6 flex items-center gap-2">
                 <Bell className="w-4 h-4 text-[#D4AF37]" />
-                Alertes Système
+                System Alerts
               </h3>
               <div className="space-y-4 text-xs font-bold">
                 <div className={`p-3 border-l-2 ${liveStatus === 'LIVE' ? 'border-green-500 bg-green-500/5' : 'border-red-500 bg-red-500/5'} text-gray-400 rounded-r-xl`}>
                   <p className={`font-black mb-1 ${liveStatus === 'LIVE' ? 'text-green-400' : 'text-red-400'}`}>
-                    {liveStatus === 'LIVE' ? 'WebSocket Connecté' : 'WebSocket Déconnecté'}
+                    {liveStatus === 'LIVE' ? 'WebSocket Connected' : 'WebSocket Disconnected'}
                   </p>
                   {liveStatus === 'LIVE'
-                    ? 'Connexion WebSocket sécurisée établie.'
-                    : 'Aucune connexion au flux de marché. Connectez-vous via la page Signaux.'}
+                    ? 'Secure WebSocket connection established.'
+                    : 'No connection to the market stream. Connect via the Signals page.'}
                 </div>
                 {systemStatus === 'offline' && (
                   <div className="p-3 border-l-2 border-red-500 bg-red-500/5 text-gray-400 rounded-r-xl">
                     <p className="text-red-400 font-black mb-1">Serveur API indisponible</p>
-                    Le serveur backend ne répond pas. Veuillez réessayer plus tard.
+                    The backend server is not responding. Please try again later.
                   </div>
                 )}
               </div>

@@ -249,7 +249,22 @@ async function proxyRequest(request: NextRequest, path?: string[]) {
 
     // Forward body for POST/PUT/PATCH
     if (request.method !== 'GET' && request.method !== 'HEAD') {
-      fetchOptions.body = await request.text();
+      // Clone the request before reading body to avoid "body already consumed" errors
+      const bodyText = await request.clone().text();
+      if (bodyText) {
+        fetchOptions.body = bodyText;
+        // Ensure content-type is set (backend needs it to parse JSON)
+        if (!headers['content-type'] && !headers['Content-Type']) {
+          headers['content-type'] = 'application/json';
+        }
+        // Debug log for signal requests
+        if (endpoint === '/api/signals/request') {
+          console.log(`[PROXY] /api/signals/request body: ${bodyText.slice(0, 200)}`);
+          console.log(`[PROXY] headers:`, JSON.stringify(headers));
+        }
+      } else {
+        console.warn(`[PROXY] ${request.method} ${endpoint} — empty body!`);
+      }
     }
 
     const response = await fetch(fullUrl, {

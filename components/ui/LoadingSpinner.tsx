@@ -4,7 +4,7 @@ import { motion } from 'framer-motion';
 
 export default function LoadingSpinner() {
   return (
-    <div className="flex flex-col items-center justify-center min-h-[400px] h-full w-full bg-[#050507]" role="status" aria-label="Chargement en cours">
+    <div className="flex flex-col items-center justify-center min-h-[400px] h-full w-full bg-[#050507]" role="status" aria-label="Loading">
       <motion.div
         initial={{ scale: 0.8, opacity: 0 }}
         animate={{ scale: [0.8, 1.1, 1], opacity: 1 }}
@@ -46,7 +46,7 @@ export default function LoadingSpinner() {
           <div className="w-1.5 h-1.5 bg-[#C5A059] rounded-full animate-bounce delay-300 shadow-[0_0_8px_rgba(197,160,89,0.6)]"></div>
         </div>
         <p className="text-[9px] font-black text-gray-500 uppercase tracking-[0.25em]">
-          Chargement du système...
+          Loading system...
         </p>
       </div>
     </div>

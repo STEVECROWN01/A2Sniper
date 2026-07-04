@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Calendar, BarChart3, Target, DollarSign, Info, Trash2, ArrowUpRight, ArrowDownRight, AlertTriangle, Loader2, Download, Check } from 'lucide-react';
+import { Calendar, BarChart3, Target, DollarSign, Info, Trash2, ArrowUpRight, ArrowDownRight, AlertTriangle, Loader2, Download, Check, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useAuth } from '@/hooks/use-auth';
 import { useAppStore } from '@/lib/store';
 import { toast } from 'sonner';
@@ -34,43 +34,98 @@ interface Stats {
 export default function TradingJournalPage() {
   useAuth();
   const { user } = useAppStore();
-  const [sessionData, setSessionData] = useState<SessionData | null>(null);
+  const [allSessions, setAllSessions] = useState<SessionData[]>([]);
+  const [currentSessionIdx, setCurrentSessionIdx] = useState(0);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
   const [justExported, setJustExported] = useState(false);
 
-  const loadSession = () => {
-    const saved = localStorage.getItem('a2sniper_risk_session');
-    if (saved) {
+  const loadSessions = () => {
+    // Load ALL saved sessions from the array
+    const savedAll = localStorage.getItem('a2sniper_risk_sessions');
+    let arraySessions: SessionData[] = [];
+    if (savedAll) {
       try {
-        setSessionData(JSON.parse(saved));
+        const parsed = JSON.parse(savedAll);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          arraySessions = parsed;
+        }
       } catch (e) {
-        console.error('Failed to parse trading journal session data', e);
+        console.error('Failed to parse trading journal sessions', e);
       }
-    } else {
-      setSessionData(null);
     }
+
+    // Also check the singular key for live (possibly unsaved) data from Risk Manager
+    const savedSingle = localStorage.getItem('a2sniper_risk_session');
+    let liveSession: SessionData | null = null;
+    if (savedSingle) {
+      try {
+        liveSession = JSON.parse(savedSingle);
+      } catch (e) {
+        console.error('Failed to parse live session data', e);
+      }
+    }
+
+    // If we have both, merge: use array sessions + check if live session is different from last saved
+    if (arraySessions.length > 0 && liveSession) {
+      // Check if live session matches the last saved session
+      const lastSaved = arraySessions[arraySessions.length - 1];
+      const isSame = lastSaved.sessionCounter === liveSession.sessionCounter &&
+                     lastSaved.initialCapital === liveSession.initialCapital;
+      if (isSame) {
+        // Replace last saved with live data (has latest trade changes)
+        arraySessions[arraySessions.length - 1] = liveSession;
+      } else {
+        // Live session is a NEW unsaved session — append it as a preview
+        // But only if it has recorded trades
+        const hasTrades = liveSession.trades && liveSession.trades.some((t: TradeEntry) => t.result && t.amount > 0);
+        if (hasTrades) {
+          arraySessions.push(liveSession);
+        }
+      }
+      setAllSessions(arraySessions);
+      setCurrentSessionIdx(prev => prev < arraySessions.length ? prev : arraySessions.length - 1);
+      return;
+    }
+
+    // Only array sessions
+    if (arraySessions.length > 0) {
+      setAllSessions(arraySessions);
+      setCurrentSessionIdx(prev => prev < arraySessions.length ? prev : arraySessions.length - 1);
+      return;
+    }
+
+    // Only live session (no saved sessions)
+    if (liveSession) {
+      setAllSessions([liveSession]);
+      setCurrentSessionIdx(0);
+      return;
+    }
+
+    setAllSessions([]);
   };
 
   useEffect(() => {
-    loadSession();
+    loadSessions();
     // Listen to cross-tab localStorage changes
-    window.addEventListener('storage', loadSession);
+    window.addEventListener('storage', loadSessions);
     // Also listen for same-tab custom dispatches from Risk Manager
     const handleCustomStorage = (e: StorageEvent) => {
-      if (e.key === 'a2sniper_risk_session') {
-        loadSession();
+      if (e.key === 'a2sniper_risk_session' || e.key === 'a2sniper_risk_sessions') {
+        loadSessions();
       }
     };
     window.addEventListener('storage', handleCustomStorage);
     // Poll every 2s as a fallback for same-tab updates
-    const interval = setInterval(loadSession, 2000);
+    const interval = setInterval(loadSessions, 2000);
     return () => {
-      window.removeEventListener('storage', loadSession);
+      window.removeEventListener('storage', loadSessions);
       window.removeEventListener('storage', handleCustomStorage);
       clearInterval(interval);
     };
   }, []);
+
+  const sessionData = allSessions[currentSessionIdx] || null;
 
   const getStats = (): Stats => {
     if (!sessionData) return { wins: 0, losses: 0, profit: 0, balance: 0, capital: 0, totalTrades: 0, winRate: 0 };
@@ -112,12 +167,24 @@ export default function TradingJournalPage() {
   const confirmResetJournal = () => {
     setIsResetting(true);
     setTimeout(() => {
-      localStorage.removeItem('a2sniper_risk_session');
-      localStorage.removeItem('a2sniper_risk_trades');
-      setSessionData(null);
+      // Remove current session from the sessions array
+      if (currentSessionIdx >= 0 && currentSessionIdx < allSessions.length) {
+        const updated = allSessions.filter((_, i) => i !== currentSessionIdx);
+        setAllSessions(updated);
+        localStorage.setItem('a2sniper_risk_sessions', JSON.stringify(updated));
+        // Update legacy key
+        if (updated.length > 0) {
+          localStorage.setItem('a2sniper_risk_session', JSON.stringify(updated[updated.length - 1]));
+        } else {
+          localStorage.removeItem('a2sniper_risk_session');
+        }
+        setCurrentSessionIdx(Math.max(0, updated.length - 1));
+      } else {
+        localStorage.removeItem('a2sniper_risk_session');
+      }
       setIsResetting(false);
       setShowResetConfirm(false);
-      toast.success("Journal de trading réinitialisé avec succès.", { duration: 3000 });
+      toast.success("Session removed from Trading Journal.", { duration: 3000 });
     }, 800);
   };
 
@@ -138,16 +205,16 @@ export default function TradingJournalPage() {
       avatarUrl: user?.avatar,
     };
 
-    const doc = createBrandedPDF('Trading Journal', 'Journal de trading et performances', pdfUser);
+    const doc = createBrandedPDF('Trading Journal', 'Trading Journal et performances', pdfUser);
     let y = 58;
 
     // User info card
     y = drawUserInfoCard(doc, y, pdfUser);
 
     // Session Info Section
-    y = drawSectionTitle(doc, 'Informations Session', y);
+    y = drawSectionTitle(doc, 'Session Information', y);
     y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Session', `#${sessionData.sessionCounter}`);
-    y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Capital Initial', `$${sessionData.initialCapital.toFixed(2)}`);
+    y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Initial Capital', `$${sessionData.initialCapital.toFixed(2)}`);
     y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Payout', `${sessionData.payout}%`, { valueColor: '#D4AF37' });
     y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Total Trades', `${stats.totalTrades}`);
     y += 2;
@@ -156,16 +223,16 @@ export default function TradingJournalPage() {
     y = drawSectionTitle(doc, 'Performances', y);
     const cardW = 42;
     const gap = 3;
-    y = drawStatCard(doc, PAGE.marginL, y, cardW, 'Capital Initial', `$${stats.capital.toFixed(2)}`);
-    y = drawStatCard(doc, PAGE.marginL + cardW + gap, y - 21, cardW, 'Balance Actuelle', `$${stats.balance.toFixed(2)}`, { valueColor: '#D4AF37' });
+    y = drawStatCard(doc, PAGE.marginL, y, cardW, 'Initial Capital', `$${stats.capital.toFixed(2)}`);
+    y = drawStatCard(doc, PAGE.marginL + cardW + gap, y - 21, cardW, 'Current Balance', `$${stats.balance.toFixed(2)}`, { valueColor: '#D4AF37' });
     y = drawStatCard(doc, PAGE.marginL + (cardW + gap) * 2, y - 21, cardW, 'Net Profit / Loss', `${stats.profit >= 0 ? '+' : ''}$${stats.profit.toFixed(2)}`, { valueColor: stats.profit >= 0 ? '#22C55E' : '#EF4444' });
     y = drawStatCard(doc, PAGE.marginL + (cardW + gap) * 3, y - 21, cardW, 'Win Rate', `${stats.winRate.toFixed(1)}%`, { valueColor: '#D4AF37' });
     y += 3;
 
     // Win/Loss Breakdown
-    y = drawSectionTitle(doc, 'Répartition des Trades', y);
-    y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Trades Réussis (WIN)', `${stats.wins}`, { valueColor: '#22C55E' });
-    y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Trades Perdus (LOSS)', `${stats.losses}`, { valueColor: '#EF4444' });
+    y = drawSectionTitle(doc, 'Trade Distribution', y);
+    y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Successful Trades (WIN)', `${stats.wins}`, { valueColor: '#22C55E' });
+    y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Lost Trades (LOSS)', `${stats.losses}`, { valueColor: '#EF4444' });
     y += 2;
 
     // Risk Level
@@ -177,12 +244,12 @@ export default function TradingJournalPage() {
     // Trades Table
     if (validTrades.length > 0) {
       y = checkPageBreak(doc, y, 30);
-      y = drawSectionTitle(doc, 'Historique Détaillé des Trades', y);
+      y = drawSectionTitle(doc, 'Detailed Trade History', y);
 
       const headers = [
         { label: '#', width: 12 },
-        { label: 'Résultat', width: 22, align: 'center' as const },
-        { label: 'Mise ($)', width: 28, align: 'right' as const },
+        { label: 'Result', width: 22, align: 'center' as const },
+        { label: 'Stake ($)', width: 28, align: 'right' as const },
         { label: 'Profit / Perte ($)', width: 35, align: 'right' as const },
         { label: 'Cumul ($)', width: 28, align: 'right' as const },
       ];
@@ -206,40 +273,64 @@ export default function TradingJournalPage() {
     savePDF(doc, `a2sniper-journal-${dateStr}.pdf`, pdfUser);
     setJustExported(true);
     setTimeout(() => setJustExported(false), 2500);
-    toast.success('Rapport PDF du journal exporté avec succès !');
+    toast.success('Journal PDF report exported successfully!');
   };
 
   return (
     <div className="space-y-8">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <div>
-          <h1 className="text-3xl font-black text-white uppercase tracking-tight">
-            Trading Journal
-          </h1>
-          <p className="text-sm text-gray-400 mt-1">
-            Analysez vos performances et journal de trading basés sur votre session active.
-          </p>
-        </div>
-        {sessionData && (
-          <div className="flex items-center gap-3">
+      {/* Session navigation + action buttons */}
+      {sessionData && (
+        <div className="flex justify-between items-center gap-3 flex-wrap">
+          {/* Session navigation arrows — always show when sessions exist */}
+          {allSessions.length > 0 && (
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setCurrentSessionIdx(Math.max(0, currentSessionIdx - 1))}
+                disabled={currentSessionIdx === 0}
+                className={`w-8 h-8 rounded-lg flex items-center justify-center border transition-all ${
+                  currentSessionIdx === 0
+                    ? 'bg-gray-800/30 border-gray-700/30 text-gray-600 cursor-not-allowed opacity-50'
+                    : 'bg-[#1a1a1e] border-[#D4AF37]/30 text-[#D4AF37] hover:bg-[#D4AF37]/20 active:scale-95'
+                }`}
+                title="Previous session"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+              <span className="text-xs font-bold text-gray-500 min-w-[80px] text-center">
+                Session {currentSessionIdx + 1} / {allSessions.length}
+              </span>
+              <button
+                onClick={() => setCurrentSessionIdx(Math.min(allSessions.length - 1, currentSessionIdx + 1))}
+                disabled={currentSessionIdx === allSessions.length - 1}
+                className={`w-8 h-8 rounded-lg flex items-center justify-center border transition-all ${
+                  currentSessionIdx === allSessions.length - 1
+                    ? 'bg-gray-800/30 border-gray-700/30 text-gray-600 cursor-not-allowed opacity-50'
+                    : 'bg-[#1a1a1e] border-[#D4AF37]/30 text-[#D4AF37] hover:bg-[#D4AF37]/20 active:scale-95'
+                }`}
+                title="Next session"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
+          )}
+          <div className="flex items-center gap-3 ml-auto">
             <button
               onClick={handleExportPDF}
               className={`px-6 py-2.5 rounded-xl text-xs font-black flex items-center gap-2 transition-all ${justExported ? 'bg-green-500 shadow-lg shadow-green-500/20' : 'bg-[#D4AF37] hover:bg-[#c5a059] shadow-lg shadow-[#D4AF37]/20'} text-black`}
             >
               {justExported ? <Check className="w-4 h-4" /> : <Download className="w-4 h-4 text-black" />}
-              {justExported ? 'EXPORTÉ !' : 'EXPORTER PDF'}
+              {justExported ? 'EXPORTED!' : 'EXPORT PDF'}
             </button>
             <button
               onClick={handleResetJournal}
               className="flex items-center gap-2 px-4 py-2.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 hover:text-red-300 rounded-xl text-xs font-black uppercase tracking-wider transition-all border border-red-500/20 active:scale-95"
             >
               <Trash2 className="w-4 h-4" />
-              Réinitialiser
+              Reset
             </button>
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
       {!sessionData ? (
         <motion.div
@@ -250,7 +341,7 @@ export default function TradingJournalPage() {
           <div className="w-16 h-16 bg-white/[0.02] border border-white/5 rounded-2xl flex items-center justify-center mx-auto mb-6 text-gray-500">
             <Calendar className="w-8 h-8" />
           </div>
-          <h2 className="text-lg font-black text-white uppercase mb-2">Aucune session active</h2>
+          <h2 className="text-lg font-black text-white uppercase mb-2">No active session</h2>
           <p className="text-sm text-gray-400 font-bold mb-6 max-w-md mx-auto leading-relaxed">
             Pour voir vos statistiques et historique de trades, veuillez d&apos;abord configurer et sauvegarder une session dans le Risk Manager (via le Bot Telegram ou l&apos;onglet Risk Manager).
           </p>
@@ -260,8 +351,8 @@ export default function TradingJournalPage() {
           {/* Summary Cards */}
           <div className="lg:col-span-12 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
             {[
-              { label: 'Capital Initial', value: `$${stats.capital.toFixed(2)}`, icon: DollarSign, color: 'text-gray-400 bg-white/[0.02]' },
-              { label: 'Balance Actuelle', value: `$${stats.balance.toFixed(2)}`, icon: BarChart3, color: 'text-[#D4AF37] bg-[#D4AF37]/10' },
+              { label: 'Initial Capital', value: `$${stats.capital.toFixed(2)}`, icon: DollarSign, color: 'text-gray-400 bg-white/[0.02]' },
+              { label: 'Current Balance', value: `$${stats.balance.toFixed(2)}`, icon: BarChart3, color: 'text-[#D4AF37] bg-[#D4AF37]/10' },
               { label: 'Net Profit / Loss', value: `${stats.profit >= 0 ? '+' : ''}$${stats.profit.toFixed(2)}`, icon: Target, color: stats.profit >= 0 ? 'text-green-500 bg-green-500/10' : 'text-red-500 bg-red-500/10' },
               { label: 'Win Rate Global', value: `${stats.winRate.toFixed(1)}%`, icon: Target, color: 'text-[#D4AF37] bg-[#D4AF37]/10' }
             ].map((stat, i) => (
@@ -286,10 +377,10 @@ export default function TradingJournalPage() {
           {/* Left panel: Session details */}
           <div className="lg:col-span-4 space-y-6">
             <div className="bg-[#0a0a0c]/80 border border-white/5 p-6 rounded-3xl backdrop-blur-md space-y-4">
-              <h3 className="text-sm font-black text-white uppercase tracking-wider border-b border-white/5 pb-3">Informations Session</h3>
+              <h3 className="text-sm font-black text-white uppercase tracking-wider border-b border-white/5 pb-3">Session Information</h3>
               <div className="space-y-3 font-bold text-xs">
                 <div className="flex justify-between text-gray-400">
-                  <span>Numéro Session :</span>
+                  <span>Session Number:</span>
                   <span className="text-white">Session {sessionData.sessionCounter}</span>
                 </div>
                 <div className="flex justify-between text-gray-400">
@@ -301,11 +392,11 @@ export default function TradingJournalPage() {
                   <span className="text-white">{stats.totalTrades}</span>
                 </div>
                 <div className="flex justify-between text-gray-400">
-                  <span>Trades Réussis (WIN) :</span>
+                  <span>Successful Trades (WIN) :</span>
                   <span className="text-green-500">{stats.wins}</span>
                 </div>
                 <div className="flex justify-between text-gray-400">
-                  <span>Trades Perdus (LOSS) :</span>
+                  <span>Lost Trades (LOSS) :</span>
                   <span className="text-red-500">{stats.losses}</span>
                 </div>
               </div>
@@ -314,17 +405,17 @@ export default function TradingJournalPage() {
             <div className="bg-[#D4AF37]/5 border border-[#D4AF37]/10 p-5 rounded-2xl flex items-start gap-3">
               <Info className="w-5 h-5 text-[#D4AF37] flex-shrink-0 mt-0.5" />
               <p className="text-[11px] text-gray-400 font-bold leading-relaxed">
-                Ce journal est directement synchronisé avec le Risk Manager. Vos trades saisis dans le simulateur ou le risk manager se reflètent automatiquement ici.
+                This journal is directly synchronized with the Risk Manager. Your trades entered in the simulator or risk manager are automatically reflected here.
               </p>
             </div>
           </div>
 
           {/* Right panel: Detailed list */}
           <div className="lg:col-span-8 bg-[#0a0a0c]/80 border border-white/5 p-6 rounded-3xl backdrop-blur-md space-y-6">
-            <h3 className="text-sm font-black text-white uppercase tracking-wider">Historique Détaillé des Trades</h3>
+            <h3 className="text-sm font-black text-white uppercase tracking-wider">Detailed Trade History</h3>
             {validTrades.length === 0 ? (
               <p className="text-xs text-gray-500 font-bold italic text-center py-12 bg-[#050507]/40 rounded-2xl border border-white/5">
-                Aucun trade enregistré dans cette session active.
+                No trades recorded in this active session.
               </p>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -348,7 +439,7 @@ export default function TradingJournalPage() {
                           #{idx + 1}
                         </div>
                         <div>
-                          <p className="text-xs font-black text-white">Mise: ${t.amount}</p>
+                          <p className="text-xs font-black text-white">Stake: ${t.amount}</p>
                           <p className={`text-[9px] font-black uppercase tracking-wider ${isWin ? 'text-green-500' : 'text-red-500'}`}>
                             {t.result}
                           </p>
@@ -391,10 +482,10 @@ export default function TradingJournalPage() {
             >
               <div className="flex items-center gap-3 mb-4">
                 <AlertTriangle className="w-6 h-6 text-red-500" />
-                <h3 className="text-lg font-bold text-white">Réinitialiser le journal</h3>
+                <h3 className="text-lg font-bold text-white">Reset Trading Journal</h3>
               </div>
               <p className="text-sm text-gray-400 mb-6 leading-relaxed">
-                Voulez-vous vraiment réinitialiser le journal de trading ? Toutes les données de session et l&apos;historique des trades seront définitivement effacés.
+                This will remove the current session from the Trading Journal. Other saved sessions will be kept. Are you sure?
               </p>
               <div className="flex gap-3">
                 <button
@@ -404,15 +495,15 @@ export default function TradingJournalPage() {
                 >
                   {isResetting ? <>
                     <Loader2 className="w-4 h-4 animate-spin" />
-                    Réinitialisation...
-                  </> : 'Confirmer'}
+                    Resetting...
+                  </> : 'Confirm'}
                 </button>
                 <button
                   onClick={() => setShowResetConfirm(false)}
                   disabled={isResetting}
                   className="flex-1 bg-gray-800 hover:bg-gray-700 disabled:opacity-50 text-gray-300 px-4 py-2.5 rounded-lg font-bold transition-colors"
                 >
-                  Annuler
+                  Cancel
                 </button>
               </div>
             </motion.div>

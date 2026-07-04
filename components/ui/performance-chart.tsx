@@ -25,7 +25,7 @@ export function PerformanceChart({ data, title }: PerformanceChartProps) {
       >
         <h3 className="text-lg font-semibold text-gray-900 mb-6">{title}</h3>
         <div className="h-80 flex items-center justify-center text-gray-400">
-          <p>Aucune donnée disponible</p>
+          <p>No data available</p>
         </div>
       </motion.div>
     );
@@ -54,7 +54,7 @@ export function PerformanceChart({ data, title }: PerformanceChartProps) {
               dataKey="date" 
               stroke="#6B7280"
               fontSize={12}
-              tickFormatter={(value) => new Date(value).toLocaleDateString('fr-FR', { 
+              tickFormatter={(value) => new Date(value).toLocaleDateString('en-US', { 
                 month: 'short', 
                 day: 'numeric' 
               })}
@@ -73,9 +73,9 @@ export function PerformanceChart({ data, title }: PerformanceChartProps) {
               }}
               formatter={(value: number, name: string) => [
                 name === 'profit' ? `$${value}` : `${value}%`,
-                name === 'profit' ? 'Profit' : 'Taux de réussite'
+                name === 'profit' ? 'Profit' : 'Success Rate'
               ]}
-              labelFormatter={(label) => new Date(label).toLocaleDateString('fr-FR')}
+              labelFormatter={(label) => new Date(label).toLocaleDateString('en-US')}
             />
             <Area
               type="monotone"
@@ -101,13 +101,13 @@ export function PerformanceChart({ data, title }: PerformanceChartProps) {
           <div className="text-2xl font-bold text-[#D4AF37]">
             ${data[data.length - 1]?.profit || 0}
           </div>
-          <div className="text-sm text-gray-600">Profit actuel</div>
+          <div className="text-sm text-gray-600">Current Profit</div>
         </div>
         <div>
           <div className="text-2xl font-bold text-green-600">
             {data[data.length - 1]?.winRate || 0}%
           </div>
-          <div className="text-sm text-gray-600">Taux de réussite</div>
+          <div className="text-sm text-gray-600">Success Rate</div>
         </div>
         <div>
           <div className="text-2xl font-bold text-purple-600">

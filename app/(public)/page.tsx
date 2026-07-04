@@ -17,46 +17,46 @@ export default function HomePage() {
   const features = [
     {
       icon: <Zap className="w-6 h-6" />,
-      title: "Signaux IA en temps réel",
-      description: "Algorithmes d'apprentissage automatique analysant les marchés 24/7"
+      title: "Real-time AI Signals",
+      description: "Machine learning algorithms analyzing markets 24/7"
     },
     {
       icon: <Target className="w-6 h-6" />,
-      title: "Consensus Multi-Modèles",
-      description: "Taux de réussite exceptionnel confirmé par des milliers de signaux réels"
+      title: "Multi-Model Consensus",
+      description: "Exceptional Success Rate confirmed by thousands of real signals"
     },
     {
       icon: <Shield className="w-6 h-6" />,
-      title: "Gestion du Risque",
-      description: "Protocoles intégrés pour protéger votre capital et sécuriser vos gains"
+      title: "Risk Management",
+      description: "Integrated protocols to protect your capital and secure your gains"
     },
     {
       icon: <Users className="w-6 h-6" />,
-      title: "Accès VIP Founders",
-      description: "Rejoignez un cercle exclusif de traders professionnels et performants"
+      title: "VIP Founders Access",
+      description: "Join an exclusive circle of professional and high-performing traders"
     }
   ];
 
   const testimonials = [
     {
       name: "Marc Dubois",
-      role: "Trader Professionnel",
+      role: "Trade Professionnel",
       avatar: "https://images.pexels.com/photos/1043471/pexels-photo-1043471.jpeg?auto=compress&cs=tinysrgb&w=150",
-      content: "J'ai optimisé mes performances de manière fulgurante avec A2Sniper. Les analyses sont d'une précision remarquable.",
+      content: "I boosted my performance spectacularly with A2Sniper. The analysis is remarkably accurate.",
       rating: 5
     },
     {
       name: "Sarah Martin",
       role: "Investisseuse",
       avatar: "https://images.pexels.com/photos/1181686/pexels-photo-1181686.jpeg?auto=compress&cs=tinysrgb&w=150",
-      content: "L'interface cockpit de trading est intuitive et les résultats exceptionnels. Je recommande vivement cette plateforme.",
+      content: "The trading cockpit interface is intuitive and the results are exceptional. I highly recommend this platform.",
       rating: 5
     },
     {
       name: "Thomas Bernard",
-      role: "Day Trader",
+      role: "Day Trade",
       avatar: "https://images.pexels.com/photos/1043474/pexels-photo-1043474.jpeg?auto=compress&cs=tinysrgb&w=150",
-      content: "Les signaux arrivent au bon moment avec une précision incroyable. Parfait pour le trading sur Pocket Option.",
+      content: "Signals arrive at the right time with incredible accuracy. Perfect for trading on Pocket Option.",
       rating: 5
     }
   ];
@@ -78,7 +78,7 @@ export default function HomePage() {
   const handleSubscribeNewsletter = useCallback((e: React.FormEvent) => {
     e.preventDefault();
     if (email.trim()) {
-      toast.success(`Merci ${email} ! Inscription à la newsletter confirmée.`);
+      toast.success(`Thank you ${email}! Newsletter subscription confirmed.`);
       setEmail('');
     }
   }, [email]);
@@ -115,7 +115,7 @@ export default function HomePage() {
                 href="/login" 
                 className="bg-gradient-to-r from-[#D4AF37] to-[#C5A059] hover:from-[#c5a059] hover:to-[#D4AF37] text-black font-black uppercase tracking-wider text-xs px-6 py-2.5 rounded-xl transition-all duration-300 shadow-[0_0_15px_rgba(212,175,55,0.15)] hover:shadow-[0_0_25px_rgba(212,175,55,0.25)]"
               >
-                Connexion
+                Login
               </Link>
             </div>
           </div>
@@ -138,12 +138,12 @@ export default function HomePage() {
               <h1 className="text-4xl md:text-6xl lg:text-7xl font-black text-white mb-6 tracking-tight leading-none">
                 Trading Algorithmique<br />
                 <span className="block mt-2 text-transparent bg-clip-text bg-gradient-to-r from-[#D4AF37] to-[#F3E5AB]">
-                  Propulsé par l'IA
+                  Powered by AI
                 </span>
               </h1>
               <p className="text-lg md:text-xl text-gray-400 mb-10 max-w-3xl mx-auto leading-relaxed">
-                Prenez l'avantage sur le marché avec nos signaux neuronaux en direct. 
-                Consensus multi-modèles, gestion automatique du risque et intégration exclusive.
+                Gain the market advantage with our live neural signals. 
+                Multi-model consensus, automatic risk management and exclusive integration.
               </p>
               
               <div className="flex flex-col sm:flex-row gap-4 justify-center items-center">
@@ -151,7 +151,7 @@ export default function HomePage() {
                   href="/signup" 
                   className="w-full sm:w-auto bg-gradient-to-r from-[#D4AF37] to-[#C5A059] hover:from-[#c5a059] hover:to-[#D4AF37] text-black font-black uppercase tracking-[0.2em] text-xs px-10 py-5 rounded-xl transition-all duration-300 shadow-[0_0_30px_rgba(212,175,55,0.2)]"
                 >
-                  Découvrir le Cockpit
+                  Discover the Cockpit
                 </Link>
                 <button 
                   onClick={handleStartDemo}
@@ -161,12 +161,12 @@ export default function HomePage() {
                   {showDemo ? (
                     <>
                       <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                      <span>Vérification...</span>
+                      <span>Checking...</span>
                     </>
                   ) : (
                     <>
                       <Play className="w-4 h-4" />
-                      <span>Lancer la Démo</span>
+                      <span>Launch Demo</span>
                     </>
                   )}
                 </button>
@@ -204,7 +204,7 @@ export default function HomePage() {
               Pourquoi choisir <span className="text-[#D4AF37]">A2Sniper</span> ?
             </h2>
             <p className="text-gray-400 max-w-2xl mx-auto font-medium">
-              Une technologie de pointe conçue pour maximiser l'efficacité de vos trades.
+              Cutting-edge technology designed to maximize your trading efficiency.
             </p>
           </div>
           
@@ -233,10 +233,10 @@ export default function HomePage() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center mb-20">
             <h2 className="text-3xl md:text-4xl font-black text-white mb-4 uppercase tracking-tight">
-              Abonnements <span className="text-[#D4AF37]">Founders</span>
+              Subscriptions <span className="text-[#D4AF37]">Founders</span>
             </h2>
             <p className="text-gray-400 max-w-2xl mx-auto font-medium">
-              Débloquez l'accès complet au flux algorithmique A2Sniper.
+              Unlock full access to the A2Sniper algorithmic stream.
             </p>
           </div>
           
@@ -301,10 +301,10 @@ export default function HomePage() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center mb-20">
             <h2 className="text-3xl md:text-4xl font-black text-white mb-4 uppercase tracking-tight">
-              Avis des <span className="text-[#D4AF37]">Traders</span>
+              Avis des <span className="text-[#D4AF37]">Trades</span>
             </h2>
             <p className="text-gray-400 max-w-2xl mx-auto font-medium">
-              Découvrez les retours de notre communauté Founders exclusive.
+              Discover feedback from our exclusive Founders community.
             </p>
           </div>
           
@@ -350,17 +350,17 @@ export default function HomePage() {
             transition={{ duration: 0.8 }}
           >
             <h2 className="text-3xl md:text-5xl font-black text-white mb-6 uppercase tracking-tight">
-              Prêt à révolutionner votre trading ?
+              Ready to revolutionize your trading?
             </h2>
             <p className="text-gray-400 mb-10 max-w-2xl mx-auto leading-relaxed">
-              Rejoignez des milliers de traders qui exploitent la puissance neuronale d'A2Sniper.
+              Join thousands of traders harnessing the neural power of A2Sniper.
             </p>
             <div className="flex flex-col sm:flex-row gap-4 justify-center">
               <Link 
                 href="/login" 
                 className="inline-flex items-center justify-center space-x-2 bg-gradient-to-r from-[#D4AF37] to-[#C5A059] text-black font-black uppercase tracking-[0.2em] text-xs px-10 py-5 rounded-xl transition-all duration-300 shadow-[0_0_20px_rgba(212,175,55,0.15)]"
               >
-                <span>Accès Immédiat</span>
+                <span>Immediate Access</span>
                 <ArrowRight className="w-4 h-4" />
               </Link>
               <Link 
@@ -381,8 +381,8 @@ export default function HomePage() {
           
           {/* Newsletter */}
           <div className="mb-16 text-center max-w-md mx-auto">
-            <h3 className="text-xl font-bold text-white mb-3 uppercase tracking-wider">Restez Informé</h3>
-            <p className="text-sm text-gray-500 mb-6">Recevez nos analyses neurales directement dans votre boîte mail.</p>
+            <h3 className="text-xl font-bold text-white mb-3 uppercase tracking-wider">Stay Informed</h3>
+            <p className="text-sm text-gray-500 mb-6">Receive our neural analysis directly in your inbox.</p>
             <form onSubmit={handleSubscribeNewsletter} className="flex gap-2">
               <input
                 type="email"
@@ -410,7 +410,7 @@ export default function HomePage() {
                 <span className="text-lg font-black text-white tracking-widest uppercase">A2Sniper</span>
               </div>
               <p className="text-sm text-gray-500 font-bold leading-relaxed">
-                Cockpit de trading algorithmique propulsé par l'intelligence artificielle A2Sniper.
+                Algorithmic trading cockpit powered by A2Sniper artificial intelligence.
               </p>
             </div>
             
@@ -418,14 +418,14 @@ export default function HomePage() {
               <h3 className="text-sm font-bold text-white mb-6 uppercase tracking-widest">Produit</h3>
               <ul className="space-y-3 text-sm font-bold">
                 <li><Link href="/dashboard" className="hover:text-white transition-colors">Dashboard</Link></li>
-                <li><Link href="/signals" className="hover:text-white transition-colors">Signaux Live</Link></li>
+                <li><Link href="/signals" className="hover:text-white transition-colors">Live Signals</Link></li>
                 <li><Link href="/performance" className="hover:text-white transition-colors">Performance</Link></li>
-                <li><Link href="/trading-journal" className="hover:text-white transition-colors">Journal de Trading</Link></li>
+                <li><Link href="/trading-journal" className="hover:text-white transition-colors">Trading Journal</Link></li>
               </ul>
             </div>
             
             <div>
-              <h3 className="text-sm font-bold text-white mb-6 uppercase tracking-widest">Réseaux & Comm</h3>
+              <h3 className="text-sm font-bold text-white mb-6 uppercase tracking-widest">Networks & Comm</h3>
               <ul className="space-y-3 text-sm font-bold">
                 <li><Link href="/telegram" className="hover:text-white transition-colors">Bot Telegram</Link></li>
                 <li><a href="mailto:support@a2sniper.com" className="hover:text-white transition-colors">Contact Founder</a></li>
@@ -434,17 +434,17 @@ export default function HomePage() {
             </div>
             
             <div>
-              <h3 className="text-sm font-bold text-white mb-6 uppercase tracking-widest">Légal</h3>
+              <h3 className="text-sm font-bold text-white mb-6 uppercase tracking-widest">Legal</h3>
               <ul className="space-y-3 text-sm font-bold">
-                <li><Link href="/legal" className="hover:text-white transition-colors">Conditions Générales</Link></li>
-                <li><Link href="/legal" className="hover:text-white transition-colors">Confidentialité</Link></li>
+                <li><Link href="/legal" className="hover:text-white transition-colors">Terms & Conditions</Link></li>
+                <li><Link href="/legal" className="hover:text-white transition-colors">Privacy</Link></li>
                 <li><Link href="/legal" className="hover:text-white transition-colors">Avertissement Risques</Link></li>
               </ul>
             </div>
           </div>
           
           <div className="border-t border-white/5 mt-12 pt-8 text-center text-xs text-gray-600 font-bold uppercase tracking-widest">
-            <p>&copy; 2024-2026 A2Sniper. Tous droits réservés.</p>
+            <p>&copy; 2024-2026 A2Sniper. All rights reserved.</p>
           </div>
         </div>
       </footer>
