@@ -97,7 +97,19 @@ class PocketOptionScanner:
         self._ping_task = None
         self._health_check_task = None
         self._asset_refresh_task = None  # Periodic asset refresh loop
+        # ─── Balance tracking (safe extraction with is_demo filter) ───
+        # _balance: current balance for the account type we're connected to.
+        # _balance_history: ring buffer of last 20 accepted updates.
+        # _balance_raw_events: ring buffer of last 10 raw events (incl. REJECTED).
+        # _balance_source: which event last updated it.
+        # _balance_last_updated: ISO timestamp of last accepted update.
+        # _balance_event_is_demo: is_demo flag from last balance event.
         self._balance = None
+        self._balance_history = []
+        self._balance_raw_events = []
+        self._balance_source = None
+        self._balance_last_updated = None
+        self._balance_event_is_demo = None
         self._last_message_time = None
         self._message_buffer = []  # Buffer for incoming messages
         self._auth_event = asyncio.Event()
@@ -664,7 +676,23 @@ class PocketOptionScanner:
                         if not self._is_authenticated:
                             self._is_authenticated = True
                             self._auth_event.set()
-                            logger.info(f"[SCANNER] ✅ Authentification réussie (via binary event: {event_name})")
+                            logger.info(f"[SCANNER] ✅ Authentication successful (via binary event: {event_name})")
+                        # Extract balance using safe helper (is_demo filter, no dangerous fallback)
+                        try:
+                            if event_data and isinstance(event_data[0], dict):
+                                bal = event_data[0]
+                                logger.info(f"[SCANNER-BALANCE] binary '{event_name}' raw data: {str(bal)[:300]}")
+                                self._record_balance_update(bal, source="binary_auth")
+                            elif event_data:
+                                for item in event_data:
+                                    if isinstance(item, dict):
+                                        self._record_balance_update(item, source="binary_auth")
+                                    elif isinstance(item, list):
+                                        for sub in item:
+                                            if isinstance(sub, dict):
+                                                self._record_balance_update(sub, source="binary_auth")
+                        except Exception as e:
+                            logger.warning(f"[SCANNER-BALANCE] binary '{event_name}' parse error: {e}")
                     elif event_name in ("NotAuthorized", "notAuthorized"):
                         self._is_authenticated = False
                         self._auth_event.set()
@@ -679,7 +707,23 @@ class PocketOptionScanner:
                     if not self._is_authenticated:
                         self._is_authenticated = True
                         self._auth_event.set()
-                        logger.info(f"[SCANNER] ✅ Authentification réussie (via binary event: {event_name})")
+                        logger.info(f"[SCANNER] ✅ Authentication successful (via binary event: {event_name})")
+                    # Extract balance using safe helper (is_demo filter, no dangerous fallback)
+                    try:
+                        if event_data and isinstance(event_data[0], dict):
+                            bal = event_data[0]
+                            logger.info(f"[SCANNER-BALANCE] binary '{event_name}' raw data: {str(bal)[:300]}")
+                            self._record_balance_update(bal, source="binary_auth")
+                        elif event_data:
+                            for item in event_data:
+                                if isinstance(item, dict):
+                                    self._record_balance_update(item, source="binary_auth")
+                                elif isinstance(item, list):
+                                    for sub in item:
+                                        if isinstance(sub, dict):
+                                            self._record_balance_update(sub, source="binary_auth")
+                    except Exception as e:
+                        logger.warning(f"[SCANNER-BALANCE] binary '{event_name}' parse error: {e}")
                 elif event_name in ("NotAuthorized", "notAuthorized"):
                     self._is_authenticated = False
                     self._auth_event.set()
@@ -898,6 +942,143 @@ class PocketOptionScanner:
         except Exception as e:
             logger.debug(f"[SCANNER] Asset dict parse error: {e}")
 
+
+    # ═══════════════════════════════════════════════════════════════════
+    # BALANCE EXTRACTION (CRITICAL — was previously buggy)
+    # ─────────────────────────────────────────────────────────────────
+    # PO sends balance updates via multiple event names:
+    #   • "successauth"           — initial auth response
+    #   • "balance"               — periodic balance updates
+    #   • "updateBalance"         — when a trade closes
+    #   • "successUpdateBalance"  — after a successful balance update request
+    #
+    # BUG FIX (2026-07-05):
+    #   1. Removed dangerous fallback that picked ANY positive numeric value
+    #      when no recognized key was found (could pick user_id, timestamp, etc.)
+    #   2. Added is_demo filtering — PO sends balance for BOTH demo and real
+    #      accounts in the same event stream. Only accept events matching
+    #      our connection's is_demo flag.
+    # ═══════════════════════════════════════════════════════════════════
+    def _extract_balance_from_dict(self, bal: dict, source: str) -> tuple:
+        """
+        Extract (balance, is_demo_from_event, key_used) from a balance dict.
+        Returns (None, None, None) if no balance can be safely extracted.
+        NO FALLBACK to random numeric values — too dangerous.
+        """
+        if not isinstance(bal, dict):
+            return (None, None, None)
+
+        # Detect is_demo from event
+        event_is_demo = None
+        if 'is_demo' in bal:
+            try:
+                event_is_demo = bool(int(bal['is_demo']))
+            except (ValueError, TypeError):
+                event_is_demo = None
+        elif 'isDemo' in bal:
+            try:
+                event_is_demo = bool(int(bal['isDemo']))
+            except (ValueError, TypeError):
+                event_is_demo = None
+
+        # If event specifies is_demo, only accept if it matches our connection
+        if event_is_demo is not None and event_is_demo != self.is_demo:
+            logger.info(
+                f"[SCANNER-BALANCE] Skipping {source} event: event is_demo={event_is_demo} "
+                f"!= connection is_demo={self.is_demo} (raw keys: {list(bal.keys())[:10]})"
+            )
+            return (None, event_is_demo, None)
+
+        effective_is_demo = event_is_demo if event_is_demo is not None else self.is_demo
+
+        if effective_is_demo:
+            for key in ('demo_balance', 'balance', 'account_balance', 'amount'):
+                v = bal.get(key)
+                if isinstance(v, (int, float)) and v > 0:
+                    return (float(v), event_is_demo, key)
+        else:
+            for key in ('balance', 'account_balance', 'amount', 'balance_amount'):
+                v = bal.get(key)
+                if isinstance(v, (int, float)) and v > 0:
+                    return (float(v), event_is_demo, key)
+
+        return (None, event_is_demo, None)
+
+    def _record_balance_update(self, bal: dict, source: str) -> None:
+        """Extract balance from dict and record it (if it passes is_demo filter)."""
+        try:
+            balance_value, event_is_demo, key_used = self._extract_balance_from_dict(bal, source)
+            now_iso = datetime.now(timezone.utc).isoformat()
+
+            # Always record the raw event (for debugging), even if rejected
+            self._balance_raw_events.append({
+                "ts": now_iso,
+                "source": source,
+                "raw": bal if isinstance(bal, dict) else str(bal)[:500],
+                "accepted": balance_value is not None,
+                "key_used": key_used,
+                "event_is_demo": event_is_demo,
+                "connection_is_demo": self.is_demo,
+            })
+            if len(self._balance_raw_events) > 10:
+                self._balance_raw_events = self._balance_raw_events[-10:]
+
+            if balance_value is None:
+                return
+
+            # Sanity check: balance should be a reasonable positive number
+            if not (0 < balance_value < 100_000_000):
+                logger.warning(
+                    f"[SCANNER-BALANCE] Rejected implausible balance {balance_value} "
+                    f"from {source} (key={key_used})"
+                )
+                return
+
+            old_balance = self._balance
+            self._balance = balance_value
+            self._balance_source = source
+            self._balance_last_updated = now_iso
+            self._balance_event_is_demo = event_is_demo
+
+            self._balance_history.append({
+                "ts": now_iso,
+                "balance": balance_value,
+                "old_balance": old_balance,
+                "source": source,
+                "key_used": key_used,
+                "event_is_demo": event_is_demo,
+                "connection_is_demo": self.is_demo,
+                "raw_keys": list(bal.keys())[:15] if isinstance(bal, dict) else [],
+            })
+            if len(self._balance_history) > 20:
+                self._balance_history = self._balance_history[-20:]
+
+            if old_balance is None or old_balance != balance_value:
+                logger.info(
+                    f"[SCANNER-BALANCE] Balance updated via {source} (key={key_used}): "
+                    f"{old_balance} -> {balance_value} "
+                    f"(event_is_demo={event_is_demo}, conn_is_demo={self.is_demo})"
+                )
+        except Exception as e:
+            logger.warning(f"[SCANNER-BALANCE] Error recording update from {source}: {e}", exc_info=True)
+
+    def get_balance_debug_info(self) -> dict:
+        """Return comprehensive balance debugging info for the diagnostic endpoint."""
+        return {
+            "current_balance": self._balance,
+            "balance_source": self._balance_source,
+            "balance_last_updated": self._balance_last_updated,
+            "connection_is_demo": self.is_demo,
+            "last_event_is_demo": self._balance_event_is_demo,
+            "balance_history_count": len(self._balance_history),
+            "balance_history": self._balance_history,
+            "raw_events_count": len(self._balance_raw_events),
+            "raw_events": self._balance_raw_events,
+            "is_connected": self.is_connected,
+            "is_authenticated": self._is_authenticated,
+            "uid": self._uid,
+        }
+
     async def _handle_event(self, event_name: str, event_data: list):
         """Handle Socket.IO named events."""
 
@@ -905,7 +1086,23 @@ class PocketOptionScanner:
         if event_name == "successauth":
             self._is_authenticated = True
             self._auth_event.set()
-            logger.info("[SCANNER] ✅ Authentification réussie (via event)")
+            logger.info("[SCANNER] ✅ Authentication successful (via event)")
+            # Extract balance using safe helper (is_demo filter, no dangerous fallback)
+            try:
+                if event_data and isinstance(event_data[0], dict):
+                    bal = event_data[0]
+                    logger.info(f"[SCANNER-BALANCE] successauth raw data: {str(bal)[:300]}")
+                    self._record_balance_update(bal, source="auth")
+                elif event_data:
+                    for item in event_data:
+                        if isinstance(item, list):
+                            for sub in item:
+                                if isinstance(sub, dict):
+                                    self._record_balance_update(sub, source="auth")
+                        elif isinstance(item, dict):
+                            self._record_balance_update(item, source="auth")
+            except Exception as e:
+                logger.warning(f"[SCANNER-BALANCE] successauth parse error: {e}")
             return
 
         # Auth failure event
@@ -965,14 +1162,35 @@ class PocketOptionScanner:
                 logger.debug(f"[SCANNER] Payout parse error: {e}")
             return
 
-        # Balance update
-        if event_name == "balance":
+        # ═══ BALANCE EVENTS ═════════════════════════════════════════════
+        # PO sends balance updates via multiple event names:
+        #   • "balance"               — periodic balance updates
+        #   • "updateBalance"         — when a trade closes (real-time)
+        #   • "successUpdateBalance"  — after a successful balance update request
+        # All three use the same data format: [{...balance fields...}]
+        # We use the safe _record_balance_update helper which:
+        #   1. Checks is_demo flag (only accepts events matching our connection)
+        #   2. Uses recognized keys only (no dangerous fallback to random numbers)
+        #   3. Records to history + raw events for debugging
+        if event_name.lower() in ("balance", "updatebalance", "successupdatebalance"):
             try:
-                if event_data and isinstance(event_data[0], dict):
-                    self._balance = event_data[0]
-                    logger.info(f"[SCANNER] Balance: {event_data[0]}")
-            except Exception:
-                pass
+                source_map = {
+                    "balance": "balance_event",
+                    "updatebalance": "updateBalance_event",
+                    "successupdatebalance": "successUpdateBalance_event",
+                }
+                source = source_map.get(event_name.lower(), "balance_event")
+                if event_data:
+                    if isinstance(event_data[0], dict):
+                        bal = event_data[0]
+                        logger.info(f"[SCANNER-BALANCE] '{event_name}' raw data: {str(bal)[:300]}")
+                        self._record_balance_update(bal, source=source)
+                    elif isinstance(event_data[0], list):
+                        for sub in event_data[0]:
+                            if isinstance(sub, dict):
+                                self._record_balance_update(sub, source=source)
+            except Exception as e:
+                logger.warning(f"[SCANNER-BALANCE] '{event_name}' parse error: {e}")
             return
 
         # updateStream — PO's LIVE TICK STREAM. This is how PO's modern API

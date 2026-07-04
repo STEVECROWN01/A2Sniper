@@ -83,6 +83,14 @@ interface AppState {
     payouts: Record<string, number>;
     pair_status?: Record<string, { payout: number; is_active: boolean; display: string }>;
     all_otc_pairs?: Record<string, number>;
+    // Account balance from PO — already filtered by is_demo on the backend,
+    // so this is the balance for the account type the user is actually
+    // connected to (real if is_demo=false, demo if is_demo=true).
+    account_balance?: number | null;
+    is_demo?: boolean;
+    balance_source?: string | null;
+    balance_last_updated?: string | null;
+    balance_event_is_demo?: boolean | null;
   } | null;
   isInitialized: boolean;
   clockOffset: number;
@@ -433,6 +441,11 @@ export const useAppStore = create<AppState>((set, get) => ({
             payouts: mergedPayouts,
             pair_status: pairStatus,
             all_otc_pairs: allOtcPairs,
+            account_balance: data.account_balance ?? null,
+            is_demo: data.is_demo,
+            balance_source: data.balance_source ?? null,
+            balance_last_updated: data.balance_last_updated ?? null,
+            balance_event_is_demo: data.balance_event_is_demo ?? null,
           }
         });
 
