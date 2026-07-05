@@ -702,6 +702,19 @@ async def analyze_pair_instant(pair: str) -> dict:
 
 async def analyze_pair_internal(pair: str, force: bool = False) -> dict:
     """Pipeline d'analyse complet pour une paire. Si force=True, on contourne les filtres bloquants."""
+    try:
+        return await _analyze_pair_internal_impl(pair, force)
+    except Exception as e:
+        import traceback
+        logger.error(
+            f"[ANALYZE-CRASH] pair={pair} force={force} error={e}\n"
+            f"{traceback.format_exc()}"
+        )
+        return None
+
+
+async def _analyze_pair_internal_impl(pair: str, force: bool = False) -> dict:
+    """Actual implementation — wrapped by analyze_pair_internal for crash protection."""
     # 1. Récupérer les données (Réel uniquement)
     if not po_scanner.is_connected:
         logger.warning(f"[{pair}] Scanner non connecté, analyse impossible.")
@@ -2156,9 +2169,11 @@ async def request_live_signal(request: Request, credentials: HTTPAuthorizationCr
 
     except Exception as e:
         logger.error(f"[SIGNAL-REQUEST] Fallback failed for {pair}: {e}", exc_info=True)
+        # Instead of raising 500, return a clean error response so the frontend
+        # can display a user-friendly message instead of "Internal Server Error"
         raise HTTPException(
             status_code=500,
-            detail=f"Could not generate signal for {pair}. Please try again."
+            detail=f"Could not generate signal for {pair}. The market data is still loading — please try again in 5-10 seconds."
         )
 
 
