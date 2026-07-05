@@ -268,58 +268,6 @@ export default function RiskManagerPage() {
     }
   }, []);
 
-  const handleNewSession = () => {
-    // If there are unsaved changes with recorded trades, show confirmation
-    if (hasUnsavedChanges) {
-      setShowNewSessionModal(true);
-      return;
-    }
-    doNewSession();
-  };
-
-  const doNewSession = () => {
-    const poBalance = marketInfo?.account_balance && marketInfo.account_balance > 0 ? marketInfo.account_balance : 1000;
-    setInitialCapital(poBalance);
-    setPayout(92);
-    setTrades(Array(10).fill({ result: '', amount: 0, return: 0 }));
-    setSessionCounter(sessionCounter + 1);
-    setCurrentEditingIdx(-1);
-    setJustSaved(false);
-    setShowNewSessionModal(false);
-    toast.info("New session — fill in your trades and save.", { duration: 3000 });
-  };
-
-  const saveAndNewSession = async () => {
-    if (!hasRecordedTrades) {
-      toast.error("Please record at least 1 trade before saving.", { duration: 3000 });
-      return;
-    }
-    // Save current session
-    const dataToSave = { initialCapital, payout, trades, sessionCounter, savedAt: new Date().toISOString() };
-    const updated = [...allSessions];
-    if (currentEditingIdx >= 0 && currentEditingIdx < updated.length) {
-      updated[currentEditingIdx] = dataToSave;
-    } else {
-      updated.push(dataToSave);
-    }
-    setAllSessions(updated);
-    localStorage.setItem('a2sniper_risk_sessions', JSON.stringify(updated));
-    syncSessionToJournal();
-    toast.success("Session saved! Opening new session...", { duration: 2000 });
-    setTimeout(() => doNewSession(), 500);
-  };
-
-  const handleLoadSession = (idx: number) => {
-    if (idx < 0 || idx >= allSessions.length) return;
-    const s = allSessions[idx];
-    setInitialCapital(s.initialCapital || 1000);
-    setPayout(s.payout || 92);
-    setTrades(s.trades || Array(10).fill({ result: '', amount: 0, return: 0 }));
-    setSessionCounter(s.sessionCounter || 0);
-    setCurrentEditingIdx(idx);
-    setJustSaved(false);
-  };
-
   // Auto-sync whenever trades, capital, payout, or sessionCounter change
   useEffect(() => {
     if (typeof window !== 'undefined') {
