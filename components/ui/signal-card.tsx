@@ -219,7 +219,7 @@ Timestamp: ${signal.timestamp.toLocaleString('en-US')}
           
           <div className="text-right">
             <p className="text-[8px] text-gray-500 uppercase font-black mb-0.5 tracking-wider">
-              {signal.status === 'ACTIVE' ? 'Time Left' : 'Expired'}
+              Expiration
             </p>
             <div className="flex items-center justify-end space-x-1">
               <Clock className={`w-3.5 h-3.5 ${isExpiring ? 'text-[#D4AF37] animate-pulse' : 'text-gray-400'}`} />

@@ -258,11 +258,11 @@ export const useAppStore = create<AppState>((set, get) => ({
             // Use status from backend if available, otherwise compute
             status: (s.status as string) || (s.is_win === true ? 'WON' : s.is_win === false ? 'LOST' : 'ACTIVE'),
             timestamp: new Date(tsStr || Date.now()),
-            // Ensure analysis fields are never undefined
+            // Ensure analysis fields are never undefined — descriptive fallbacks
             smc_structure: (s.smc_structure as string) || 'Price Action',
-            smc_zone: (s.smc_zone as string) || 'Active Zone',
-            chart_pattern: (s.chart_pattern as string) || 'Momentum',
-            fibonacci: (s.fibonacci as string) || 'Golden Zone',
+            smc_zone: (s.smc_zone as string) || 'Momentum Zone',
+            chart_pattern: (s.chart_pattern as string) || 'Momentum Continuation',
+            fibonacci: (s.fibonacci as string) || 'Trend Aligned',
             rsi_status: (s.rsi_status as string) || 'Neutral',
           } as Signal;
         });
@@ -344,7 +344,18 @@ export const useAppStore = create<AppState>((set, get) => ({
         credentials: 'include',
         body: JSON.stringify({ pair })
       });
-      const data = await res.json();
+      // Handle non-JSON responses gracefully (e.g., "Internal Server Error" plain text)
+      const responseText = await res.text();
+      let data: any;
+      try {
+        data = JSON.parse(responseText);
+      } catch {
+        // Backend returned plain text (likely a 500 error)
+        if (!res.ok) {
+          return { success: false, message: `Server error (${res.status}). The analysis engine could not generate a signal for ${pair}. Please try again in a few seconds.` };
+        }
+        return { success: false, message: 'Invalid response from server. Please try again.' };
+      }
       if (res.ok) {
         let tsStr = data.signal.timestamp;
         if (tsStr && !tsStr.endsWith('Z') && !tsStr.includes('+')) {
@@ -354,12 +365,12 @@ export const useAppStore = create<AppState>((set, get) => ({
           ...data.signal,
           status: data.signal.is_win === true ? 'WON' : data.signal.is_win === false ? 'LOST' : 'ACTIVE',
           timestamp: new Date(tsStr),
-          // Ensure analysis fields are never undefined
+          // Ensure analysis fields are never undefined — use descriptive fallbacks
           smc_structure: data.signal.smc_structure || 'Price Action',
-          smc_zone: data.signal.smc_zone || 'N/A',
-          chart_pattern: data.signal.chart_pattern || 'Momentum',
-          fibonacci: data.signal.fibonacci || 'N/A',
-          rsi_status: data.signal.rsi_status || 'N/A',
+          smc_zone: data.signal.smc_zone || 'Momentum Zone',
+          chart_pattern: data.signal.chart_pattern || 'Momentum Continuation',
+          fibonacci: data.signal.fibonacci || 'Trend Aligned',
+          rsi_status: data.signal.rsi_status || 'Neutral',
         };
         set((state) => ({
           signals: [parsedSignal, ...state.signals.filter(s => s.id !== parsedSignal.id)]

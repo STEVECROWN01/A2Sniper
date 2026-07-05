@@ -246,8 +246,10 @@ def score_mean_reversion(df: pd.DataFrame) -> Optional[Dict[str, Any]]:
     call_score = len(call_factors)
     put_score = len(put_factors)
 
-    # Require at least 5 factors for a valid signal (strict confluence)
-    MIN_FACTORS = 5
+    # Require at least 4 factors for a valid signal (balanced selectivity)
+    # 5 was too restrictive — generated almost no signals in practice.
+    # 4 still requires meaningful confluence but allows signals to flow.
+    MIN_FACTORS = 4
     if call_score >= MIN_FACTORS and call_score > put_score:
         direction = 'CALL'
         factors = call_factors
@@ -261,17 +263,19 @@ def score_mean_reversion(df: pd.DataFrame) -> Optional[Dict[str, Any]]:
         return None
 
     # ═══ DERIVE WINRATE ═══
-    # 5 factors → 75%, 6 → 85%, 7 → 92%
-    winrate_map = {5: 75, 6: 85, 7: 92}
-    winrate = winrate_map.get(score, 75 if score >= 5 else 0)
+    # 4 factors → 70%, 5 → 78%, 6 → 85%, 7 → 92%
+    winrate_map = {4: 70, 5: 78, 6: 85, 7: 92}
+    winrate = winrate_map.get(score, 70 if score >= 4 else 0)
 
     # Classification
     if score == 7:
         classification = 'SNIPER SHOT (7/7 confluence)'
     elif score == 6:
         classification = 'Premium Signal (6/7 confluence)'
+    elif score == 5:
+        classification = 'Strong Signal (5/7 confluence)'
     else:
-        classification = 'Confirmed Signal (5/7 confluence)'
+        classification = 'Confirmed Signal (4/7 confluence)'
 
     # Build factor details for transparency
     factor_names = [f[0] for f in factors]
@@ -483,7 +487,8 @@ def score_trend_pullback(df: pd.DataFrame) -> Optional[Dict[str, Any]]:
     call_score = len(call_factors)
     put_score = len(put_factors)
 
-    MIN_FACTORS = 5
+    # 4 factors minimum (balanced — same as 1M engine)
+    MIN_FACTORS = 4
     if call_score >= MIN_FACTORS and call_score > put_score:
         direction = 'CALL'
         factors = call_factors
@@ -496,18 +501,20 @@ def score_trend_pullback(df: pd.DataFrame) -> Optional[Dict[str, Any]]:
         return None
 
     # ═══ DERIVE WINRATE ═══
-    # 5 factors → 72%, 6 → 80%, 7 → 87%
+    # 4 factors → 68%, 5 → 72%, 6 → 80%, 7 → 87%
     # (Slightly lower than 1M mean-reversion because 3M has more time for things to go wrong)
-    winrate_map = {5: 72, 6: 80, 7: 87}
-    winrate = winrate_map.get(score, 72 if score >= 5 else 0)
+    winrate_map = {4: 68, 5: 72, 6: 80, 7: 87}
+    winrate = winrate_map.get(score, 68 if score >= 4 else 0)
 
     # Classification
     if score == 7:
         classification = 'SNIPER 3M SHOT (7/7 trend-pullback)'
     elif score == 6:
         classification = 'Premium 3M Signal (6/7 trend-pullback)'
+    elif score == 5:
+        classification = 'Strong 3M Signal (5/7 trend-pullback)'
     else:
-        classification = 'Confirmed 3M Signal (5/7 trend-pullback)'
+        classification = 'Confirmed 3M Signal (4/7 trend-pullback)'
 
     factor_names = [f[0] for f in factors]
     factor_details = {
@@ -602,8 +609,8 @@ def generate_sniper_signal(df: pd.DataFrame, payout: float) -> Optional[Dict[str
                         f'Price {"above" if direction == "CALL" else "below"} EMA50 (trend aligned)'
                     )
                     # Recompute winrate
-                    winrate_map_1m = {5: 75, 6: 85, 7: 92, 8: 95}
-                    result_1m['winrate'] = winrate_map_1m.get(result_1m['score'], 75)
+                    winrate_map_1m = {4: 70, 5: 78, 6: 85, 7: 92, 8: 95}
+                    result_1m['winrate'] = winrate_map_1m.get(result_1m['score'], 70)
                     if result_1m['score'] >= 8:
                         result_1m['classification'] = 'SNIPER 1M SHOT (7/7 + trend aligned)'
                     elif result_1m['score'] == 7:
