@@ -514,10 +514,13 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False) -> dict:
         return None
 
     # 6. Run the sniper engine (dual-mode: 1M mean-reversion + 3M trend-pullback)
-    sniper_result = generate_sniper_signal(df_with_indicators, payout)
+    # Force mode (user requested): min_factors=3 (more signals, lower winrate)
+    # Background mode (auto): min_factors=5 (fewer signals, higher winrate)
+    min_factors = 3 if force else 5
+    sniper_result = generate_sniper_signal(df_with_indicators, payout, min_factors=min_factors)
     if sniper_result is None:
-        # No 5+ factor confluence found — no signal
-        logger.info(f"[{pair}] No sniper signal — insufficient confluence (<5 factors)")
+        # No confluence found — no signal
+        logger.info(f"[{pair}] No sniper signal — insufficient confluence (<{min_factors} factors, force={force})")
         return None
 
     # 7. Risk check (skip in force mode — user explicitly requested)

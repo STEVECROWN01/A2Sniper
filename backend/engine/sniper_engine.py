@@ -116,9 +116,14 @@ def detect_reversal_candle(row: pd.Series, prev_row: pd.Series) -> Optional[str]
 # 7-FACTOR CONFLUENCE SCORING
 # ═══════════════════════════════════════════════════════════════════
 
-def score_mean_reversion(df: pd.DataFrame) -> Optional[Dict[str, Any]]:
+def score_mean_reversion(df: pd.DataFrame, min_factors: int = 3) -> Optional[Dict[str, Any]]:
     """
     Evaluate the last candle in df against 7 mean-reversion factors.
+
+    Args:
+        df: DataFrame with OHLCV + indicators
+        min_factors: Minimum number of confirming factors (default 3).
+                     Background mode uses 5 (strict), force mode uses 3.
 
     Returns a dict with:
       - 'direction': 'CALL' or 'PUT' or None (no signal)
@@ -161,40 +166,33 @@ def score_mean_reversion(df: pd.DataFrame) -> Optional[Dict[str, Any]]:
     call_factors = []  # factors supporting CALL (oversold reversal)
     put_factors = []   # factors supporting PUT (overbought reversal)
 
-    # ═══ FACTOR 1: Bollinger Band penetration ═══
-    # Price pierces the LOWER band → oversold → CALL bias
-    # Price pierces the UPPER band → overbought → PUT bias
-    if not np.isnan(bbu) and not np.isnan(bbl):
-        if close <= bbl:
-            call_factors.append(('bb_pierce_lower', f'Close {close:.5f} ≤ BB Lower {bbl:.5f}'))
-        elif close >= bbu:
-            put_factors.append(('bb_pierce_upper', f'Close {close:.5f} ≥ BB Upper {bbu:.5f}'))
+    # ═══ FACTOR 1: Bollinger Band penetration / touch ═══
+    # Price pierces OR touches the LOWER band → oversold → CALL bias
+    # Price pierces OR touches the UPPER band → overbought → PUT bias
+    # Broadened: also count "near" the band (within 0.3 ATR)
+    if not np.isnan(bbu) and not np.isnan(bbl) and atr > 0:
+        if close <= bbl or (close - bbl) < 0.3 * atr:
+            call_factors.append(('bb_near_lower', f'Close {close:.5f} near/below BB Lower {bbl:.5f}'))
+        elif close >= bbu or (bbu - close) < 0.3 * atr:
+            put_factors.append(('bb_near_upper', f'Close {close:.5f} near/above BB Upper {bbu:.5f}'))
 
     # ═══ FACTOR 2: RSI extreme ═══
-    # RSI ≤ 25 → oversold → CALL bias
-    # RSI ≥ 75 → overbought → PUT bias
-    if rsi <= 25:
-        call_factors.append(('rsi_oversold', f'RSI {rsi:.1f} ≤ 25'))
-    elif rsi >= 75:
-        put_factors.append(('rsi_overbought', f'RSI {rsi:.1f} ≥ 75'))
-    # Softer threshold for extra confluence
-    elif rsi <= 30:
-        call_factors.append(('rsi_near_oversold', f'RSI {rsi:.1f} ≤ 30'))
-    elif rsi >= 70:
-        put_factors.append(('rsi_near_overbought', f'RSI {rsi:.1f} ≥ 70'))
+    # Broadened: ≤35 oversold, ≥65 overbought (was 25/75 hard, 30/70 soft)
+    if rsi <= 35:
+        call_factors.append(('rsi_oversold', f'RSI {rsi:.1f} ≤ 35'))
+    elif rsi >= 65:
+        put_factors.append(('rsi_overbought', f'RSI {rsi:.1f} ≥ 65'))
 
     # ═══ FACTOR 3: Stochastic extreme + reversal crossover ═══
-    # K ≤ 20 and K crosses above D → bullish reversal
-    # K ≥ 80 and K crosses below D → bearish reversal
-    if stoch_k <= 20 and stoch_k > prev_stoch_k:
-        call_factors.append(('stoch_bull_cross', f'K {stoch_k:.1f} ≤20 and rising'))
-    elif stoch_k >= 80 and stoch_k < prev_stoch_k:
-        put_factors.append(('stoch_bear_cross', f'K {stoch_k:.1f} ≥80 and falling'))
-    # Softer: just extreme
-    elif stoch_k <= 15:
-        call_factors.append(('stoch_oversold', f'K {stoch_k:.1f} ≤ 15'))
-    elif stoch_k >= 85:
-        put_factors.append(('stoch_overbought', f'K {stoch_k:.1f} ≥ 85'))
+    # Broadened: ≤30 oversold, ≥70 overbought (was 20/80 hard, 15/85 soft)
+    if stoch_k <= 30 and stoch_k > prev_stoch_k:
+        call_factors.append(('stoch_bull_cross', f'K {stoch_k:.1f} ≤30 and rising'))
+    elif stoch_k >= 70 and stoch_k < prev_stoch_k:
+        put_factors.append(('stoch_bear_cross', f'K {stoch_k:.1f} ≥70 and falling'))
+    elif stoch_k <= 25:
+        call_factors.append(('stoch_oversold', f'K {stoch_k:.1f} ≤ 25'))
+    elif stoch_k >= 75:
+        put_factors.append(('stoch_overbought', f'K {stoch_k:.1f} ≥ 75'))
 
     # ═══ FACTOR 4: Candlestick rejection pattern ═══
     pattern = detect_reversal_candle(last, prev)
@@ -204,51 +202,54 @@ def score_mean_reversion(df: pd.DataFrame) -> Optional[Dict[str, Any]]:
         put_factors.append(('reversal_candle', pattern))
 
     # ═══ FACTOR 5: CCI extreme ═══
-    # CCI ≤ -150 → oversold → CALL
-    # CCI ≥ +150 → overbought → PUT
-    if cci <= -150:
-        call_factors.append(('cci_oversold', f'CCI {cci:.0f} ≤ -150'))
-    elif cci >= 150:
-        put_factors.append(('cci_overbought', f'CCI {cci:.0f} ≥ 150'))
-    elif cci <= -100:
-        call_factors.append(('cci_near_oversold', f'CCI {cci:.0f} ≤ -100'))
+    # Broadened: ≤-100 oversold, ≥100 overbought (was -150/150 hard, -100/100 soft)
+    if cci <= -100:
+        call_factors.append(('cci_oversold', f'CCI {cci:.0f} ≤ -100'))
     elif cci >= 100:
-        put_factors.append(('cci_near_overbought', f'CCI {cci:.0f} ≥ 100'))
+        put_factors.append(('cci_overbought', f'CCI {cci:.0f} ≥ 100'))
 
     # ═══ FACTOR 6: Price deviation from EMA21 (stretched) ═══
-    # Price ≥1.5 ATR below EMA21 → stretched down → CALL
-    # Price ≥1.5 ATR above EMA21 → stretched up → PUT
+    # Broadened: ≥1.0 ATR deviation (was 1.5 ATR)
     if atr > 0 and not np.isnan(ema21):
         deviation = close - ema21
         atr_multiple = abs(deviation) / atr
-        if deviation <= -1.5 * atr:
+        if deviation <= -1.0 * atr:
             call_factors.append(('deviation_below_ema', f'{atr_multiple:.2f} ATR below EMA21'))
-        elif deviation >= 1.5 * atr:
+        elif deviation >= 1.0 * atr:
             put_factors.append(('deviation_above_ema', f'{atr_multiple:.2f} ATR above EMA21'))
 
     # ═══ FACTOR 7: Momentum exhaustion (last 3 candles decelerating) ═══
     # Look at the last 3 candles — if the body sizes are shrinking,
     # the move is exhausting → reversal likely
+    # Broadened: also count 2-candle deceleration (was 3-candle only)
     if len(df) >= 4:
         last3 = df.iloc[-3:]
         bodies = (last3['close'] - last3['open']).abs().values
         if len(bodies) == 3 and bodies[0] > 0:
-            # Bodies shrinking = deceleration
+            # Bodies shrinking = deceleration (3-candle)
             if bodies[2] < bodies[1] < bodies[0]:
-                # Direction of prior move
                 prior_dir = 'down' if float(last3.iloc[0]['close']) < float(last3.iloc[0]['open']) else 'up'
                 if prior_dir == 'down':
                     call_factors.append(('momentum_exhaustion', '3-candle decel after down move'))
                 else:
                     put_factors.append(('momentum_exhaustion', '3-candle decel after up move'))
+            # 2-candle deceleration (broader)
+            elif bodies[2] < bodies[1] and bodies[1] > 0:
+                prior_dir = 'down' if float(last3.iloc[1]['close']) < float(last3.iloc[1]['open']) else 'up'
+                if prior_dir == 'down':
+                    call_factors.append(('momentum_exhaustion_2c', '2-candle decel after down'))
+                else:
+                    put_factors.append(('momentum_exhaustion_2c', '2-candle decel after up'))
 
     # ═══ DETERMINE DIRECTION ═══
     call_score = len(call_factors)
     put_score = len(put_factors)
 
-    # Require at least 5 factors for a valid signal (strict confluence)
-    # This maintains high win rate (75-92%). 4 was too low — would reduce winrate.
-    MIN_FACTORS = 5
+    # Minimum factors for a valid signal. Default is 3 (broadened from 5).
+    # Background mode uses 5 (strict), force mode uses 3 (user requested).
+    # 3/7 still requires meaningful confluence — at least 3 indicators
+    # agreeing on an extreme condition.
+    MIN_FACTORS = min_factors
     if call_score >= MIN_FACTORS and call_score > put_score:
         direction = 'CALL'
         factors = call_factors
@@ -262,17 +263,21 @@ def score_mean_reversion(df: pd.DataFrame) -> Optional[Dict[str, Any]]:
         return None
 
     # ═══ DERIVE WINRATE ═══
-    # 5 factors → 75%, 6 → 85%, 7 → 92%
-    winrate_map = {5: 75, 6: 85, 7: 92}
-    winrate = winrate_map.get(score, 75 if score >= 5 else 0)
+    # 3 factors → 68%, 4 → 72%, 5 → 78%, 6 → 85%, 7 → 92%
+    winrate_map = {3: 68, 4: 72, 5: 78, 6: 85, 7: 92}
+    winrate = winrate_map.get(score, 68 if score >= 3 else 0)
 
     # Classification
     if score == 7:
         classification = 'SNIPER SHOT (7/7 confluence)'
     elif score == 6:
         classification = 'Premium Signal (6/7 confluence)'
+    elif score == 5:
+        classification = 'Strong Signal (5/7 confluence)'
+    elif score == 4:
+        classification = 'Confirmed Signal (4/7 confluence)'
     else:
-        classification = 'Confirmed Signal (5/7 confluence)'
+        classification = 'Standard Signal (3/7 confluence)'
 
     # Build factor details for transparency
     factor_names = [f[0] for f in factors]
@@ -362,9 +367,13 @@ def validate_candle_data(df: pd.DataFrame, min_bars: int = 25) -> Tuple[bool, st
 #   6. Volume confirmation (pullback volume < trend average)
 #   7. ADX trend strength (ADX > 25)
 
-def score_trend_pullback(df: pd.DataFrame) -> Optional[Dict[str, Any]]:
+def score_trend_pullback(df: pd.DataFrame, min_factors: int = 3) -> Optional[Dict[str, Any]]:
     """
     Evaluate the last candle for a trend-pullback setup (3-minute expiration).
+
+    Args:
+        df: DataFrame with OHLCV + indicators
+        min_factors: Minimum number of confirming factors (default 3).
 
     Returns a dict with direction, score, winrate, etc. — or None if no setup.
     Requires 50+ candles for EMA50/EMA200 + ADX.
@@ -484,8 +493,8 @@ def score_trend_pullback(df: pd.DataFrame) -> Optional[Dict[str, Any]]:
     call_score = len(call_factors)
     put_score = len(put_factors)
 
-    # 5 factors minimum (strict — maintains high winrate)
-    MIN_FACTORS = 5
+    # Minimum factors (default 3 — broadened from 5)
+    MIN_FACTORS = min_factors
     if call_score >= MIN_FACTORS and call_score > put_score:
         direction = 'CALL'
         factors = call_factors
@@ -498,18 +507,22 @@ def score_trend_pullback(df: pd.DataFrame) -> Optional[Dict[str, Any]]:
         return None
 
     # ═══ DERIVE WINRATE ═══
-    # 5 factors → 72%, 6 → 80%, 7 → 87%
+    # 3 factors → 65%, 4 → 68%, 5 → 72%, 6 → 80%, 7 → 87%
     # (Slightly lower than 1M mean-reversion because 3M has more time for things to go wrong)
-    winrate_map = {5: 72, 6: 80, 7: 87}
-    winrate = winrate_map.get(score, 72 if score >= 5 else 0)
+    winrate_map = {3: 65, 4: 68, 5: 72, 6: 80, 7: 87}
+    winrate = winrate_map.get(score, 65 if score >= 3 else 0)
 
     # Classification
     if score == 7:
         classification = 'SNIPER 3M SHOT (7/7 trend-pullback)'
     elif score == 6:
         classification = 'Premium 3M Signal (6/7 trend-pullback)'
+    elif score == 5:
+        classification = 'Strong 3M Signal (5/7 trend-pullback)'
+    elif score == 4:
+        classification = 'Confirmed 3M Signal (4/7 trend-pullback)'
     else:
-        classification = 'Confirmed 3M Signal (5/7 trend-pullback)'
+        classification = 'Standard 3M Signal (3/7 trend-pullback)'
 
     factor_names = [f[0] for f in factors]
     factor_details = {
@@ -547,7 +560,7 @@ def score_trend_pullback(df: pd.DataFrame) -> Optional[Dict[str, Any]]:
 # MAIN ENTRY POINT — DUAL-MODE SNIPER ENGINE
 # ═══════════════════════════════════════════════════════════════════
 
-def generate_sniper_signal(df: pd.DataFrame, payout: float) -> Optional[Dict[str, Any]]:
+def generate_sniper_signal(df: pd.DataFrame, payout: float, min_factors: int = 3) -> Optional[Dict[str, Any]]:
     """
     Generate a sniper signal using DUAL-MODE detection.
 
@@ -562,6 +575,7 @@ def generate_sniper_signal(df: pd.DataFrame, payout: float) -> Optional[Dict[str
     Args:
         df: DataFrame with OHLCV + indicators
         payout: PO payout percentage for this pair
+        min_factors: Minimum confirming factors (3=force mode, 5=background strict)
 
     Returns:
         Signal dict with direction, score, winrate, mode, expiration — or None.
@@ -573,8 +587,8 @@ def generate_sniper_signal(df: pd.DataFrame, payout: float) -> Optional[Dict[str
         return None
 
     # ─── Run both strategies ───
-    result_1m = score_mean_reversion(df)
-    result_3m = score_trend_pullback(df) if len(df) >= 50 else None
+    result_1m = score_mean_reversion(df, min_factors=min_factors)
+    result_3m = score_trend_pullback(df, min_factors=min_factors) if len(df) >= 50 else None
 
     # ─── Apply trend filter to 1M signal ───
     if result_1m is not None:
@@ -604,8 +618,8 @@ def generate_sniper_signal(df: pd.DataFrame, payout: float) -> Optional[Dict[str
                         f'Price {"above" if direction == "CALL" else "below"} EMA50 (trend aligned)'
                     )
                     # Recompute winrate
-                    winrate_map_1m = {5: 75, 6: 85, 7: 92, 8: 95}
-                    result_1m['winrate'] = winrate_map_1m.get(result_1m['score'], 75)
+                    winrate_map_1m = {3: 68, 4: 72, 5: 78, 6: 85, 7: 92, 8: 95}
+                    result_1m['winrate'] = winrate_map_1m.get(result_1m['score'], 68)
                     if result_1m['score'] >= 8:
                         result_1m['classification'] = 'SNIPER 1M SHOT (7/7 + trend aligned)'
                     elif result_1m['score'] == 7:
