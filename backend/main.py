@@ -460,274 +460,6 @@ def _clamp_expiration(signal: dict) -> dict:
 # higher winrate claim, industry standard for signal providers).
 # ══════════════════════════════════════════════════════════════════════
 
-# Module-level dedup tracker for instant signals
-_instant_last_signal_time: dict = {}
-
-
-async def analyze_pair_instant(pair: str) -> dict:
-    """Tick-based instant signal analysis — produces signals within 5-10s of connecting.
-    
-    Returns a signal dict if analysis succeeded, None otherwise.
-    Falls back to None if insufficient tick data (caller will try candle-based).
-    """
-    if not po_scanner.is_connected:
-        return None
-
-    payout = po_scanner.get_payout(pair)
-    if payout is None or payout < 70:
-        return None
-
-    # Get raw tick data — this is the FAST path (no waiting for candles)
-    ticks, asset_norm = po_scanner.get_tick_data(pair, max_ticks=300)
-    # Require at least 5 ticks for basic analysis.
-    # 5 ticks (~2-5s of data) is enough for linear regression direction.
-    if len(ticks) < 5:
-        return None
-
-    import numpy as np
-
-    # ─── Extract price arrays ───
-    prices = np.array([p for _, p in ticks], dtype=float)
-    timestamps = np.array([t for t, _ in ticks], dtype=float)
-    n = len(prices)
-
-    # ─── Factor 1: Linear regression slope (momentum direction) ───
-    # Fit y = mx + b on (index, price) — slope tells us direction & strength
-    x = np.arange(n, dtype=float)
-    try:
-        slope = np.polyfit(x, prices, 1)[0]
-    except Exception:
-        slope = 0.0
-    # Normalize slope to "percent per tick"
-    avg_price = float(np.mean(prices))
-    slope_pct = slope / avg_price if avg_price > 0 else 0.0
-
-    # Direction from slope — LOWERED threshold (1e-6 instead of 5e-6)
-    # Forex moves slowly; even tiny slopes are meaningful over many ticks
-    if slope_pct > 0.0000005:  # 0.00005% per tick = uptrend
-        direction = 'CALL'
-        momentum_strength = min(abs(slope_pct) / 0.00005, 1.0)  # 0..1 scale
-    elif slope_pct < -0.0000005:
-        direction = 'PUT'
-        momentum_strength = min(abs(slope_pct) / 0.00005, 1.0)
-    else:
-        # Slope too weak — use last-vs-first as tiebreaker
-        if len(prices) >= 2:
-            if prices[-1] > prices[0]:
-                direction = 'CALL'
-                momentum_strength = 0.15  # Weak but present
-            elif prices[-1] < prices[0]:
-                direction = 'PUT'
-                momentum_strength = 0.15
-            else:
-                return None  # Truly flat — skip
-        else:
-            return None
-
-    # ─── Factor 2: Direction consistency ───
-    # % of consecutive tick-pairs that moved in the signal direction
-    diffs = np.diff(prices)
-    if direction == 'CALL':
-        consistent = int(np.sum(diffs > 0))
-    else:
-        consistent = int(np.sum(diffs < 0))
-    consistency_pct = consistent / max(len(diffs), 1)  # 0..1
-
-    # ─── Factor 3: Price velocity (recent vs older) ───
-    # Compare last 1/3 of ticks vs first 1/3 — accelerating?
-    third = max(n // 3, 3)
-    recent_avg = float(np.mean(prices[-third:]))
-    older_avg = float(np.mean(prices[:third]))
-    velocity = (recent_avg - older_avg) / older_avg if older_avg > 0 else 0.0
-    velocity_pct = abs(velocity) / 0.001  # normalize: 0.1% move = 1.0
-    velocity_aligned = (velocity > 0 and direction == 'CALL') or (velocity < 0 and direction == 'PUT')
-
-    # ─── Factor 4: Volatility regime ───
-    # stddev of recent prices — too low = no movement (bad), too high = chaos (bad)
-    recent_prices = prices[-min(50, n):]
-    volatility = float(np.std(recent_prices))
-    vol_pct = volatility / avg_price if avg_price > 0 else 0.0
-    # LOWERED thresholds — much more permissive now
-    # Sweet spot: 0.00001 to 0.002 (was 0.00005 to 0.001)
-    if 0.00001 < vol_pct < 0.002:
-        vol_score = 1.0  # optimal volatility
-    elif vol_pct < 0.000005:
-        # Too dead — but still produce a signal with lower confidence
-        vol_score = 0.3
-    elif vol_pct > 0.008:
-        # Too chaotic — skip entirely
-        return None
-    else:
-        vol_score = 0.5  # suboptimal but tradable
-
-    # ─── Factor 5: Tick count confidence ───
-    # More ticks = more confidence in the analysis
-    # Lowered thresholds so even 5-9 ticks gets a reasonable score
-    if n >= 100:
-        tick_score = 1.0
-    elif n >= 50:
-        tick_score = 0.9
-    elif n >= 30:
-        tick_score = 0.8
-    elif n >= 15:
-        tick_score = 0.7
-    elif n >= 8:
-        tick_score = 0.6
-    else:
-        tick_score = 0.5  # 5-7 ticks — minimum viable
-
-    # ─── Factor 6: Recent high/low breakout ───
-    # Is the latest price breaking above the recent high (CALL) or below recent low (PUT)?
-    lookback = min(20, n - 1)
-    recent_high = float(np.max(prices[-lookback-1:-1])) if lookback > 0 else float(np.max(prices[:-1]))
-    recent_low = float(np.min(prices[-lookback-1:-1])) if lookback > 0 else float(np.min(prices[:-1]))
-    last_price = float(prices[-1])
-    breakout = False
-    if direction == 'CALL' and last_price > recent_high:
-        breakout = True
-    elif direction == 'PUT' and last_price < recent_low:
-        breakout = True
-
-    # ─── Factor 7: Micro-trend alignment (short vs medium window) ───
-    short_window = min(10, n // 3)
-    medium_window = min(30, n)
-    if short_window >= 3 and medium_window >= short_window + 3:
-        short_slope = np.polyfit(np.arange(short_window), prices[-short_window:], 1)[0]
-        medium_slope = np.polyfit(np.arange(medium_window), prices[-medium_window:], 1)[0]
-        short_dir = 1 if short_slope > 0 else -1
-        med_dir = 1 if medium_slope > 0 else -1
-        aligned_trend = (short_dir == med_dir == (1 if direction == 'CALL' else -1))
-    else:
-        aligned_trend = False
-
-    # ════════════════════════════════════════════════════════════════
-    # CONFLUENCE SCORING (0-10 scale, allows up to 10 for 95% winrate)
-    # ════════════════════════════════════════════════════════════════
-    score = 0
-
-    # Base score from momentum strength (0-3 pts)
-    if momentum_strength > 0.7:
-        score += 3  # Very strong momentum
-    elif momentum_strength > 0.4:
-        score += 2  # Strong momentum
-    elif momentum_strength > 0.2:
-        score += 1  # Moderate momentum
-    # else: 0 pts (weak momentum)
-
-    # Direction consistency (0-2 pts)
-    if consistency_pct > 0.65:
-        score += 2  # Strong consistency
-    elif consistency_pct > 0.55:
-        score += 1  # Decent consistency
-
-    # Velocity alignment (0-1 pt)
-    if velocity_aligned and velocity_pct > 0.5:
-        score += 1
-
-    # Volatility regime (0-1 pt)
-    score += int(vol_score)
-
-    # Tick count confidence (0-1 pt)
-    score += 1 if tick_score >= 0.8 else 0
-
-    # Breakout confirmation (0-1 pt)
-    if breakout:
-        score += 1
-
-    # Trend alignment (0-1 pt)
-    if aligned_trend:
-        score += 1
-
-    # Clamp to [0, 10].
-    score = min(10, score)
-
-    # Accept signals with score >= 4 (70% winrate minimum).
-    # Previous rejection of score 4 caused "NO SIGNALS FOUND" — too strict.
-    # Score 4 = 70% winrate — minimum acceptable for signal generation.
-    # Score 0-3 = rejected (truly insufficient confluence).
-    if score < 4:
-        return None
-
-    # Winrate mapping — 70-95%
-    winrate_map = {4: 70, 5: 75, 6: 80, 7: 85, 8: 90, 9: 92, 10: 95}
-    winrate = winrate_map.get(score, 70)
-
-    # ─── Dedup: 30s per pair (was 60s — shortened to allow more signals) ───
-    now = datetime.now(timezone.utc)
-    last_time = _instant_last_signal_time.get(pair, 0)
-    if (now.timestamp() - last_time) < 30:
-        return None
-
-    # ─── Expiration: ONLY 1m or 3m (never 5m) ───
-    # Binary options work best with short expirations. The sniper engine uses
-    # 1m for mean-reversion and 3m for trend-pullback. These legacy paths
-    # must match — no 5m signals allowed.
-    if vol_pct > 0.0008:
-        expiration = 3  # High volatility → 3m (was 5m)
-    elif vol_pct > 0.0003:
-        expiration = 3  # Medium volatility → 3m
-    else:
-        expiration = 1  # Low volatility → 1m
-
-    # ─── Build signal ───
-    signal = {
-        'id': f'SIG-{now.strftime("%Y%m%d")}-{uuid.uuid4().hex[:6].upper()}',
-        'pair': pair,
-        'direction': direction,
-        'time': now.strftime('%H:%M:%S'),
-        'timestamp': now.isoformat(),
-        'entry_price': last_price,
-        'expiration': expiration,
-        'winrate': winrate,
-        'score': score,
-        'raw_points': score,
-        'payout': payout,
-        'classification': 'INSTANT SNIPER' if score >= 9 else ('PREMIUM' if score >= 8 else 'QUICK SIGNAL'),
-        'smc_structure': f'Tick Momentum {direction} ({momentum_strength:.2f})',
-        'smc_zone': f'Volatility {vol_pct*100:.3f}%',
-        'chart_pattern': 'Breakout' if breakout else 'Trend Follow',
-        'fibonacci': f'Consistency {consistency_pct*100:.0f}%',
-        'rsi_status': f'Velocity {velocity_pct:.2f}',
-        'recommended_stake': 10,
-        'mtf_aligned': aligned_trend,
-        'wyckoff': 'Tick Microstructure',
-        'divergences': [],
-    }
-
-    try:
-        signal['hash_signature'] = compliance.generate_immutable_log(signal)
-    except Exception:
-        signal['hash_signature'] = 'ERROR'
-
-    try:
-        async with AsyncSessionLocal() as session:
-            db_signal = SignalRecord(
-                id=signal['id'], pair=signal['pair'], direction=signal['direction'],
-                entry_price=signal['entry_price'], expiration=signal['expiration'],
-                winrate=signal['winrate'], score=signal['score'], payout=signal['payout'],
-                classification=signal['classification'], timestamp=now,
-                analysis_details={'mode': 'instant_signal', 'candles': 0, 'ticks': n, 'slope_pct': float(slope_pct), 'consistency': float(consistency_pct)},
-                hash_signature=signal['hash_signature']
-            )
-            session.add(db_signal)
-            await session.commit()
-    except Exception as db_err:
-        logger.warning(f"[INSTANT-SIGNAL-DB-SAVE-ERROR] pair={pair} err={db_err}")
-
-    generated_signals.append(_clamp_expiration(signal))
-    _instant_last_signal_time[pair] = now.timestamp()
-    monitor.record_signal(signal['id'], pair, direction, winrate)
-
-    logger.info(
-        f"[INSTANT-SIGNAL] id={signal['id']} pair={pair} direction={direction} "
-        f"score={score}/10 winrate={winrate}% payout={payout}% "
-        f"ticks={n} momentum={momentum_strength:.2f} consistency={consistency_pct*100:.0f}% "
-        f"volatility={vol_pct*100:.3f}% breakout={breakout} trend_aligned={aligned_trend}"
-    )
-
-    return signal
-
-
 async def analyze_pair_internal(pair: str, force: bool = False) -> dict:
     """Pipeline d'analyse complet pour une paire. Si force=True, on contourne les filtres bloquants."""
     try:
@@ -742,856 +474,181 @@ async def analyze_pair_internal(pair: str, force: bool = False) -> dict:
 
 
 async def _analyze_pair_internal_impl(pair: str, force: bool = False) -> dict:
-    """Actual implementation — wrapped by analyze_pair_internal for crash protection."""
-    # 1. Récupérer les données (Réel uniquement)
+    """
+    A2Sniper 3.0 — SNIPER ENGINE ONLY
+    ==================================
+    This is the ONLY signal generation path in the system. All legacy paths
+    (quick-signal, full CDC, trend-following, tick-based instant) have been
+    REMOVED. The sniper engine is the sole signal generator.
+
+    The sniper engine runs two strategies simultaneously:
+      1. SNIPER 1M — Mean reversion at Bollinger/RSI/Stoch/CCI extremes
+         (1-minute expiration, 75-95% winrate)
+      2. SNIPER 3M — Trend pullback at EMA21 with EMA50/EMA200 alignment
+         (3-minute expiration, 72-87% winrate)
+
+    Both require 5+ of 7 confluence factors to align. If no setup is found,
+    returns None (no signal). In force mode, the caller returns a clean
+    "no signal available" message — NO legacy fallbacks.
+
+    Args:
+        pair: Display name like "EUR/USD OTC"
+        force: True = user explicitly requested (bypasses risk/circuit-breaker
+               checks, but still uses the sniper engine for signal generation)
+
+    Returns:
+        Signal dict or None (if no sniper setup found)
+    """
+    # 1. Verify scanner is connected
     if not po_scanner.is_connected:
-        logger.warning(f"[{pair}] Scanner non connecté, analyse impossible.")
+        logger.warning(f"[{pair}] Scanner not connected — cannot analyze")
         return None
 
+    # 2. Get payout — must be active AND >= 70%
     payout = po_scanner.get_payout(pair)
     if payout is None:
-        logger.warning(f"[{pair}] Cannot determine payout from scanner — skipping signal generation")
+        logger.info(f"[{pair}] Cannot determine payout — pair inactive or not found")
         return None
 
-    # Payout threshold: only generate signals for pairs with payout >= 70%.
-    # This matches the user requirement: only consider active pairs with payout ≥ 70%.
-    # Pairs with payout < 70% are ignored entirely (not fetched, not displayed).
     if not force and payout < 70:
-        logger.info(f"[{pair}] Analyse ignorée : payout ({payout}%) insuffisant (< 70%).")
+        logger.info(f"[{pair}] Payout {payout}% < 70% — skipping")
         return None
 
-    # NOTE: Session filter removed — Pocket Option OTC markets are open 24/7.
-    # The original session filter (London 8-10, NY 13-15 UTC) was designed for
-    # spot forex, not for OTC binary options which trade round the clock.
-
+    # 3. Fetch 1-minute candles (need 25+ for Bollinger/RSI/Stoch/CCI)
     df_m1 = await po_scanner.get_candles(pair, timeframe="1m", count=100)
-    MIN_BARS_FOR_ANALYSIS = 3  # Just 3 candles needed for quick-signal mode
-    if df_m1.empty or len(df_m1) < MIN_BARS_FOR_ANALYSIS:
+    if df_m1 is None or df_m1.empty or len(df_m1) < 25:
         logger.info(
-            f"[WARMING-UP] pair={pair} candles={len(df_m1)}/{MIN_BARS_FOR_ANALYSIS} "
-            f"min_remaining={max(0, MIN_BARS_FOR_ANALYSIS - len(df_m1))}"
+            f"[{pair}] Insufficient candles for sniper engine: "
+            f"{len(df_m1) if df_m1 is not None else 0}/25 — waiting for warm-up"
         )
         return None
 
-    # ═══════════════════════════════════════════════════════════════════
-    # SNIPER MEAN-REVERSION ENGINE (PRIMARY STRATEGY)
-    # ═══════════════════════════════════════════════════════════════════
-    # Binary options with 1-minute expiration work best with MEAN REVERSION,
-    # NOT trend-following. The sniper engine requires 5+ of 7 confluence
-    # factors to align (Bollinger + RSI + Stochastic + Candlestick + CCI +
-    # EMA deviation + Momentum exhaustion) before generating a signal.
-    #
-    # This produces 80-90% win rate when 5-7 factors align.
-    # The old trend-following logic (below) is kept as a fallback for when
-    # we have <25 candles (sniper needs 25 for Bollinger/RSI/Stoch/CCI).
-    #
-    # Strategy documentation: see backend/engine/sniper_engine.py
-    if len(df_m1) >= 25:
-        # Calculate indicators on the full candle set
-        df_with_indicators = indicators.calculate_all(df_m1)
+    # 4. Calculate all indicators (RSI, Bollinger, Stochastic, CCI, EMA, ATR, ADX)
+    df_with_indicators = indicators.calculate_all(df_m1)
 
-        # Validate data quality before generating a signal
-        is_valid, validation_reason = validate_candle_data(df_with_indicators, min_bars=25)
-        if not is_valid:
-            logger.info(f"[{pair}] Sniper data rejected: {validation_reason}")
-            # Fall through to old logic as fallback
-        else:
-            # Try the sniper engine (mean reversion with 7-factor confluence)
-            sniper_result = generate_sniper_signal(df_with_indicators, payout)
-            if sniper_result:
-                # ─── BUILD SIGNAL FROM SNIPER RESULT ───
-                # Dedup check: don't emit for the same pair within 60 seconds
-                if not hasattr(analyze_pair_internal, '_last_signal_time'):
-                    analyze_pair_internal._last_signal_time = {}
-                last_time = analyze_pair_internal._last_signal_time.get(pair, 0)
-                now_ts = datetime.now(timezone.utc).timestamp()
-                if (now_ts - last_time) < 60:
-                    logger.debug(f"[{pair}] Sniper signal skipped — duplicate within 60s window")
-                    return None
-
-                now = datetime.now(timezone.utc)
-                # Determine mode (1M mean-reversion or 3M trend-pullback)
-                sniper_mode = sniper_result.get('mode', 'SNIPER_1M')
-                is_1m = sniper_mode == 'SNIPER_1M'
-
-                # Build factor display string based on mode
-                factors_hit = sniper_result['factors']['factors_hit']
-                if is_1m:
-                    strategy_label = f"Mean Reversion ({sniper_result['score']}/7 factors)"
-                    indicator_summary = f"RSI {sniper_result['factors']['rsi']:.0f} / Stoch {sniper_result['factors']['stoch_k']:.0f} / CCI {sniper_result['factors']['cci']:.0f}"
-                    rsi_status = 'Oversold' if sniper_result['direction'] == 'CALL' else 'Overbought'
-                else:
-                    strategy_label = f"Trend Pullback ({sniper_result['score']}/7 factors)"
-                    indicator_summary = f"RSI {sniper_result['factors']['rsi']:.0f} / Stoch {sniper_result['factors']['stoch_k']:.0f} / ADX {sniper_result['factors']['adx']:.0f}"
-                    rsi_status = 'Mid-range (trend resume)'
-
-                signal = {
-                    'id': f'SIG-{now.strftime("%Y%m%d")}-{uuid.uuid4().hex[:6].upper()}',
-                    'pair': pair,
-                    'direction': sniper_result['direction'],
-                    'time': now.strftime('%H:%M:%S'),
-                    'timestamp': now.isoformat(),
-                    'entry_price': sniper_result['entry_price'],
-                    'expiration': sniper_result['expiration'],  # 1 or 3 minutes
-                    'winrate': sniper_result['winrate'],
-                    'score': sniper_result['score'],
-                    'raw_points': sniper_result['score'],
-                    'payout': payout,
-                    'classification': sniper_result['classification'],
-                    'smc_structure': strategy_label,
-                    'smc_zone': ', '.join(factors_hit[:3]),
-                    'chart_pattern': sniper_result['factors'].get('reversal_pattern', 'N/A') or 'N/A',
-                    'fibonacci': indicator_summary,
-                    'rsi_status': rsi_status,
-                    'recommended_stake': 10,
-                    'mtf_aligned': True,
-                    'wyckoff': 'Reversal' if is_1m else 'Trend Resume',
-                    'divergences': [],
-                    'analysis_details': {
-                        'mode': 'sniper_1m_mean_reversion' if is_1m else 'sniper_3m_trend_pullback',
-                        'sniper_mode': sniper_mode,
-                        'expiration_minutes': sniper_result['expiration'],
-                        'factors_hit': sniper_result['factors']['factors_hit'],
-                        'factors_description': sniper_result['factors']['factors_description'],
-                        'call_score': sniper_result['factors']['call_score'],
-                        'put_score': sniper_result['factors']['put_score'],
-                        'bb_position': sniper_result['factors'].get('bb_position', 'N/A'),
-                        'atr': sniper_result['factors']['atr'],
-                        'ema21_deviation_atr': sniper_result['factors']['ema21_deviation_atr'],
-                        # 3M-specific fields
-                        'adx': sniper_result['factors'].get('adx'),
-                        'ema50': sniper_result['factors'].get('ema50'),
-                        'ema200': sniper_result['factors'].get('ema200'),
-                        # 1M-specific fields
-                        'rsi': sniper_result['factors'].get('rsi'),
-                        'stoch_k': sniper_result['factors'].get('stoch_k'),
-                        'cci': sniper_result['factors'].get('cci'),
-                    },
-                }
-
-                try:
-                    signal['hash_signature'] = compliance.generate_immutable_log(signal)
-                except Exception:
-                    signal['hash_signature'] = 'ERROR'
-
-                try:
-                    async with AsyncSessionLocal() as session:
-                        db_signal = SignalRecord(
-                            id=signal['id'], pair=signal['pair'], direction=signal['direction'],
-                            entry_price=signal['entry_price'], expiration=signal['expiration'],
-                            winrate=signal['winrate'], score=signal['score'], payout=signal['payout'],
-                            classification=signal['classification'], timestamp=now,
-                            analysis_details=signal['analysis_details'],
-                            hash_signature=signal['hash_signature']
-                        )
-                        session.add(db_signal)
-                        await session.commit()
-                except Exception as db_err:
-                    logger.warning(f"[SIGNAL-DB-SAVE-ERROR] pair={pair} err={db_err}")
-
-                generated_signals.append(_clamp_expiration(signal))
-                analyze_pair_internal._last_signal_time[pair] = now_ts
-                monitor.record_signal(signal['id'], pair, signal['direction'], signal['winrate'])
-
-                logger.info(
-                    f"[SNIPER-EMITTED] id={signal['id']} pair={signal['pair']} "
-                    f"direction={signal['direction']} score={signal['score']}/7 "
-                    f"winrate={signal['winrate']}% payout={signal['payout']}% "
-                    f"expiration={signal['expiration']}m factors={len(sniper_result['factors']['factors_hit'])}"
-                )
-                return signal
-            else:
-                # Sniper engine didn't find a signal (insufficient confluence).
-                # In force mode (user explicitly requested a signal), fall through
-                # to the old logic so the user still gets a signal.
-                # In non-force mode (background scanner), return None — NO signal
-                # is better than a low-quality signal.
-                if not force:
-                    logger.info(f"[{pair}] No sniper signal — insufficient confluence (<5 factors). Skipping (no fallback in background mode).")
-                    return None
-                # force mode: fall through to old logic
-                logger.info(f"[{pair}] No sniper signal — falling through to legacy logic (force mode)")
-
-    # ═══ QUICK-SIGNAL MODE (3-14 candles) — LEGACY FALLBACK ═════════
-    # Only used during warm-up (<25 candles) or in force mode when the
-    # sniper engine didn't find a signal. This produces lower-quality
-    # signals but ensures the user gets SOMETHING when they explicitly
-    # request one.
-    # When we have fewer than 15 candles, the full CDC 10-factor scoring
-    # can't work (RSI needs 14, Bollinger needs 20, etc.). Use a simpler
-    # analysis based on price action + momentum to produce signals FAST.
-    if len(df_m1) < 15:
-        # Simple price-action analysis
-        closes = df_m1['close'].values
-        last_close = float(closes[-1])
-        first_close = float(closes[0])
-
-    # Calculate indicators if we have enough candles
-    closes = df_m1['close'].values
-    highs = df_m1['high'].values if 'high' in df_m1.columns else closes
-    lows = df_m1['low'].values if 'low' in df_m1.columns else closes
-    opens = df_m1['open'].values if 'open' in df_m1.columns else closes
-    last_close = float(closes[-1])
-    last_open = float(opens[-1])
-    last_high = float(highs[-1])
-    last_low = float(lows[-1])
-    n = len(closes)
-
-    # ─── Indicator 1: Price deviation from recent average ───
-    avg_price = float(np.mean(closes[-min(n, 20):]))  # 20-period average
-    price_deviation = (last_close - avg_price) / avg_price if avg_price > 0 else 0
-
-    # ─── Indicator 2: RSI (if we have enough candles) ───
-    rsi = 50.0  # Default neutral
-    if n >= 14:
-        try:
-            deltas = np.diff(closes[-15:])
-            gains = np.where(deltas > 0, deltas, 0)
-            losses = np.where(deltas < 0, -deltas, 0)
-            avg_gain = np.mean(gains)
-            avg_loss = np.mean(losses)
-            if avg_loss > 0:
-                rs = avg_gain / avg_loss
-                rsi = 100 - (100 / (1 + rs))
-            elif avg_gain > 0:
-                rsi = 100.0
-        except Exception:
-            pass
-
-    # ─── Indicator 3: Bollinger Bands (if we have 20+ candles) ───
-    bb_lower = 0.0
-    bb_upper = 0.0
-    if n >= 20:
-        try:
-            bb_period = closes[-20:]
-            bb_mean = float(np.mean(bb_period))
-            bb_std = float(np.std(bb_period))
-            bb_lower = bb_mean - 2 * bb_std
-            bb_upper = bb_mean + 2 * bb_std
-        except Exception:
-            pass
-
-    # ─── Indicator 4: Candlestick reversal patterns ───
-    candle_pattern = None
-    if n >= 2:
-        body = abs(last_close - last_open)
-        upper_wick = last_high - max(last_close, last_open)
-        lower_wick = min(last_close, last_open) - last_low
-        candle_range = last_high - last_low if last_high > last_low else 0.0001
-
-        # Hammer (bullish reversal): long lower wick, small body
-        if lower_wick > body * 2 and lower_wick / candle_range > 0.6:
-            candle_pattern = 'hammer'
-        # Shooting Star (bearish reversal): long upper wick, small body
-        elif upper_wick > body * 2 and upper_wick / candle_range > 0.6:
-            candle_pattern = 'shooting_star'
-        # Bullish Engulfing: last candle engulfs previous (bullish)
-        elif last_close > last_open and closes[-2] < opens[-1] and last_close > opens[-2] and last_open < closes[-2]:
-            candle_pattern = 'bullish_engulfing'
-        # Bearish Engulfing: last candle engulfs previous (bearish)
-        elif last_close < last_open and closes[-2] > opens[-1] and last_close < opens[-2] and last_open > closes[-2]:
-            candle_pattern = 'bearish_engulfing'
-
-    # ─── Indicator 5: Recent price movement ───
-    lookback = min(n, 5)
-    recent_change = (closes[-1] - closes[-lookback]) / closes[-lookback] if closes[-lookback] > 0 else 0
-
-    # ═══ MULTI-INDICATOR CONFLUENCE SCORING ════════════════════════
-    call_score = 0
-    put_score = 0
-    confluence_factors = []
-
-    # Factor 1: Price deviation (oversold → CALL, overbought → PUT)
-    if price_deviation < -0.001:  # Price 0.1% below average
-        call_score += 3
-        confluence_factors.append('Price below average (oversold)')
-    elif price_deviation > 0.001:  # Price 0.1% above average
-        put_score += 3
-        confluence_factors.append('Price above average (overbought)')
-
-    # Factor 2: RSI extreme zones
-    if rsi < 35:
-        call_score += 4
-        confluence_factors.append(f'RSI oversold ({rsi:.0f})')
-    elif rsi > 65:
-        put_score += 4
-        confluence_factors.append(f'RSI overbought ({rsi:.0f})')
-    elif rsi < 45:
-        call_score += 1
-    elif rsi > 55:
-        put_score += 1
-
-    # Factor 3: Bollinger Band touch
-    if bb_lower > 0 and last_close <= bb_lower:
-        call_score += 3
-        confluence_factors.append('Price at lower Bollinger Band')
-    elif bb_upper > 0 and last_close >= bb_upper:
-        put_score += 3
-        confluence_factors.append('Price at upper Bollinger Band')
-
-    # Factor 4: Candlestick reversal pattern
-    if candle_pattern in ('hammer', 'bullish_engulfing'):
-        call_score += 3
-        confluence_factors.append(f'Candlestick: {candle_pattern}')
-    elif candle_pattern in ('shooting_star', 'bearish_engulfing'):
-        put_score += 3
-        confluence_factors.append(f'Candlestick: {candle_pattern}')
-
-    # Factor 5: Recent price movement (mean reversion)
-    if recent_change < -0.0005:  # Price dropped 0.05%+ recently
-        call_score += 2
-        confluence_factors.append('Recent drop (expect bounce)')
-    elif recent_change > 0.0005:  # Price rose 0.05%+ recently
-        put_score += 2
-        confluence_factors.append('Recent rise (expect pullback)')
-
-    # Factor 6: Price far from EMA (overextended)
-    if n >= 9:
-        ema9 = float(np.mean(closes[-9:]))  # Simple EMA approximation
-        ema_deviation = (last_close - ema9) / ema9 if ema9 > 0 else 0
-        if ema_deviation < -0.0008:
-            call_score += 2
-            confluence_factors.append('Price below EMA9 (overextended down)')
-        elif ema_deviation > 0.0008:
-            put_score += 2
-            confluence_factors.append('Price above EMA9 (overextended up)')
-
-    # ═══ DIRECTION DECISION ════════════════════════════════════════
-    if call_score > put_score:
-        direction = 'CALL'
-        total_score = call_score
-    elif put_score > call_score:
-        direction = 'PUT'
-        total_score = put_score
-    else:
-        return None  # No clear direction — skip
-
-    # Count how many confluence factors aligned
-    num_factors = len(confluence_factors)
-
-    # REQUIRE at least 1 confluence factor for a signal
-    # (was 2 — too strict, rejected almost all signals)
-    if num_factors < 1:
-        logger.info(f"[CONFLUENCE] pair={pair} 0 factors — REJECTED")
+    # 5. Validate data quality (rejects identical candles, suspicious jumps, zero volume)
+    is_valid, validation_reason = validate_candle_data(df_with_indicators, min_bars=25)
+    if not is_valid:
+        logger.info(f"[{pair}] Sniper data rejected: {validation_reason}")
         return None
 
-    # Map confluence to score
-    if num_factors >= 5:
-        score = 8  # 90% winrate
-    elif num_factors == 4:
-        score = 7  # 85%
-    elif num_factors == 3:
-        score = 6  # 80%
-    elif num_factors == 2:
-        score = 5  # 75%
-    else:  # 1 factor
-        score = 4  # 70%
-
-    winrate_map = {4: 70, 5: 75, 6: 80, 7: 85, 8: 90, 9: 92, 10: 95}
-    winrate = winrate_map.get(score, 70)
-
-    logger.info(
-        f"[CONFLUENCE-SIGNAL] pair={pair} direction={direction} "
-        f"score={score}/10 winrate={winrate}% factors={num_factors} "
-        f"RSI={rsi:.0f} dev={price_deviation:.4f} pattern={candle_pattern} "
-        f"factors_list={confluence_factors}"
-    )
-
-    # Build signal
-    now = datetime.now(timezone.utc)
-    current_price = last_close
-
-    # Expiration: ONLY 1m or 3m (never 5m) — matches sniper engine
-    if n >= 2:
-        price_volatility = abs(closes[-1] - closes[-2]) / closes[-2] if closes[-2] > 0 else 0
-        if price_volatility > 0.002:
-            expiration = 3  # High volatility → 3m (was 5m)
-        else:
-            expiration = 3  # Normal volatility → 3m
-    else:
-        expiration = 3
-
-    # Dedup check
-    if not hasattr(analyze_pair_internal, '_last_signal_time'):
-        analyze_pair_internal._last_signal_time = {}
-    last_time = analyze_pair_internal._last_signal_time.get(pair, 0)
-    if (now.timestamp() - last_time) < 60:
+    # 6. Run the sniper engine (dual-mode: 1M mean-reversion + 3M trend-pullback)
+    sniper_result = generate_sniper_signal(df_with_indicators, payout)
+    if sniper_result is None:
+        # No 5+ factor confluence found — no signal
+        logger.info(f"[{pair}] No sniper signal — insufficient confluence (<5 factors)")
         return None
 
-        signal = {
-            'id': f'SIG-{now.strftime("%Y%m%d")}-{uuid.uuid4().hex[:6].upper()}',
-            'pair': pair,
-            'direction': direction,
-            'time': now.strftime('%H:%M:%S'),
-            'timestamp': now.isoformat(),
-            'entry_price': current_price,
-            'expiration': expiration,
-            'winrate': winrate,
-            'score': score,
-            'raw_points': score,
-            'payout': payout,
-            'classification': 'QUICK SIGNAL',
-            'smc_structure': f'Price Action ({len(df_m1)} candles)',
-            'smc_zone': f'Momentum {"up" if direction == "CALL" else "down"} ({momentum:.4f})',
-            'chart_pattern': 'Momentum Continuation',
-            'fibonacci': f'Price change: {momentum*100:.3f}%',
-            'rsi_status': f'Candle trend: {"Bullish" if direction == "CALL" else "Bearish"}',
-            'recommended_stake': 10,
-            'mtf_aligned': False,
-            'wyckoff': 'N/A',
-            'divergences': [],
-        }
-
-        try:
-            signal['hash_signature'] = compliance.generate_immutable_log(signal)
-        except Exception:
-            signal['hash_signature'] = 'ERROR'
-
-        try:
-            async with AsyncSessionLocal() as session:
-                db_signal = SignalRecord(
-                    id=signal['id'], pair=signal['pair'], direction=signal['direction'],
-                    entry_price=signal['entry_price'], expiration=signal['expiration'],
-                    winrate=signal['winrate'], score=signal['score'], payout=signal['payout'],
-                    classification=signal['classification'], timestamp=now,
-                    analysis_details={'mode': 'quick_signal', 'candles': len(df_m1)},
-                    hash_signature=signal['hash_signature']
-                )
-                session.add(db_signal)
-                await session.commit()
-        except Exception as db_err:
-            logger.warning(f"[SIGNAL-DB-SAVE-ERROR] pair={pair} err={db_err}")
-
-        generated_signals.append(_clamp_expiration(signal))
-        analyze_pair_internal._last_signal_time[pair] = now.timestamp()
-        monitor.record_signal(signal['id'], pair, direction, winrate)
-
-        logger.info(
-            f"[SIGNAL-EMITTED] id={signal['id']} pair={signal['pair']} "
-            f"direction={signal['direction']} score={signal['score']}/10 "
-            f"winrate={signal['winrate']}% payout={signal['payout']}% "
-            f"expiration={signal['expiration']}m entry_price={signal['entry_price']}"
-        )
-        return signal
-
-    # ═══ FULL CDC ANALYSIS (15+ candles) ════════════════════════════
-    df_m1 = indicators.calculate_all(df_m1)
-    
-    # Calcul des timeframes supérieurs
-    df_m5 = df_m1.resample('5Min').agg({
-        'open': 'first', 'high': 'max', 'low': 'min',
-        'close': 'last', 'volume': 'sum'
-    }).dropna()
-    df_m15 = df_m1.resample('15Min').agg({
-        'open': 'first', 'high': 'max', 'low': 'min',
-        'close': 'last', 'volume': 'sum'
-    }).dropna()
-    if df_m5 is not None and len(df_m5) >= 52:
-        df_m5 = indicators.calculate_all(df_m5)
-    if df_m15 is not None and len(df_m15) >= 52:
-        df_m15 = indicators.calculate_all(df_m15)
-
-    # SMC & Breaks
-    smc_result = smc_engine.analyze(df_m1)
-    trend = smc_result.get('trend', 'RANGE')
-
-    # MTF
-    mtf_trends = {'M1': trend}
-    if df_m5 is not None and len(df_m5) >= 20:
-        mtf_trends['M5'] = smc_engine.identify_trend(df_m5)
-    if df_m15 is not None and len(df_m15) >= 20:
-        mtf_trends['M15'] = smc_engine.identify_trend(df_m15)
-    mtf = SMCEngine.check_mtf_alignment(mtf_trends)
-
-    active_patterns = patterns.detect_all_patterns(df_m1)
-    active_patterns = patterns.get_active_patterns(df_m1)
-    chart_result = chartist.detect_all(df_m1)
-    fibo = indicators.auto_fibonacci(df_m1)
-    divs = DivergenceDetector.detect_divergences(df_m1)
-
-    # Déterminer la direction avec le système multicritère
-    call_score = 0
-    put_score = 0
-
-    if 'UPTREND' in trend:
-        call_score += 3
-    elif 'DOWNTREND' in trend:
-        put_score += 3
-
-    if mtf['aligned']:
-        if mtf['direction'] == 'CALL':
-            call_score += 2
-        elif mtf['direction'] == 'PUT':
-            put_score += 2
-
-    if active_patterns['has_bullish']:
-        call_score += 2
-    if active_patterns['has_bearish']:
-        put_score += 2
-
-    liquidity_zones = smc_result.get('liquidity_zones', {})
-    stop_hunt = filters.detect_stop_hunt(df_m1, liquidity_zones)
-    stop_hunt_detected = stop_hunt.get('detected', False)
-    stop_hunt_signal = stop_hunt.get('signal') if stop_hunt_detected else None
-    if stop_hunt_detected:
-        if stop_hunt_signal == 'CALL':
-            call_score += 4
-        elif stop_hunt_signal == 'PUT':
-            put_score += 4
-
-    wyckoff = smc_result.get('wyckoff', 'UNKNOWN')
-    if wyckoff == 'ACCUMULATION':
-        call_score += 2
-    elif wyckoff == 'DISTRIBUTION':
-        put_score += 2
-
-    last_row = df_m1.iloc[-1]
-    ema9 = float(last_row.get('EMA_9', 0))
-    ema21 = float(last_row.get('EMA_21', 0))
-
-    # ═══ RSI-BASED MEAN REVERSION (KEY for binary options) ═════════
-    # RSI < 30 = oversold → price likely to bounce UP → CALL
-    # RSI > 70 = overbought → price likely to drop → PUT
-    # This is the MOST reliable predictor for 1-5 minute binary options.
-    rsi = float(last_row.get('RSI_14', 50))
-    if rsi < 30:
-        call_score += 5  # Strong oversold → CALL signal
-    elif rsi < 40:
-        call_score += 2  # Mild oversold → slight CALL bias
-    elif rsi > 70:
-        put_score += 5  # Strong overbought → PUT signal
-    elif rsi > 60:
-        put_score += 2  # Mild overbought → slight PUT bias
-
-    # ═══ BOLLINGER BAND MEAN REVERSION ════════════════════════════
-    # Price below lower band → oversold → CALL
-    # Price above upper band → overbought → PUT
-    bb_lower = float(last_row.get('BBL_20_2.0', 0))
-    bb_upper = float(last_row.get('BBU_20_2.0', 0))
-    current_close = float(last_row.get('close', 0))
-    if bb_lower > 0 and current_close < bb_lower:
-        call_score += 4  # Price below lower Bollinger Band → CALL
-    if bb_upper > 0 and current_close > bb_upper:
-        put_score += 4  # Price above upper Bollinger Band → PUT
-
-    # EMA cross (trend following — lower weight than mean reversion)
-    ema_cross = 'CALL' if ema9 > ema21 else 'PUT'
-    if ema_cross == 'CALL':
-        call_score += 1
-    else:
-        put_score += 1
-
-    for d in divs.get('divergences', []):
-        if d['direction'] == 'CALL':
-            call_score += 2.5
-        elif d['direction'] == 'PUT':
-            put_score += 2.5
-
-    if call_score > put_score:
-        direction = 'CALL'
-    elif put_score > call_score:
-        direction = 'PUT'
-    else:
-        direction = 'CALL' if ema_cross == 'CALL' else 'PUT'
-
-    # Anti-manipulation filters
-    atr = df_m1['ATRr_14'].iloc[-1] if 'ATRr_14' in df_m1.columns else 0
-    atr_avg = df_m1['ATR_AVG_20'].iloc[-1] if 'ATR_AVG_20' in df_m1.columns else 0
-    filter_result = filters.check_all_filters(df_m1, atr, atr_avg, signal_direction=direction)
-    
-    # Si non forcé et bloqué par filtre, on rejette
-    if not force and filter_result['is_blocked']:
-        logger.info(
-            f"[FILTER-REJECTED] pair={pair} reasons={filter_result['reasons']}"
-        )
-        return None
-
-    # Scoring SES
-    candle = None
-    if direction == 'CALL' and active_patterns['bullish']:
-        candle = active_patterns['bullish'][0].lower().replace(' ', '_')
-        candle = f"pattern_{candle}"
-    elif direction == 'PUT' and active_patterns['bearish']:
-        candle = active_patterns['bearish'][0].lower().replace(' ', '_')
-        candle = f"pattern_{candle}"
-
-    obs = smc_result.get('order_blocks', [])
-    fvgs = smc_result.get('fvgs', [])
-    current_ob_type = None
-    fvg_confluence = False
-    for ob in obs:
-        ob_type = ob.get('type')
-        if ob_type in ['BULLISH_OB', 'MITIGATION_OB'] and direction == 'CALL':
-            current_ob_type = ob_type
-        elif ob_type in ['BEARISH_OB', 'MITIGATION_OB'] and direction == 'PUT':
-            current_ob_type = ob_type
-        elif ob_type == 'REJECTION_BLOCK':
-            # Use the original direction from the rejection block
-            original = ob.get('original_type', '')
-            if 'BULLISH' in original and direction == 'CALL':
-                current_ob_type = 'REJECTION_BLOCK'
-            elif 'BEARISH' in original and direction == 'PUT':
-                current_ob_type = 'REJECTION_BLOCK'
-    for fvg in fvgs:
-        if (fvg.get('type') == 'BULLISH_FVG' and direction == 'CALL') or \
-           (fvg.get('type') == 'BEARISH_FVG' and direction == 'PUT'):
-            fvg_confluence = True
-
-    chart_pattern_name = None
-    chart_pattern_detected = False
-    if chart_result['patterns']:
-        for cp in chart_result['patterns']:
-            if cp.get('signal') == direction:
-                chart_pattern_name = cp['name']
-                chart_pattern_detected = True
-                break
-
-    scoring_context = {
-        'direction': direction,
-        'smc_trend': trend,
-        'mtf_alignment': mtf['details'],
-        'current_ob_type': current_ob_type,
-        'fvg_confluence': fvg_confluence,
-        'stop_hunt_detected': stop_hunt_detected,
-        'stop_hunt_signal': stop_hunt_signal,
-        'wyckoff': wyckoff,
-        'ema_cross': ema_cross,
-        'chart_pattern': chart_pattern_detected,
-        'chart_pattern_name': chart_pattern_name,
-        'candle_pattern': candle,
-        'fibonacci_level': fibo.get('closest_level'),
-        'rsi': float(df_m1['RSI_14'].iloc[-1]) if 'RSI_14' in df_m1.columns else 50,
-        'macd_histogram': float(df_m1['MACDh_12_26_9'].iloc[-1]) if 'MACDh_12_26_9' in df_m1.columns else 0,
-        'volume_spike': float(df_m1['volume'].iloc[-1]) > float(df_m1['volume'].rolling(20).mean().iloc[-1]) * 1.5 if len(df_m1) >= 20 else False,
-        'divergence_bonus': divs.get('score_bonus', 0),
-        'pattern_score_modifier': active_patterns.get('score_modifier', 0),
-        'payout': payout,
-    }
-
-    score_result = ses.evaluate_signal(scoring_context)
-    
-    # Si non forcé et score trop bas, on rejette. Si forcé, on utilise le vrai score
-    winrate = score_result['winrate']
-    score = score_result['score']
-    # Force mode: bypass score threshold — user explicitly requested a signal
-    # The real score is still returned honestly (no fabrication)
-    if force:
-        # If score is 0 (no indicators computed), use quick-signal logic
-        if score == 0:
-            closes = df_m1['close'].values
-            if len(closes) >= 2:
-                if closes[-1] > closes[0]:
-                    direction = 'CALL'
-                else:
-                    direction = 'PUT'
-                score = 4
-                winrate = 70
-                logger.info(f"[FORCED-QUICK-SIGNAL] pair={pair} direction={direction} score=4/10 winrate=70%")
-    else:
-        if score < ses.MIN_SCORE_THRESHOLD:
-            logger.info(f"[SCORE-BELOW-THRESHOLD] pair={pair} score={score}/10 threshold={ses.MIN_SCORE_THRESHOLD}/10")
-            return None
-
-    # Single-token log for every analysis that passes the score threshold
-    # (this is the line you want to filter on to see signal candidates)
-    logger.info(
-        f"[ANALYSIS-PASS] pair={pair} direction={direction} score={score}/10 "
-        f"winrate={score_result['winrate']}% payout={payout}%"
-    )
-
-    # Risk Check (sauf si forcé)
+    # 7. Risk check (skip in force mode — user explicitly requested)
     if not force:
         risk_check = risk_mgr.check_can_trade()
         if not risk_check['can_trade']:
-            logger.warning(f"[RISK-REJECTED] pair={pair} reasons={risk_check.get('reasons', 'unknown')}")
+            logger.warning(f"[{pair}] Risk check rejected: {risk_check.get('reasons', 'unknown')}")
             return None
 
         cb = monitor.check_circuit_breaker()
         if cb['is_active']:
-            logger.warning(f"[CIRCUIT-BREAKER-REJECTED] pair={pair} reason={cb.get('reason', 'unknown')}")
+            logger.warning(f"[{pair}] Circuit breaker active: {cb.get('reason', 'unknown')}")
             return None
 
-    # AI Voting Classifier (sauf si forcé)
-    # Three modes based on which models are trained:
-    #   - All 3 trained (LSTM + Transformer + XGBoost): full voting classifier
-    #   - Only XGBoost trained: use XGBoost as sole AI gate (skip voting)
-    #   - None trained: skip AI gate entirely (CDC 10-factor scoring suffices)
-    #
-    # The XGBoost model is trained via /home/z/my-project/scripts/run_fast_training.py
-    # and saved to backend/models/weights/xgboost_v3.json. The backend loads it
-    # on startup via TrainingPipeline._load_models(). When the LSTM/Transformer
-    # are also trained (requires `torch` + GPU), the full voting classifier kicks in.
-    #
-    # TEMPORARY: AI gate disabled — the XGBoost model was trained on synthetic
-    # GBM data and produces NO_TRADE for most real PO market conditions.
-    # Re-enable after retraining on accumulated live_candles.csv data.
-    ENABLE_AI_GATE = False  # Set True to re-enable AI gating
-    if ENABLE_AI_GATE and not force:
-        features = _build_ai_features(df_m1, smc_result, fibo, active_patterns, divs)
-
-        # Check which sub-models are actually trained
-        xgb_trained = getattr(voting_model.xgboost, 'is_trained', False)
-        lstm_trained = getattr(voting_model.lstm, 'is_trained', False)
-        transformer_trained = getattr(voting_model.transformer, 'is_trained', False)
-
-        if xgb_trained and lstm_trained and transformer_trained:
-            # Full voting classifier — all 3 models real
-            ai_result = voting_model.predict(features)
-            if not ai_result.get('approved', False):
-                logger.info(f"[AI-VOTING-REJECTED] pair={pair} mode=full_voting result={ai_result}")
-                return None
-        elif xgb_trained:
-            # Only XGBoost is trained — use it as the sole AI gate
-            # (LSTM/Transformer would just produce heuristic NO_TRADE noise)
-            ai_result = voting_model.xgboost.predict(features)
-            ai_direction = ai_result.get('direction', 'NO_TRADE')
-            ai_prob = ai_result.get('probability', 0)
-            if ai_direction == 'NO_TRADE':
-                logger.info(f"[AI-XGBOOST-REJECTED] pair={pair} direction=NO_TRADE prob={ai_prob:.1f}%")
-                return None
-            # If XGBoost says CALL or PUT, log it for transparency but don't block
-            logger.info(f"[AI-XGBOOST-APPROVED] pair={pair} direction={ai_direction} prob={ai_prob:.1f}%")
-        else:
-            # No models trained — skip AI gate (CDC 10-factor scoring suffices)
-            pass
-
-    # ═══ SIGNAL BUILDING + EMISSION (wrapped in try/except so errors
-    # are visible instead of silently swallowed by the trading loop) ═══
-    try:
-        # Deduplication: don't emit a signal for the same pair within 60 seconds
-        # of the last signal for that pair. Prevents duplicate signals on the
-        # same candle (the trading loop runs every 5s but a candle lasts 60s).
-        if not hasattr(analyze_pair_internal, '_last_signal_time'):
-            analyze_pair_internal._last_signal_time = {}
-        last_time = analyze_pair_internal._last_signal_time.get(pair, 0)
-        if (datetime.now(timezone.utc).timestamp() - last_time) < 60:
-            logger.debug(f"[{pair}] Signal skipped — duplicate within 60s window")
-            return None
-
-        # Construire le signal
-        global signal_counter
-        async with signal_counter_lock:
-            signal_counter += 1
-            sig_count = signal_counter
-        now = datetime.now(timezone.utc)
-        current_price = float(df_m1['close'].iloc[-1])
-
-        # Expiration: ONLY 1m or 3m (never 5m) — matches sniper engine.
-        # Binary options with >3m expiration have poor edge on OTC pairs.
-        # The sniper engine uses 1m for mean-reversion and 3m for trend-pullback.
-        # This legacy CDC path must match — no 5m, no pair-hash rotation.
-        if atr > 0 and current_price > 0:
-            atr_ratio = atr / current_price
-            if atr_ratio > 0.001:
-                expiration = 3  # High volatility → 3m (was 5m)
-            elif atr_ratio > 0.0003:
-                expiration = 3  # Medium volatility → 3m
-            else:
-                expiration = 1  # Low volatility → 1m (quick scalp)
-        else:
-            expiration = 3  # Default to 3m (was 5m)
-
-        # REMOVED: pair-hash expiration rotation (was producing random 1/3/5m).
-        # The sniper engine is the authoritative source for expiration.
-        # Legacy paths must only use 1m or 3m to stay consistent.
-
-        signal = {
-            'id': f'SIG-{now.strftime("%Y%m%d")}-{uuid.uuid4().hex[:6].upper()}',
-            'pair': pair,
-            'direction': direction,
-            'time': now.strftime('%H:%M:%S'),
-            'timestamp': now.isoformat(),
-            'entry_price': current_price,
-            'expiration': expiration,
-            'winrate': score_result['winrate'],
-            'score': score_result['score'],
-            'raw_points': score_result['raw_points'],
-            'payout': payout,
-            'classification': score_result['classification'],
-            'smc_structure': score_result['details'].get('smc_structure', trend),
-            'smc_zone': score_result['details'].get('smc_zone', 'N/A'),
-            'chart_pattern': score_result['details'].get('chart_pattern', chart_pattern_name or 'N/A'),
-            'fibonacci': score_result['details'].get('fibonacci', f"Zone {fibo.get('closest_level', 'N/A')}%"),
-            'rsi_status': 'Survendu' if (direction == 'CALL' and last_row.get('RSI_14', 50) < 40) else 'Suracheté' if (direction == 'PUT' and last_row.get('RSI_14', 50) > 60) else 'Neutre',
-            'recommended_stake': score_result['recommended_stake'],
-            'mtf_aligned': mtf['aligned'],
-            'wyckoff': wyckoff,
-            'divergences': [d['type'] for d in divs.get('divergences', [])],
-        }
-
-        # Compliance hash — this was the likely crash point
-        try:
-            signal['hash_signature'] = compliance.generate_immutable_log(signal)
-        except Exception as hash_err:
-            logger.warning(f"[SIGNAL-HASH-ERROR] pair={pair} err={hash_err}")
-            signal['hash_signature'] = 'ERROR'
-
-        # Save to DB (non-blocking)
-        try:
-            async with AsyncSessionLocal() as session:
-                db_signal = SignalRecord(
-                    id=signal['id'],
-                    pair=signal['pair'],
-                    direction=signal['direction'],
-                    entry_price=signal['entry_price'],
-                    expiration=signal['expiration'],
-                    winrate=signal['winrate'],
-                    score=signal['score'],
-                    payout=signal['payout'],
-                    classification=signal['classification'],
-                    timestamp=now,
-                    analysis_details=scoring_context,
-                    hash_signature=signal['hash_signature']
-                )
-                session.add(db_signal)
-                await session.commit()
-        except Exception as db_err:
-            logger.warning(f"[SIGNAL-DB-SAVE-ERROR] pair={pair} err={db_err}")
-
-        generated_signals.append(_clamp_expiration(signal))
-        # Track last signal time for this pair (dedup)
-        analyze_pair_internal._last_signal_time[pair] = datetime.now(timezone.utc).timestamp()
-        monitor.record_signal(signal['id'], pair, direction, score_result['winrate'])
-
-        # Single-token log tag so it's easy to filter in Railway (no spaces)
-        logger.info(
-            f"[SIGNAL-EMITTED] id={signal['id']} pair={signal['pair']} "
-            f"direction={signal['direction']} score={signal['score']}/10 "
-            f"winrate={signal['winrate']}% payout={signal['payout']}% "
-            f"expiration={signal['expiration']}m entry_price={signal['entry_price']}"
-        )
-
-        # Envoi Telegram
-        signal_msg = f"""🎯 <b>A2SNIPER SIGNAL {"LIVE" if not force else "SUR DEMANDE"}</b>
-━━━━━━━━━━━━━━━━━━━━━
-📊 Paire : <b>{signal['pair']}</b>
-🟢 Direction : <b>{signal['direction']}</b>
-⌛ Expiration : <b>{signal['expiration']}m</b>
-💰 Payout : <b>{signal['payout']}%</b>
-🎯 Winrate : <b>{signal['winrate']}%</b>
-
-🏗️ Structure : <i>{signal['smc_structure']}</i>
-⚡ Confluence : <i>{signal['fibonacci']}</i>
-
-Zéro Simulation. 100% Real-Market."""
-
-        try:
-            await telegram_bot.send_signal(signal_msg)
-        except Exception as tg_err:
-            logger.warning(f"[SIGNAL-TELEGRAM-ERROR] pair={pair} err={tg_err}")
-
-        return signal
-
-    except Exception as build_err:
-        # This catches ANY error between ANALYSIS-PASS and SIGNAL-EMITTED
-        # that was previously silently swallowed by the trading loop.
-        logger.error(
-            f"[SIGNAL-BUILD-ERROR] pair={pair} err={build_err}",
-            exc_info=True
-        )
+    # 8. Deduplication: don't emit for the same pair within 60 seconds
+    if not hasattr(analyze_pair_internal, '_last_signal_time'):
+        analyze_pair_internal._last_signal_time = {}
+    last_time = analyze_pair_internal._last_signal_time.get(pair, 0)
+    now_ts = datetime.now(timezone.utc).timestamp()
+    if (now_ts - last_time) < 60:
+        logger.debug(f"[{pair}] Sniper signal skipped — duplicate within 60s window")
         return None
 
+    # 9. Build the signal dict from sniper result
+    now = datetime.now(timezone.utc)
+    sniper_mode = sniper_result.get('mode', 'SNIPER_1M')
+    is_1m = sniper_mode == 'SNIPER_1M'
+    factors_hit = sniper_result['factors']['factors_hit']
 
+    if is_1m:
+        strategy_label = f"Mean Reversion ({sniper_result['score']}/7 factors)"
+        indicator_summary = f"RSI {sniper_result['factors']['rsi']:.0f} / Stoch {sniper_result['factors']['stoch_k']:.0f} / CCI {sniper_result['factors']['cci']:.0f}"
+        rsi_status = 'Oversold' if sniper_result['direction'] == 'CALL' else 'Overbought'
+    else:
+        strategy_label = f"Trend Pullback ({sniper_result['score']}/7 factors)"
+        indicator_summary = f"RSI {sniper_result['factors']['rsi']:.0f} / Stoch {sniper_result['factors']['stoch_k']:.0f} / ADX {sniper_result['factors']['adx']:.0f}"
+        rsi_status = 'Mid-range (trend resume)'
+
+    signal = {
+        'id': f'SIG-{now.strftime("%Y%m%d")}-{uuid.uuid4().hex[:6].upper()}',
+        'pair': pair,
+        'direction': sniper_result['direction'],
+        'time': now.strftime('%H:%M:%S'),
+        'timestamp': now.isoformat(),
+        'entry_price': sniper_result['entry_price'],
+        'expiration': sniper_result['expiration'],  # 1 or 3 minutes
+        'winrate': sniper_result['winrate'],
+        'score': sniper_result['score'],
+        'raw_points': sniper_result['score'],
+        'payout': payout,
+        'classification': sniper_result['classification'],
+        'smc_structure': strategy_label,
+        'smc_zone': ', '.join(factors_hit[:3]),
+        'chart_pattern': sniper_result['factors'].get('reversal_pattern', 'N/A') or 'N/A',
+        'fibonacci': indicator_summary,
+        'rsi_status': rsi_status,
+        'recommended_stake': 10,
+        'mtf_aligned': True,
+        'wyckoff': 'Reversal' if is_1m else 'Trend Resume',
+        'divergences': [],
+        'analysis_details': {
+            'mode': 'sniper_1m_mean_reversion' if is_1m else 'sniper_3m_trend_pullback',
+            'sniper_mode': sniper_mode,
+            'expiration_minutes': sniper_result['expiration'],
+            'factors_hit': factors_hit,
+            'factors_description': sniper_result['factors']['factors_description'],
+            'call_score': sniper_result['factors']['call_score'],
+            'put_score': sniper_result['factors']['put_score'],
+            'rsi': sniper_result['factors'].get('rsi'),
+            'stoch_k': sniper_result['factors'].get('stoch_k'),
+            'cci': sniper_result['factors'].get('cci'),
+            'adx': sniper_result['factors'].get('adx'),
+            'atr': sniper_result['factors'].get('atr'),
+        },
+    }
+
+    # 10. Compliance hash
+    try:
+        signal['hash_signature'] = compliance.generate_immutable_log(signal)
+    except Exception as hash_err:
+        logger.warning(f"[{pair}] Hash error: {hash_err}")
+        signal['hash_signature'] = 'ERROR'
+
+    # 11. Save to database
+    try:
+        async with AsyncSessionLocal() as session:
+            db_signal = SignalRecord(
+                id=signal['id'], pair=signal['pair'], direction=signal['direction'],
+                entry_price=signal['entry_price'], expiration=signal['expiration'],
+                winrate=signal['winrate'], score=signal['score'], payout=signal['payout'],
+                classification=signal['classification'], timestamp=now,
+                analysis_details=signal['analysis_details'],
+                hash_signature=signal['hash_signature']
+            )
+            session.add(db_signal)
+            await session.commit()
+    except Exception as db_err:
+        logger.warning(f"[{pair}] DB save error: {db_err}")
+
+    # 12. Emit signal
+    generated_signals.append(signal)
+    analyze_pair_internal._last_signal_time[pair] = now_ts
+    monitor.record_signal(signal['id'], pair, signal['direction'], signal['winrate'])
+
+    logger.info(
+        f"[SNIPER-EMITTED] id={signal['id']} pair={signal['pair']} "
+        f"mode={sniper_mode} direction={signal['direction']} "
+        f"score={signal['score']}/7 winrate={signal['winrate']}% "
+        f"expiration={signal['expiration']}m payout={signal['payout']}%"
+    )
+
+    return signal
 
 
 def _build_ai_features(df, smc, fibo, patterns_result, divs):
@@ -1660,17 +717,17 @@ async def trading_loop():
         )
         if kickoff_pairs:
             kickoff_list = list(kickoff_pairs.keys())
-            logger.info(f"[INSTANT-KICKSTART] Firing instant analysis on {len(kickoff_list)} pairs...")
+            logger.info(f"[SNIPER-KICKSTART] Firing sniper analysis on {len(kickoff_list)} pairs...")
             for pair in kickoff_list:
                 try:
-                    sig = await analyze_pair_instant(pair)
+                    sig = await analyze_pair(pair)
                     if sig:
-                        logger.info(f"[INSTANT-KICKSTART] ✅ Signal generated: {sig['pair']} {sig['direction']} ({sig['winrate']}%)")
+                        logger.info(f"[SNIPER-KICKSTART] ✅ Signal generated: {sig['pair']} {sig['direction']} ({sig['winrate']}%)")
                 except Exception:
                     pass
                 await asyncio.sleep(0.05)  # 50ms between pairs — fast kickoff
     except Exception as e:
-        logger.warning(f"[INSTANT-KICKSTART] Error: {e}")
+        logger.warning(f"[SNIPER-KICKSTART] Error: {e}")
 
     while True:
         try:
@@ -1718,28 +775,15 @@ async def trading_loop():
                     # Skip pairs that don't currently meet the threshold (active + ≥ 70%)
                     continue
 
-                # ═══ CANDLE-BASED ANALYSIS (PRIMARY) ═══════════════════
-                # With REST-prefetched historical candles (100 bars per pair),
-                # we can run full CDC technical analysis (RSI, EMA, MACD,
-                # Bollinger) within 5 seconds of connecting.
-                #
-                # This produces REAL signals with genuine predictive power,
-                # unlike the tick-based instant engine which was ~43% winrate.
-                #
-                # Flow:
-                # 1) analyze_pair (candle-based CDC) — primary, high winrate
-                # 2) analyze_pair_instant (tick-based) — fallback if no candles yet
+                # ═══ SNIPER ENGINE (ONLY) ═════════════════════════════
+                # The sniper engine is the ONLY signal generator.
+                # It uses 7-factor confluence (1M mean-reversion + 3M trend-pullback).
+                # Requires 5+ factors to align. If no setup is found, no signal
+                # is generated — this is correct (no signal > low-quality signal).
                 try:
                     await analyze_pair(pair)
                 except Exception as e:
-                    logger.debug(f"[ANALYZE-ERROR] pair={pair} err={e}")
-                    # If candle-based failed (no candles yet), try instant as fallback
-                    try:
-                        instant_sig = await analyze_pair_instant(pair)
-                        if instant_sig:
-                            continue
-                    except Exception:
-                        pass
+                    logger.debug(f"[SNIPER-ERROR] pair={pair} err={e}")
                 # Small delay between pairs to avoid saturating the CPU.
                 # 0.3s keeps a 10-pair cycle under 5s total so we can hit
                 # the 5s cycle interval below.
@@ -2128,119 +1172,35 @@ async def request_live_signal(request: Request, credentials: HTTPAuthorizationCr
             )
         )
 
-    # Use force mode — the user EXPLICITLY requested a signal on demand.
-    # Force mode bypasses the strict filters (session, anti-manipulation,
-    # AI voting) so the user actually receives a signal.
-    # The real computed score is still returned honestly (no fabrication).
-    logger.info(f"[SIGNAL-REQUEST] pair={pair} payout={real_payout}% — user requested signal")
-
-    # ═══ CANDLE-BASED ANALYSIS (PRIMARY) ═══════════════════════════
-    # With REST-prefetched historical candles (100 bars per pair),
-    # we can run full CDC analysis (RSI, EMA, MACD, Bollinger).
-    # This produces REAL signals with genuine predictive power (65-75% winrate).
+    # ═══ SNIPER ENGINE (ONLY SIGNAL GENERATOR) ═════════════════════
+    # The sniper engine is the ONLY signal generator in the system.
+    # It uses 7-factor confluence with two strategies:
+    #   - SNIPER 1M: Mean reversion at Bollinger/RSI/Stoch/CCI extremes (1m expiration)
+    #   - SNIPER 3M: Trend pullback at EMA21 with trend alignment (3m expiration)
+    # Requires 5+ of 7 factors to align. If no setup is found, returns None.
+    #
+    # In force mode (user explicitly requested), if the sniper doesn't find
+    # a setup, we return a clean "no signal" message — NO legacy fallbacks.
+    logger.info(f"[SIGNAL-REQUEST] pair={pair} payout={real_payout}% — running sniper engine")
     signal = await force_analyze_pair(pair)
     if signal:
-        logger.info(f"[SIGNAL-REQUEST] ✅ Candle-based engine produced signal for {pair}")
-        return {"status": "success", "signal": signal, "mode": "candle"}
+        logger.info(f"[SIGNAL-REQUEST] ✅ Sniper engine produced signal for {pair} (mode={signal.get('analysis_details', {}).get('sniper_mode', 'unknown')})")
+        return {"status": "success", "signal": signal, "mode": "sniper"}
 
-    # ═══ INSTANT ENGINE (FALLBACK) ═════════════════════════════════
-    # Only used if candle-based analysis failed (e.g., no historical data yet).
-    # Less reliable but better than no signal.
-    instant_sig = await analyze_pair_instant(pair)
-    if instant_sig:
-        logger.info(f"[SIGNAL-REQUEST] ✅ Instant engine produced signal for {pair} (fallback)")
-        return {"status": "success", "signal": instant_sig, "mode": "instant"}
-
-    # ═══ NO SIGNAL AVAILABLE — LAST RESORT FALLBACK ════════════════
-    # If both candle-based and instant engines failed, generate a basic
-    # signal from whatever data is available. The user explicitly clicked
-    # a pair — they should ALWAYS get a signal.
-    logger.info(f"[SIGNAL-REQUEST] Both engines failed for {pair} — generating basic fallback")
-
-    try:
-        ticks, _ = po_scanner.get_tick_data(pair, max_ticks=100)
-        current_price = None
-        if ticks and len(ticks) >= 2:
-            prices = [p for _, p in ticks]
-            current_price = float(prices[-1])
-            # Mean reversion: if price dropped → CALL, if rose → PUT
-            if prices[-1] < prices[0]:
-                direction = 'CALL'
-            else:
-                direction = 'PUT'
-        else:
-            # Try get_current_price
-            current_price = await po_scanner.get_current_price(pair)
-            direction = 'CALL' if current_price else 'PUT'
-
-        if current_price is None:
-            current_price = 1.0
-            direction = 'CALL'
-
-        now = datetime.now(timezone.utc)
-        fallback_signal = {
-            'id': f'SIG-{now.strftime("%Y%m%d")}-{uuid.uuid4().hex[:6].upper()}',
-            'pair': pair,
-            'direction': direction,
-            'time': now.strftime('%H:%M:%S'),
-            'timestamp': now.isoformat(),
-            'entry_price': current_price,
-            'expiration': 3,
-            'winrate': 70,
-            'score': 4,
-            'raw_points': 4,
-            'payout': real_payout,
-            'classification': 'MEAN REVERSION',
-            'smc_structure': f'Mean Reversion ({direction})',
-            'smc_zone': f'RSI-based reversal',
-            'chart_pattern': 'Price Action',
-            'fibonacci': 'Golden Zone',
-            'rsi_status': 'Neutral',
-            'recommended_stake': 10,
-            'mtf_aligned': False,
-            'wyckoff': 'Mean Reversion',
-            'divergences': [],
-        }
-
-        try:
-            fallback_signal['hash_signature'] = compliance.generate_immutable_log(fallback_signal)
-        except Exception:
-            fallback_signal['hash_signature'] = 'ERROR'
-
-        try:
-            async with AsyncSessionLocal() as session:
-                db_signal = SignalRecord(
-                    id=fallback_signal['id'], pair=fallback_signal['pair'],
-                    direction=fallback_signal['direction'],
-                    entry_price=fallback_signal['entry_price'],
-                    expiration=fallback_signal['expiration'],
-                    winrate=fallback_signal['winrate'], score=fallback_signal['score'],
-                    payout=fallback_signal['payout'],
-                    classification=fallback_signal['classification'], timestamp=now,
-                    analysis_details={'mode': 'fallback_mean_reversion', 'smc_structure': fallback_signal['smc_structure'],
-                                      'smc_zone': fallback_signal['smc_zone'], 'chart_pattern': fallback_signal['chart_pattern'],
-                                      'fibonacci': fallback_signal['fibonacci'], 'rsi_status': fallback_signal['rsi_status'],
-                                      'score': 4},
-                    hash_signature=fallback_signal['hash_signature']
-                )
-                session.add(db_signal)
-                await session.commit()
-        except Exception as db_err:
-            logger.warning(f"[FALLBACK-SIGNAL-DB-SAVE-ERROR] pair={pair} err={db_err}")
-
-        generated_signals.append(_clamp_expiration(fallback_signal))
-        monitor.record_signal(fallback_signal['id'], pair, direction, 70)
-        logger.info(f"[SIGNAL-REQUEST] ✅ Fallback signal generated for {pair}: {direction}")
-        return {"status": "success", "signal": fallback_signal, "mode": "fallback"}
-
-    except Exception as e:
-        logger.error(f"[SIGNAL-REQUEST] Fallback failed for {pair}: {e}", exc_info=True)
-        # Instead of raising 500, return a clean error response so the frontend
-        # can display a user-friendly message instead of "Internal Server Error"
-        raise HTTPException(
-            status_code=500,
-            detail=f"Could not generate signal for {pair}. The market data is still loading — please try again in 5-10 seconds."
+    # ═══ NO SIGNAL AVAILABLE ════════════════════════════════════════
+    # The sniper engine didn't find a 5+ factor confluence setup.
+    # This is CORRECT behavior — no signal is better than a low-quality signal.
+    # Return a clean message so the bot/frontend can display it.
+    logger.info(f"[SIGNAL-REQUEST] No sniper setup for {pair} — insufficient confluence (<5 factors). Try another pair or wait for better conditions.")
+    raise HTTPException(
+        status_code=404,
+        detail=(
+            f"No high-confidence signal available for {pair} right now. "
+            f"The sniper engine requires 5+ of 7 confluence factors to align "
+            f"(Bollinger + RSI + Stochastic + Candlestick + CCI + EMA deviation + Momentum). "
+            f"Try another pair or wait 1-2 minutes for better market conditions."
         )
+    )
 
 
 @app.get("/api/signals")
@@ -4144,51 +3104,45 @@ async def connect_market(request: Request, credentials: HTTPAuthorizationCredent
                     payout = po_scanner.get_payout(pair)
                     if payout and payout >= 70:
                         try:
-                            # Try candle-based analysis first (high winrate)
+                            # Sniper engine — the ONLY signal generator
                             sig = await force_analyze_pair(pair)
                             if sig:
                                 signals_generated += 1
-                                logger.info(f"[KICK-CANDLE] ✅ Signal generated for {pair} ({sig.get('winrate', 70)}% winrate)")
-                            else:
-                                # Fallback to instant if no candles yet
-                                sig = await analyze_pair_instant(pair)
-                                if sig:
-                                    signals_generated += 1
-                                    logger.info(f"[KICK-INSTANT] ✅ Signal generated for {pair} ({sig['winrate']}% winrate)")
+                                logger.info(f"[KICK-SNIPER] ✅ Signal generated for {pair} ({sig.get('winrate', 70)}% winrate)")
                         except Exception:
                             pass
                         await asyncio.sleep(0.05)
 
                 logger.info(f"[KICK] Pass complete — {signals_generated} signals generated from {len(live_pairs)} pairs")
 
-                # If instant engine didn't produce any signals (insufficient
-                # ticks for all pairs), retry after 3 more seconds — by then
-                # PO should have streamed enough ticks (10-30 per pair).
+                # If sniper didn't produce any signals (insufficient confluence),
+                # retry after 3 more seconds — by then more candles may have arrived
+                # and market conditions may have changed.
                 if signals_generated == 0:
-                    logger.info("[KICK-INSTANT] No signals on first pass — retrying in 3s (waiting for tick accumulation)")
+                    logger.info("[KICK-SNIPER] No signals on first pass — retrying in 3s (waiting for candle accumulation)")
                     await asyncio.sleep(3)
                     for pair in live_pairs:
                         payout = po_scanner.get_payout(pair)
                         if payout and payout >= 70:
                             try:
-                                sig = await analyze_pair_instant(pair)
+                                sig = await force_analyze_pair(pair)
                                 if sig:
                                     signals_generated += 1
-                                    logger.info(f"[KICK-INSTANT-RETRY] ✅ Signal generated for {pair} ({sig['winrate']}% winrate)")
+                                    logger.info(f"[KICK-SNIPER-RETRY] ✅ Signal generated for {pair} ({sig['winrate']}% winrate)")
                             except Exception:
                                 pass
                             await asyncio.sleep(0.05)
-                    logger.info(f"[KICK-INSTANT-RETRY] Pass complete — {signals_generated} signals total")
+                    logger.info(f"[KICK-SNIPER-RETRY] Pass complete — {signals_generated} signals total")
 
-                # Final fallback: candle-based force analysis on first 3 pairs
+                # Final retry: sniper engine on first 3 pairs (one more attempt)
                 if signals_generated == 0:
-                    logger.info("[KICK] No instant signals yet — trying candle-based fallback for first 3 pairs")
+                    logger.info("[KICK] No sniper signals yet — final retry on first 3 pairs")
                     for pair in live_pairs[:3]:
                         payout = po_scanner.get_payout(pair)
                         if payout and payout >= 70:
                             sig = await force_analyze_pair(pair)
                             if sig:
-                                logger.info(f"[KICK-FALLBACK] Candle-based signal generated for {pair}")
+                                logger.info(f"[KICK-FINAL] Sniper signal generated for {pair}")
                                 break
             except Exception as e:
                 logger.warning(f"[KICK] Initial analysis failed: {e}")
