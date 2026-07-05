@@ -10,6 +10,7 @@ import logging
 import os
 import secrets
 import json
+import numpy as np
 from collections import deque
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone, timedelta
@@ -1755,7 +1756,47 @@ async def resolution_loop():
                     expiry_time = s_timestamp + timedelta(minutes=s.expiration or 1)
                     
                     if now >= expiry_time:
-                        current_price = await po_scanner.get_current_price(s.pair)
+                        # ─── ACCURATE WIN/LOSS DETERMINATION ───────────────
+                        # BUG FIX: Previously this called get_current_price() which returns
+                        # the price at RESOLUTION time (up to 10s AFTER expiry). This caused
+                        # incorrect win/loss results — the price at expiry moment is what
+                        # determines the outcome, not the price 10s later.
+                        #
+                        # FIX: Fetch the candle that contains the expiry timestamp and use
+                        # its CLOSE price. For 1-minute candles, the close of the candle
+                        # at expiry_time is the exit price. This matches what PO uses to
+                        # determine win/loss on their platform.
+                        #
+                        # For CALL: win if exit_price > entry_price
+                        # For PUT:  win if exit_price < entry_price
+                        # Tie (exit == entry): no result (skip, will retry next loop)
+                        try:
+                            # Fetch candles around the expiry time
+                            df_expiry = await po_scanner.get_candles(s.pair, timeframe="1m", count=5)
+                            if df_expiry is not None and not df_expiry.empty:
+                                # Find the candle whose timestamp matches the expiry minute
+                                # The candle containing expiry_time has its close at the
+                                # end of that minute. We want the close price of the candle
+                                # that was closing at expiry_time.
+                                expiry_ts = expiry_time.timestamp()
+                                # Convert candle index (datetime) to timestamp for comparison
+                                df_expiry_ts = df_expiry.index.astype(np.int64) // 10**9
+                                # Find the last candle that CLOSED at or before expiry_time
+                                # A 1-minute candle closes at its timestamp + 60 seconds
+                                candle_close_ts = df_expiry_ts.values + 60
+                                # Get the candle whose close is closest to (but not after) expiry
+                                valid_candles = df_expiry[candle_close_ts <= expiry_ts + 30]  # 30s tolerance
+                                if not valid_candles.empty:
+                                    current_price = float(valid_candles.iloc[-1]['close'])
+                                else:
+                                    # Fallback: use the last candle's close
+                                    current_price = float(df_expiry.iloc[-1]['close'])
+                            else:
+                                current_price = await po_scanner.get_current_price(s.pair)
+                        except Exception as price_err:
+                            logger.warning(f"[RESULT-CHECK] Error fetching expiry price for {s.id}: {price_err}")
+                            current_price = await po_scanner.get_current_price(s.pair)
+
                         if current_price:
                             if s.direction == 'CALL':
                                 is_win = current_price > s.entry_price
@@ -1768,7 +1809,7 @@ async def resolution_loop():
                                 logger.info(f"Tie detected for {s.id}: entry={s.entry_price}, exit={current_price}")
                                 continue
                             s.is_win = is_win
-                            
+
                             # Record result in monitoring engine and risk manager
                             monitor.record_result(s.id, is_win)
                             stake_val = 1.0
@@ -1779,10 +1820,15 @@ async def resolution_loop():
                                 except (ValueError, TypeError):
                                     stake_val = 1.0
                             risk_mgr.record_trade_result(is_win, stake_val)
-                            
-                            logger.info(f"🏁 SIGNAL RÉSOLU RÉEL: {s.id} ({s.pair}) -> {'GAGNÉ' if is_win else 'PERDU'} (Entry: {s.entry_price}, Exit: {current_price})")
+
+                            logger.info(
+                                f"🏁 SIGNAL RESOLVED: {s.id} ({s.pair}) -> "
+                                f"{'WON' if is_win else 'LOST'} "
+                                f"(Direction: {s.direction}, Entry: {s.entry_price}, "
+                                f"Exit at expiry: {current_price}, Expiry: {expiry_time.isoformat()})"
+                            )
                         else:
-                            logger.warning(f"Impossible de résoudre {s.id}: Pas de prix pour {s.pair}")
+                            logger.warning(f"Cannot resolve {s.id}: No price for {s.pair}")
                 
                 await session.commit()
             

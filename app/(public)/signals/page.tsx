@@ -18,7 +18,41 @@ export default function SignalsPage() {
   const [ssid, setSsidState] = useState('');
   const [isConnecting, setIsConnecting] = useState(false);
   const [connectError, setConnectError] = useState('');
-  const [selectedPayout, setSelectedPayout] = useState('ALL');
+
+  // ─── Persist filters in localStorage so they survive page navigation ───
+  // When the user sets filters and leaves the page, then comes back, the
+  // filters should still be there. Each filter has its own localStorage key.
+  const [selectedPayout, setSelectedPayout] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('a2sniper_filter_payout') || 'ALL';
+    }
+    return 'ALL';
+  });
+  const [selectedPair, setSelectedPair] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('a2sniper_filter_pair') || 'ALL';
+    }
+    return 'ALL';
+  });
+  const [selectedStatus, setSelectedStatus] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('a2sniper_filter_status') || 'ALL';
+    }
+    return 'ALL';
+  });
+  const [selectedDirection, setSelectedDirection] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('a2sniper_filter_direction') || 'ALL';
+    }
+    return 'ALL';
+  });
+  const [minWinrate, setMinWinrate] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('a2sniper_filter_minWinrate');
+      return saved ? Number(saved) : 0;
+    }
+    return 0;
+  });
 
   // Load persisted SSID on mount
   useEffect(() => {
@@ -26,14 +60,27 @@ export default function SignalsPage() {
     if (saved) setSsidState(saved);
   }, []);
 
+  // Persist filters whenever they change
+  useEffect(() => {
+    localStorage.setItem('a2sniper_filter_payout', selectedPayout);
+  }, [selectedPayout]);
+  useEffect(() => {
+    localStorage.setItem('a2sniper_filter_pair', selectedPair);
+  }, [selectedPair]);
+  useEffect(() => {
+    localStorage.setItem('a2sniper_filter_status', selectedStatus);
+  }, [selectedStatus]);
+  useEffect(() => {
+    localStorage.setItem('a2sniper_filter_direction', selectedDirection);
+  }, [selectedDirection]);
+  useEffect(() => {
+    localStorage.setItem('a2sniper_filter_minWinrate', String(minWinrate));
+  }, [minWinrate]);
+
   const setSsid = (val: string) => {
     setSsidState(val);
     localStorage.setItem('a2sniper_last_ssid', val);
   };
-  const [selectedPair, setSelectedPair] = useState('ALL');
-  const [selectedStatus, setSelectedStatus] = useState('ALL');
-  const [selectedDirection, setSelectedDirection] = useState('ALL');
-  const [minWinrate, setMinWinrate] = useState(0);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [justExported, setJustExported] = useState(false);
 
