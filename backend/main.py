@@ -414,6 +414,30 @@ async def force_analyze_pair(pair: str) -> dict:
     return await analyze_pair_internal(pair, force=True)
 
 
+def _clamp_expiration(signal: dict) -> dict:
+    """
+    FORCE every signal to have expiration of 1 or 3 minutes ONLY.
+    No 5m, 4m, or any other value allowed. This is the FINAL safety net
+    — even if some legacy code path sets 5m, this clamps it to 3m.
+
+    Binary options on PO work best with:
+      - 1m for mean-reversion (sniper 1M)
+      - 3m for trend-pullback (sniper 3M)
+    Anything longer has poor edge.
+    """
+    if signal and 'expiration' in signal:
+        exp = signal['expiration']
+        try:
+            exp_int = int(exp)
+            if exp_int not in (1, 3):
+                # Clamp: anything >3 → 3, anything <1 → 1, 2 → 1
+                signal['expiration'] = 3 if exp_int > 3 else 1
+                logger.info(f"[EXPIRATION-CLAMP] Signal {signal.get('id', '?')} expiration {exp_int}m → {signal['expiration']}m")
+        except (ValueError, TypeError):
+            signal['expiration'] = 3  # Default to 3m if invalid
+    return signal
+
+
 # ══════════════════════════════════════════════════════════════════════
 # INSTANT SIGNAL ENGINE — Tick-based analysis for 5-10s signal delivery
 # ══════════════════════════════════════════════════════════════════════
@@ -634,9 +658,12 @@ async def analyze_pair_instant(pair: str) -> dict:
     if (now.timestamp() - last_time) < 30:
         return None
 
-    # ─── Expiration based on volatility ───
+    # ─── Expiration: ONLY 1m or 3m (never 5m) ───
+    # Binary options work best with short expirations. The sniper engine uses
+    # 1m for mean-reversion and 3m for trend-pullback. These legacy paths
+    # must match — no 5m signals allowed.
     if vol_pct > 0.0008:
-        expiration = 5  # High volatility → 5m expiration
+        expiration = 3  # High volatility → 3m (was 5m)
     elif vol_pct > 0.0003:
         expiration = 3  # Medium volatility → 3m
     else:
@@ -687,7 +714,7 @@ async def analyze_pair_instant(pair: str) -> dict:
     except Exception as db_err:
         logger.warning(f"[INSTANT-SIGNAL-DB-SAVE-ERROR] pair={pair} err={db_err}")
 
-    generated_signals.append(signal)
+    generated_signals.append(_clamp_expiration(signal))
     _instant_last_signal_time[pair] = now.timestamp()
     monitor.record_signal(signal['id'], pair, direction, winrate)
 
@@ -862,7 +889,7 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False) -> dict:
                 except Exception as db_err:
                     logger.warning(f"[SIGNAL-DB-SAVE-ERROR] pair={pair} err={db_err}")
 
-                generated_signals.append(signal)
+                generated_signals.append(_clamp_expiration(signal))
                 analyze_pair_internal._last_signal_time[pair] = now_ts
                 monitor.record_signal(signal['id'], pair, signal['direction'], signal['winrate'])
 
@@ -1074,14 +1101,13 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False) -> dict:
     now = datetime.now(timezone.utc)
     current_price = last_close
 
-    # Expiration: 3-5 minutes (longer = more reliable for mean reversion)
-    # NEVER use 1 minute — it's too noisy
+    # Expiration: ONLY 1m or 3m (never 5m) — matches sniper engine
     if n >= 2:
         price_volatility = abs(closes[-1] - closes[-2]) / closes[-2] if closes[-2] > 0 else 0
         if price_volatility > 0.002:
-            expiration = 5  # High volatility → more time for reversal
+            expiration = 3  # High volatility → 3m (was 5m)
         else:
-            expiration = 3  # Normal volatility → 3 minutes
+            expiration = 3  # Normal volatility → 3m
     else:
         expiration = 3
 
@@ -1136,7 +1162,7 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False) -> dict:
         except Exception as db_err:
             logger.warning(f"[SIGNAL-DB-SAVE-ERROR] pair={pair} err={db_err}")
 
-        generated_signals.append(signal)
+        generated_signals.append(_clamp_expiration(signal))
         analyze_pair_internal._last_signal_time[pair] = now.timestamp()
         monitor.record_signal(signal['id'], pair, direction, winrate)
 
@@ -1450,30 +1476,24 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False) -> dict:
         now = datetime.now(timezone.utc)
         current_price = float(df_m1['close'].iloc[-1])
 
-        # Expiration time based on market conditions (ATR + candle structure):
-        # - High volatility (ATR/price > 0.001): 5 min (more time for move to develop)
-        # - Medium volatility (0.0003 < ATR/price <= 0.001): 3 min
-        # - Low volatility (ATR/price <= 0.0003): 1 min (quick scalp)
-        # This produces DIFFERENT expiration times per pair per market condition.
+        # Expiration: ONLY 1m or 3m (never 5m) — matches sniper engine.
+        # Binary options with >3m expiration have poor edge on OTC pairs.
+        # The sniper engine uses 1m for mean-reversion and 3m for trend-pullback.
+        # This legacy CDC path must match — no 5m, no pair-hash rotation.
         if atr > 0 and current_price > 0:
             atr_ratio = atr / current_price
             if atr_ratio > 0.001:
-                expiration = 5
+                expiration = 3  # High volatility → 3m (was 5m)
             elif atr_ratio > 0.0003:
-                expiration = 3
+                expiration = 3  # Medium volatility → 3m
             else:
-                expiration = 1
+                expiration = 1  # Low volatility → 1m (quick scalp)
         else:
-            expiration = 5  # Default to 5min (safer)
+            expiration = 3  # Default to 3m (was 5m)
 
-        # Add pair-based variation: use pair hash to sometimes pick a different expiration
-        # This ensures signals don't all have the same expiration at the same time
-        import hashlib
-        pair_hash = int(hashlib.md5(pair.encode()).hexdigest(), 16)
-        # 30% of pairs get a different expiration than what volatility suggests
-        if pair_hash % 10 < 3:
-            # Rotate: 1→3, 3→5, 5→1
-            expiration = {1: 3, 3: 5, 5: 1}.get(expiration, expiration)
+        # REMOVED: pair-hash expiration rotation (was producing random 1/3/5m).
+        # The sniper engine is the authoritative source for expiration.
+        # Legacy paths must only use 1m or 3m to stay consistent.
 
         signal = {
             'id': f'SIG-{now.strftime("%Y%m%d")}-{uuid.uuid4().hex[:6].upper()}',
@@ -1528,7 +1548,7 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False) -> dict:
         except Exception as db_err:
             logger.warning(f"[SIGNAL-DB-SAVE-ERROR] pair={pair} err={db_err}")
 
-        generated_signals.append(signal)
+        generated_signals.append(_clamp_expiration(signal))
         # Track last signal time for this pair (dedup)
         analyze_pair_internal._last_signal_time[pair] = datetime.now(timezone.utc).timestamp()
         monitor.record_signal(signal['id'], pair, direction, score_result['winrate'])
@@ -2208,7 +2228,7 @@ async def request_live_signal(request: Request, credentials: HTTPAuthorizationCr
         except Exception as db_err:
             logger.warning(f"[FALLBACK-SIGNAL-DB-SAVE-ERROR] pair={pair} err={db_err}")
 
-        generated_signals.append(fallback_signal)
+        generated_signals.append(_clamp_expiration(fallback_signal))
         monitor.record_signal(fallback_signal['id'], pair, direction, 70)
         logger.info(f"[SIGNAL-REQUEST] ✅ Fallback signal generated for {pair}: {direction}")
         return {"status": "success", "signal": fallback_signal, "mode": "fallback"}
