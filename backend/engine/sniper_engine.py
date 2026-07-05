@@ -46,7 +46,7 @@ import logging
 import pandas as pd
 import numpy as np
 from datetime import datetime, timezone
-from typing import Optional, Tuple, Dict, Any, List
+from typing import Optional, Tuple, Dict, Any
 
 logger = logging.getLogger(__name__)
 

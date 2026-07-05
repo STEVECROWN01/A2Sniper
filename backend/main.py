@@ -23,9 +23,7 @@ from dotenv import load_dotenv
 load_dotenv(os.path.join(os.path.dirname(__file__), '../.env.local'))
 load_dotenv(os.path.join(os.path.dirname(__file__), '.env.local'), override=True)
 
-from engine.smc import SMCEngine
-from engine.indicators import TechnicalIndicators, DivergenceDetector
-from engine.patterns import CandlestickPatterns
+from engine.indicators import TechnicalIndicators
 import uuid
 from auth import (get_password_hash, verify_password, create_access_token, create_refresh_token,
                    decode_token, decode_access_token, decode_refresh_token, security,
@@ -34,11 +32,8 @@ from fastapi.security import HTTPAuthorizationCredentials
 from engine.pocket_option_scanner import PocketOptionScanner
 from engine.monitoring_engine import MonitoringEngine
 from engine.risk_manager import RiskManager
-from engine.scoring import SniperEntrySystem
 from engine.sniper_engine import generate_sniper_signal, validate_candle_data
 from neural_models.voting import VotingClassifierModel
-from engine.chartist import ChartistPatterns
-from engine.filters import AntiManipulationFilters
 from engine.compliance import ComplianceManager, geographic_restriction_dependency
 from bot.telegram_bot import TelegramSignalBot
 from db import (init_db, SignalRecord, AsyncSessionLocal, User, UserSubscription,
@@ -89,12 +84,7 @@ logger.addHandler(_db_log_handler)
 # re-included. Payouts change → automatically reflected. All driven by PO's
 # live updateAssets events (refreshed every 5s via _asset_refresh_loop).
 
-smc_engine = SMCEngine()
 indicators = TechnicalIndicators()
-patterns = CandlestickPatterns()
-chartist = ChartistPatterns()
-ses = SniperEntrySystem()
-filters = AntiManipulationFilters()
 compliance = ComplianceManager()
 risk_mgr = RiskManager()
 monitor = MonitoringEngine()
@@ -391,17 +381,8 @@ async def require_admin(credentials: HTTPAuthorizationCredentials = Security(sec
     return payload
 
 
-# Stockage des signaux émis
-generated_signals = deque(maxlen=1000)  # Bounded to prevent memory leak
-signal_counter_lock = asyncio.Lock()
-signal_counter = 0
-
-# Limites par plan
-PLAN_LIMITS = {'Standard': 20, 'Premium': 35, 'Pro': 999}
-
-
-def get_signal_limit(plan: str = 'Premium') -> int:
-    return PLAN_LIMITS.get(plan, 20)
+# Emitted signals buffer (bounded to prevent memory leak)
+generated_signals = deque(maxlen=1000)
 
 
 async def analyze_pair(pair: str) -> dict:
@@ -594,9 +575,6 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False) -> dict:
         'fibonacci': indicator_summary,
         'rsi_status': rsi_status,
         'recommended_stake': 10,
-        'mtf_aligned': True,
-        'wyckoff': 'Reversal' if is_1m else 'Trend Resume',
-        'divergences': [],
         'analysis_details': {
             'mode': 'sniper_1m_mean_reversion' if is_1m else 'sniper_3m_trend_pullback',
             'sniper_mode': sniper_mode,
@@ -651,41 +629,7 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False) -> dict:
     return signal
 
 
-def _build_ai_features(df, smc, fibo, patterns_result, divs):
-    """Construit le vecteur de features pour le Voting Classifier."""
-    last = df.iloc[-1]
-    features = {
-        'rsi': float(last.get('RSI_14', 50)),
-        'macd': float(last.get('MACD_12_26_9', 0)),
-        'macd_signal': float(last.get('MACDs_12_26_9', 0)),
-        'macd_histogram': float(last.get('MACDh_12_26_9', 0)),
-        'bb_upper': float(last.get('BBU_20_2.0', 0)),
-        'bb_lower': float(last.get('BBL_20_2.0', 0)),
-        'bb_middle': float(last.get('BBM_20_2.0', 0)),
-        'ema_9': float(last.get('EMA_9', 0)),
-        'ema_21': float(last.get('EMA_21', 0)),
-        'adx': float(last.get('ADX_14', 25)),
-        'atr': float(last.get('ATRr_14', 0)),
-        'stoch_k': float(last.get('STOCH_K', 50)),
-        'stoch_d': float(last.get('STOCH_D', 50)),
-        'cci': float(last.get('CCI_20', 0)),
-        'obv': float(last.get('OBV', 0)),
-        'close': float(last['close']),
-        'volume': float(last['volume']),
-        'trend': smc.get('trend', 'RANGE'),
-        'has_ob': len(smc.get('order_blocks', [])) > 0,
-        'has_fvg': len(smc.get('fvgs', [])) > 0,
-        'has_confluence': len(smc.get('confluence_zones', [])) > 0,
-        'fibo_level': fibo.get('closest_level', 'N/A'),
-        'in_golden_zone': fibo.get('in_golden_zone', False),
-        'has_divergence': len(divs.get('divergences', [])) > 0,
-        'has_bull_pattern': patterns_result.get('has_bullish', False),
-        'has_bear_pattern': patterns_result.get('has_bearish', False),
-    }
-    return features
-
-
-# ═══════════ BOUCLE PRINCIPALE ═══════════
+# ═══════════ MAIN TRADING LOOP ═══════════
 async def trading_loop():
     """Boucle d'analyse réelle sur les paires OTC disponibles.
 
@@ -1154,10 +1098,10 @@ async def request_live_signal(request: Request, credentials: HTTPAuthorizationCr
         raise HTTPException(
             status_code=400,
             detail=(
-                f"Paire non disponible sur Pocket Option: {pair}. "
-                f"La paire est soit inactive (grisée sur PO), soit inexistante. "
-                f"Utilisez /api/market/status pour voir la liste des paires actuellement "
-                f"actives avec un payout ≥ 70%."
+                f"Pair not available on Pocket Option: {pair}. "
+                f"The pair is either inactive (greyed out on PO) or does not exist. "
+                f"Use /api/market/status to see the list of currently active pairs "
+                f"with payout >= 70%."
             )
         )
 
@@ -1166,9 +1110,9 @@ async def request_live_signal(request: Request, credentials: HTTPAuthorizationCr
         raise HTTPException(
             status_code=400,
             detail=(
-                f"Paire {pair} a un payout de {real_payout:.0f}% (< 70%). "
-                f"Le système ne considère que les paires avec payout ≥ 70%. "
-                f"Réessayez plus tard lorsque PO augmentera le payout de cette paire."
+                f"Pair {pair} has a payout of {real_payout:.0f}% (< 70%). "
+                f"The system only considers pairs with payout >= 70%. "
+                f"Try again later when PO increases this pair's payout."
             )
         )
 
@@ -1687,7 +1631,7 @@ async def register(request: Request):
         logger.error(f"[Register] Traceback: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail="An error occurred while creating your account. Please try again.")
 
-    return {"status": "success", "message": "Compte créé avec succès"}
+    return {"status": "success", "message": "Account created successfully"}
 
 @app.post("/api/auth/login")
 async def login(request: Request):
@@ -1974,10 +1918,10 @@ async def send_otp_email(recipient_email: str, otp_code: str, purpose: str = "pa
         message = "You've requested to delete your A2Sniper account. Please confirm by entering this code:"
         footer_note = "If you didn't request account deletion, your account is safe. Please secure your credentials."
     else:
-        subject = "Code de réinitialisation A2Sniper"
-        heading = "Réinitialisation de mot de passe"
-        message = "Vous avez demandé la réinitialisation de votre mot de passe sur A2Sniper. Voici votre code de sécurité OTP :"
-        footer_note = "Ce code est valable pendant 15 minutes. Si vous n'avez pas demandé cette réinitialisation, veuillez ignorer cet email."
+        subject = "A2Sniper Reset Code"
+        heading = "Password Reset"
+        message = "You requested a password reset for your A2Sniper account. Here is your security OTP code:"
+        footer_note = "This code is valid for 15 minutes. If you did not request this reset, please ignore this email."
     
     import httpx
     try:
@@ -2040,7 +1984,7 @@ async def forgot_password(request: Request):
         
         if not user:
             # Don't reveal whether email exists (security best practice)
-            return {"status": "success", "message": "Si l'email existe, un code OTP y a été envoyé."}
+            return {"status": "success", "message": "If the email exists, an OTP code has been sent to it."}
             
         # Generate 6-digit OTP
         otp_code = str(secrets.randbelow(900000) + 100000)
@@ -2171,7 +2115,7 @@ async def reset_password(request: Request):
         await session.commit()
         record_otp_attempt(email, success=True)
         
-    return {"status": "success", "message": "Mot de passe réinitialisé avec succès"}
+    return {"status": "success", "message": "Password reset successfully"}
 
 
 # ═══════════ 2FA STUB ENDPOINTS (CDC Section 7) ═══════════
@@ -2813,7 +2757,7 @@ async def admin_update_weights(request: Request, admin_payload = Depends(require
     if abs(weight_sum - 1.0) > 0.05:
         raise HTTPException(status_code=400, detail=f"Weights must sum to ~1.0 (current sum: {weight_sum:.2f})")
     if threshold < 0 or threshold > 100:
-        raise HTTPException(status_code=400, detail="Threshold must be between 0 and 1")
+        raise HTTPException(status_code=400, detail="Threshold must be between 0 and 100")
     
     voting_model.weights['LSTM'] = lstm_w
     voting_model.weights['Transformer'] = transformer_w
@@ -2993,11 +2937,11 @@ async def connect_market(request: Request, credentials: HTTPAuthorizationCredent
     try:
         data = await request.json()
     except Exception:
-        raise HTTPException(status_code=400, detail="Corps de requête invalide")
+        raise HTTPException(status_code=400, detail="Invalid request body")
 
     ssid = data.get("ssid")
     if not ssid:
-        raise HTTPException(status_code=400, detail="SSID requis. Collez la trame d'authentification Pocket Option.")
+        raise HTTPException(status_code=400, detail="SSID required. Paste the Pocket Option authentication frame.")
 
     # Deep clean the SSID — strip invisible chars, fix encoding issues
     ssid_clean = _deep_clean_ssid(ssid)
@@ -3007,16 +2951,16 @@ async def connect_market(request: Request, credentials: HTTPAuthorizationCredent
         if ssid_clean.startswith('40') or ssid_clean.startswith('40['):
             raise HTTPException(
                 status_code=400,
-                detail="Ceci est une trame de connexion (40), pas d'authentification. Cherchez la trame commençant par 42[\"auth\",...] dans l'onglet WS."
+                detail="This is a connection frame (40), not an authentication frame. Look for a frame starting with 42[\"auth\",...] in the WS tab."
             )
         if 'session' in ssid_clean or 'uid' in ssid_clean:
             raise HTTPException(
                 status_code=400,
-                detail="Données d'auth détectées mais la trame ne commence pas par 42[\"auth\". Copiez l'intégralité du message depuis le début."
+                detail="Auth data detected but the frame does not start with 42[\"auth\". Copy the full message from the beginning."
             )
         raise HTTPException(
             status_code=400,
-            detail="Format invalide. Le message doit commencer par 42[\"auth\",{...}]. Ouvrez F12 → Network → WS et copiez la trame \"auth\"."
+            detail="Invalid format. The message must start with 42[\"auth\",{...}]. Open F12 → Network → WS and copy the \"auth\" frame."
         )
 
     try:
@@ -3031,14 +2975,14 @@ async def connect_market(request: Request, credentials: HTTPAuthorizationCredent
             if "session" not in payload and "sessionToken" not in payload:
                 raise HTTPException(
                     status_code=400,
-                    detail="Format non supporté. La clé \"session\" ou \"sessionToken\" est manquante. Copiez la trame d'authentification complète."
+                    detail="Unsupported format. The \"session\" or \"sessionToken\" key is missing. Copy the full authentication frame."
                 )
             # Log which socket type we're connecting to
             is_chart = payload.get("isChart") in (1, True)
             if is_chart:
                 logger.info("[MARKET] Chart socket SSID detected — connecting for candle data")
         else:
-            raise HTTPException(status_code=400, detail="Format JSON de la trame invalide. Accolades manquantes.")
+            raise HTTPException(status_code=400, detail="Invalid frame JSON format. Missing braces.")
     except HTTPException:
         raise
     except json.JSONDecodeError as e:
@@ -3159,7 +3103,7 @@ async def connect_market(request: Request, credentials: HTTPAuthorizationCredent
         logger.warning(f"[MARKET] Échec de connexion — SSID refusé par le serveur")
         raise HTTPException(
             status_code=401,
-            detail="Échec de connexion. Causes possibles : (1) Votre session Pocket Option a été déconnectée — reconnectez-vous sur pocketoption.com et copiez un nouveau SSID. (2) Le SSID contient encore des caractères invisibles — essayez de le copier à nouveau proprement. (3) Problème réseau temporaire — réessayez dans quelques secondes. Note : le SSID ne change PAS tant que vous ne déconnectez pas votre compte Pocket Option."
+            detail="Connection failed. Possible causes: (1) Your Pocket Option session was disconnected — log back in to pocketoption.com and copy a new SSID. (2) The SSID still contains invisible characters — try copying it again cleanly. (3) Temporary network issue — try again in a few seconds. Note: the SSID does NOT change until you disconnect your Pocket Option account."
         )
 
 @app.post("/api/market/disconnect")

@@ -27,6 +27,9 @@ import pandas as pd
 from typing import Optional
 from datetime import datetime, timezone
 
+# Logger MUST be defined before any code that might log (e.g., import warnings)
+logger = logging.getLogger(__name__)
+
 try:
     import websockets
     _WS_AVAILABLE = True
@@ -45,8 +48,6 @@ except ImportError:
 # websockets v16+ uses ClientConnection with .state attribute (no .closed)
 # We detect the open state value at runtime after first connection
 _WS_OPEN_STATE = None  # Will be set after first successful connect
-
-logger = logging.getLogger(__name__)
 
 # ═══════════ POCKET OPTION SERVERS ═══════════
 PO_SERVERS = {
@@ -1821,7 +1822,7 @@ class PocketOptionScanner:
                             [pd.Timestamp(ts_int, unit="s", tz="UTC")], name="time"
                         ),
                     )
-                    cache_key = f"{asset_norm}_1m"  # quotes are typically 1-minute aligned
+                    cache_key = f"{asset}_1m"  # quotes are typically 1-minute aligned
                     self._candles_cache[cache_key] = df
                     logger.debug(f"[SCANNER] Quote cached for {asset} → {price}")
                 except (ValueError, TypeError) as e:

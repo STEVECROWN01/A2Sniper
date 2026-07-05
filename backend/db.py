@@ -364,10 +364,11 @@ async def init_db():
         except Exception as e:
             logger.warning(f"[DB] Migration for password_reset_otps timestamp tz failed (non-fatal): {e}")
 
-        # Same fix for signal_records.timestamp and system_logs.timestamp
+        # Same fix for signals.timestamp and system_logs.timestamp
+        # Note: table name is "signals" (not "signal_records") — matches SignalRecord.__tablename__
         try:
             async with engine.begin() as conn:
-                for table_name, col in [("signal_records", "timestamp"), ("system_logs", "timestamp")]:
+                for table_name, col in [("signals", "timestamp"), ("system_logs", "timestamp")]:
                     result = await conn.execute(
                         __import__('sqlalchemy').text(
                             f"SELECT data_type FROM information_schema.columns "
