@@ -2381,54 +2381,65 @@ class PocketOptionScanner:
                 if df is not None and not df.empty:
                     return df.copy()
 
-            # ═══ REQUEST HISTORICAL CANDLES VIA changeSymbol ═══════════
+            # ═══ REQUEST HISTORICAL CANDLES VIA changeSymbol (with retries) ═
             # PO responds to changeSymbol with loadHistoryPeriod containing
-            # ~100 historical candles. The _subscribe_all_forex() background
-            # task already sends changeSymbol for all pairs. Here we just
-            # wait for the response (up to 5 seconds).
+            # ~100 historical candles. We retry up to 3 times with increasing
+            # timeouts because PO sometimes takes 5-10 seconds to respond.
             request_key = f"{asset}_{timeframe}"
-            if request_key not in self._pending_candle_requests:
-                future = asyncio.get_event_loop().create_future()
-                self._pending_candle_requests[request_key] = future
-                try:
-                    await self._ws.send(f'42["changeSymbol",{{"asset":"{asset}","period":{tf_sec}}}]')
-                    logger.info(f"[SCANNER] Sent changeSymbol for {asset} — waiting for loadHistoryPeriod...")
-                except Exception:
-                    self._pending_candle_requests.pop(request_key, None)
-                    return pd.DataFrame()
 
-            # Wait for the response (up to 5 seconds — PO sometimes takes 2-3s)
-            future = self._pending_candle_requests.get(request_key)
-            if future and not future.done():
-                try:
-                    df = await asyncio.wait_for(future, timeout=5.0)
-                    if df is not None and not df.empty:
-                        logger.info(f"[SCANNER-CANDLE-HIT] asset={asset} tf={timeframe} bars={len(df)} (historical)")
-                        return df.copy()
-                except asyncio.TimeoutError:
-                    logger.info(f"[SCANNER] changeSymbol response timeout for {asset} — will try REST API")
+            for attempt in range(3):
+                # If a request is already pending (from a previous call),
+                # wait for it instead of sending a duplicate
+                if request_key not in self._pending_candle_requests:
+                    future = asyncio.get_event_loop().create_future()
+                    self._pending_candle_requests[request_key] = future
+                    try:
+                        await self._ws.send(f'42["changeSymbol",{{"asset":"{asset}","period":{tf_sec}}}]')
+                        logger.info(f"[SCANNER] Sent changeSymbol for {asset} (attempt {attempt+1}/3) — waiting for loadHistoryPeriod...")
+                    except Exception:
+                        self._pending_candle_requests.pop(request_key, None)
+                        continue
+
+                # Wait for the response — timeout increases with each attempt
+                timeout = 3.0 + (attempt * 2.0)  # 3s, 5s, 7s
+                future = self._pending_candle_requests.get(request_key)
+                if future and not future.done():
+                    try:
+                        df = await asyncio.wait_for(future, timeout=timeout)
+                        if df is not None and not df.empty:
+                            logger.info(f"[SCANNER-CANDLE-HIT] asset={asset} tf={timeframe} bars={len(df)} (historical, attempt {attempt+1})")
+                            return df.copy()
+                    except asyncio.TimeoutError:
+                        logger.info(f"[SCANNER] changeSymbol timeout for {asset} (attempt {attempt+1}/3, timeout={timeout}s)")
+                        self._pending_candle_requests.pop(request_key, None)
+                        # Brief pause before retry
+                        await asyncio.sleep(0.5)
+                    except Exception:
+                        self._pending_candle_requests.pop(request_key, None)
+                        break
+                else:
+                    # Future was already resolved (or cancelled) — check cache
+                    cached = self._candles_cache.get(cache_key)
+                    if cached is not None and not cached.empty:
+                        return cached.copy()
                     self._pending_candle_requests.pop(request_key, None)
-                except Exception:
-                    self._pending_candle_requests.pop(request_key, None)
+
+            logger.warning(f"[SCANNER] All 3 changeSymbol attempts failed for {asset} — checking tick buffer")
 
             # If we have ticks in the buffer, return what we have
             if asset in self._tick_buffer and len(self._tick_buffer[asset]) > 0:
                 existing_df = self._candles_cache.get(cache_key)
                 if existing_df is not None and not existing_df.empty:
+                    logger.info(f"[SCANNER-CANDLE-HIT] asset={asset} bars={len(existing_df)} (tick-aggregated)")
                     return existing_df.copy()
 
-            # ═══ 3. REST API FALLBACK ═══════════════════════════════════
-            # If WebSocket didn't deliver candles, try the REST API directly.
-            # This is critical — without it, the sniper engine gets 0 candles
             # ═══ REST API FALLBACK ═══════════════════════════════════════
-            # If WebSocket didn't deliver candles, try the REST API directly.
-            # This is CRITICAL — without it, the sniper engine gets 0 candles
-            # and can NEVER generate a signal.
+            # Last resort: try REST API (NOTE: PO blocks this with 403 in most
+            # cases, but it sometimes works for public pairs. Worth trying.)
             logger.info(f"[SCANNER] No candles from WebSocket for {asset} — trying REST API fallback")
             df_rest = await self._fetch_candles_http(asset, tf_sec, count)
             if df_rest is not None and not df_rest.empty:
                 logger.info(f"[SCANNER-CANDLE-HIT] asset={asset} tf={timeframe} bars={len(df_rest)} (REST fallback)")
-                # Cache for future calls
                 self._candles_cache[cache_key] = df_rest
                 return df_rest.copy()
 
