@@ -2381,7 +2381,7 @@ class PocketOptionScanner:
                         logger.info(f"[SCANNER-CANDLE-HIT] asset={asset} tf={timeframe} bars={len(df)} (historical)")
                         return df.copy()
                 except asyncio.TimeoutError:
-                    logger.info(f"[SCANNER] changeSymbol response timeout for {asset} — will use tick aggregation")
+                    logger.info(f"[SCANNER] changeSymbol response timeout for {asset} — will try REST API")
                     self._pending_candle_requests.pop(request_key, None)
                 except Exception:
                     self._pending_candle_requests.pop(request_key, None)
@@ -2391,6 +2391,18 @@ class PocketOptionScanner:
                 existing_df = self._candles_cache.get(cache_key)
                 if existing_df is not None and not existing_df.empty:
                     return existing_df.copy()
+
+            # ═══ 3. REST API FALLBACK ═══════════════════════════════════
+            # If WebSocket didn't deliver candles, try the REST API directly.
+            # This is critical — without it, the sniper engine gets 0 candles
+            # and can NEVER generate a signal.
+            logger.info(f"[SCANNER] No candles from WebSocket for {asset} — trying REST API fallback")
+            df_rest = await self._fetch_candles_http(asset, tf_sec, count)
+            if df_rest is not None and not df_rest.empty:
+                logger.info(f"[SCANNER-CANDLE-HIT] asset={asset} tf={timeframe} bars={len(df_rest)} (REST fallback)")
+                # Cache for future calls
+                self._candles_cache[cache_key] = df_rest
+                return df_rest.copy()
 
             return pd.DataFrame()
 
@@ -2439,8 +2451,8 @@ class PocketOptionScanner:
             async with httpx.AsyncClient(timeout=httpx.Timeout(8.0, connect=5.0)) as client:
                 resp = await client.get(url, headers=headers)
                 if resp.status_code != 200:
-                    logger.debug(
-                        f"[SCANNER] HTTP candles {asset} {tf_sec}s → HTTP {resp.status_code}"
+                    logger.warning(
+                        f"[SCANNER] HTTP candles {asset} {tf_sec}s → HTTP {resp.status_code} (url={url})"
                     )
                     return pd.DataFrame()
 
