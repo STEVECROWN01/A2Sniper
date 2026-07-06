@@ -245,10 +245,14 @@ def score_mean_reversion(df: pd.DataFrame, min_factors: int = 3) -> Optional[Dic
     call_score = len(call_factors)
     put_score = len(put_factors)
 
+    # Log the factor scores for debugging
+    logger.info(
+        f"[SNIPER-1M-SCORE] call={call_score}/7 put={put_score}/7 min_required={min_factors} "
+        f"rsi={rsi:.1f} stoch={stoch_k:.1f} cci={cci:.0f} "
+        f"call_factors={[f[0] for f in call_factors]} put_factors={[f[0] for f in put_factors]}"
+    )
+
     # Minimum factors for a valid signal. Default is 3 (broadened from 5).
-    # Background mode uses 5 (strict), force mode uses 3 (user requested).
-    # 3/7 still requires meaningful confluence — at least 3 indicators
-    # agreeing on an extreme condition.
     MIN_FACTORS = min_factors
     if call_score >= MIN_FACTORS and call_score > put_score:
         direction = 'CALL'

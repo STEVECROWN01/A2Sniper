@@ -519,8 +519,20 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False) -> dict:
     min_factors = 3 if force else 5
     sniper_result = generate_sniper_signal(df_with_indicators, payout, min_factors=min_factors)
     if sniper_result is None:
-        # No confluence found — no signal
-        logger.info(f"[{pair}] No sniper signal — insufficient confluence (<{min_factors} factors, force={force})")
+        # No confluence found — log the indicator values for debugging
+        last_row = df_with_indicators.iloc[-1]
+        rsi_val = float(last_row.get('RSI_14', 50)) if 'RSI_14' in df_with_indicators.columns else 50
+        stoch_val = float(last_row.get('STOCH_K', 50)) if 'STOCH_K' in df_with_indicators.columns else 50
+        cci_val = float(last_row.get('CCI_20', 0)) if 'CCI_20' in df_with_indicators.columns else 0
+        bbu_val = float(last_row.get('BBU_20_2.0', 0)) if 'BBU_20_2.0' in df_with_indicators.columns else 0
+        bbl_val = float(last_row.get('BBL_20_2.0', 0)) if 'BBL_20_2.0' in df_with_indicators.columns else 0
+        close_val = float(last_row['close'])
+        logger.info(
+            f"[{pair}] No sniper signal — insufficient confluence (<{min_factors} factors, force={force}). "
+            f"Indicators: RSI={rsi_val:.1f}, Stoch={stoch_val:.1f}, CCI={cci_val:.0f}, "
+            f"Close={close_val:.5f}, BB_Lower={bbl_val:.5f}, BB_Upper={bbu_val:.5f}, "
+            f"candles={len(df_with_indicators)}"
+        )
         return None
 
     # 7. Risk check (skip in force mode — user explicitly requested)
@@ -1138,12 +1150,12 @@ async def request_live_signal(request: Request, credentials: HTTPAuthorizationCr
     # The sniper engine didn't find a 5+ factor confluence setup.
     # This is CORRECT behavior — no signal is better than a low-quality signal.
     # Return a clean message so the bot/frontend can display it.
-    logger.info(f"[SIGNAL-REQUEST] No sniper setup for {pair} — insufficient confluence (<5 factors). Try another pair or wait for better conditions.")
+    logger.info(f"[SIGNAL-REQUEST] No sniper setup for {pair} — insufficient confluence (<3 factors in force mode). Try another pair or wait for better conditions.")
     raise HTTPException(
         status_code=404,
         detail=(
-            f"No high-confidence signal available for {pair} right now. "
-            f"The sniper engine requires 5+ of 7 confluence factors to align "
+            f"No signal available for {pair} right now. "
+            f"The sniper engine requires at least 3 of 7 confluence factors to align "
             f"(Bollinger + RSI + Stochastic + Candlestick + CCI + EMA deviation + Momentum). "
             f"Try another pair or wait 1-2 minutes for better market conditions."
         )
