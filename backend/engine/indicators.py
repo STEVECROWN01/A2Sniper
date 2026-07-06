@@ -23,8 +23,12 @@ class TechnicalIndicators:
         pass
 
     def calculate_all(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Calcule TOUS les 12 indicateurs CDC et les ajoute au DataFrame."""
-        if df.empty or len(df) < 52:
+        """Calculate all CDC indicators and add them to the DataFrame.
+        
+        Minimum bars: 14 (for RSI). Ichimoku (needs 52) is only calculated
+        if enough data is available — otherwise it's skipped gracefully.
+        """
+        if df.empty or len(df) < 14:
             return df
 
         df = df.copy()
@@ -32,10 +36,10 @@ class TechnicalIndicators:
         # 1. RSI (14)
         df = self._calc_rsi(df, period=14)
 
-        # 2. MACD (12/26/9)
+        # 2. MACD (12/26/9) — needs 26 bars but calculates partial with fewer
         df = self._calc_macd(df, fast=12, slow=26, signal=9)
 
-        # 3. Bollinger Bands (20, 2σ)
+        # 3. Bollinger Bands (20, 2σ) — needs 20 bars
         df = self._calc_bollinger(df, period=20, std=2)
 
         # 4. EMA 9 / EMA 21 (directionnel court terme)
@@ -70,8 +74,9 @@ class TechnicalIndicators:
         # 10. OBV (On Balance Volume)
         df = self._calc_obv(df)
 
-        # 11. Ichimoku Kinko Hyo (9/26/52)
-        df = self._calc_ichimoku(df, tenkan=9, kijun=26, senkou_b=52)
+        # 11. Ichimoku Kinko Hyo (9/26/52) — only if 52+ bars available
+        if len(df) >= 52:
+            df = self._calc_ichimoku(df, tenkan=9, kijun=26, senkou_b=52)
 
         return df
 

@@ -136,7 +136,7 @@ def score_mean_reversion(df: pd.DataFrame, min_factors: int = 3) -> Optional[Dic
 
     Returns None if data is insufficient or no factor triggers.
     """
-    if df is None or df.empty or len(df) < 25:
+    if df is None or df.empty or len(df) < 14:
         return None
 
     # Get the last row + previous row + indicator values
@@ -316,7 +316,7 @@ def score_mean_reversion(df: pd.DataFrame, min_factors: int = 3) -> Optional[Dic
 # DATA QUALITY VALIDATION
 # ═══════════════════════════════════════════════════════════════════
 
-def validate_candle_data(df: pd.DataFrame, min_bars: int = 25) -> Tuple[bool, str]:
+def validate_candle_data(df: pd.DataFrame, min_bars: int = 14) -> Tuple[bool, str]:
     """
     Validate that the candle data is sane and sufficient for analysis.
     Returns (is_valid, reason).
