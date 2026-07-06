@@ -2253,42 +2253,22 @@ class PocketOptionScanner:
                     sym for sym, entry in self._payouts.items()
                     if entry.get("is_active", True) and _FOREX_FILTER_AVAILABLE and _is_forex_pair(sym)
                 ]
-                logger.info(f"[SCANNER] Subscribing to {len(forex_pairs)} forex pairs via changeSymbol...")
+                logger.info(f"[SCANNER] Subscribing to {len(forex_pairs)} forex pairs...")
 
-                # ═══ PARALLEL REST PREFETCH ══════════════════════════════
-                # Fetch candles via REST API for ALL pairs simultaneously.
-                # This gives us 100 candles per pair within 3-5 seconds,
-                # instead of waiting 30+ seconds for WebSocket subscriptions.
-                async def prefetch_one(symbol):
-                    try:
-                        df = await self._fetch_candles_http(symbol, 60, 100)
-                        if df is not None and not df.empty:
-                            self._candles_cache[f"{symbol}_1m"] = df
-                            return True
-                    except Exception:
-                        pass
-                    return False
-
-                # Fire all REST requests in parallel (max 10 at a time)
-                import asyncio as aio
-                semaphore = aio.Semaphore(10)
-                async def prefetch_with_limit(symbol):
-                    async with semaphore:
-                        return await prefetch_one(symbol)
-
-                results = await aio.gather(*[prefetch_with_limit(sym) for sym in forex_pairs])
-                fetched = sum(1 for r in results if r)
-                logger.info(f"[SCANNER] ✅ REST prefetch: {fetched}/{len(forex_pairs)} pairs have candles")
-
-                # Also send WebSocket changeSymbol for live tick streaming
-                # (faster — 0.2s between each instead of 1s)
+                # Send changeSymbol to subscribe to tick streams (needed for live prices)
+                # AND send loadHistoryPeriod to request historical candles directly.
+                # PO's protocol requires BOTH: changeSymbol subscribes to ticks,
+                # loadHistoryPeriod fetches the candle history.
                 for i, symbol in enumerate(forex_pairs):
                     try:
+                        # 1. Subscribe to tick stream
                         await self._ws.send(f'42["changeSymbol",{{"asset":"{symbol}","period":60}}]')
+                        # 2. Request historical candles directly
+                        await self._ws.send(f'42["loadHistoryPeriod",{{"asset":"{symbol}","period":60,"offset":0}}]')
                     except Exception:
                         pass
-                    await asyncio.sleep(0.2)  # 0.2s — 5x faster than before
-                logger.info(f"[SCANNER] ✅ Subscribed to all {len(forex_pairs)} forex pairs via changeSymbol")
+                    await asyncio.sleep(0.3)  # 0.3s between pairs
+                logger.info(f"[SCANNER] ✅ Subscribed to {len(forex_pairs)} forex pairs + requested historical candles")
             except Exception as e:
                 logger.warning(f"[SCANNER] Forex subscription error: {e}")
 
@@ -2394,8 +2374,12 @@ class PocketOptionScanner:
                     future = asyncio.get_event_loop().create_future()
                     self._pending_candle_requests[request_key] = future
                     try:
+                        # Send BOTH changeSymbol (for tick subscription) and
+                        # loadHistoryPeriod (for historical candle data).
+                        # PO responds to loadHistoryPeriod with the candle history.
                         await self._ws.send(f'42["changeSymbol",{{"asset":"{asset}","period":{tf_sec}}}]')
-                        logger.info(f"[SCANNER] Sent changeSymbol for {asset} (attempt {attempt+1}/3) — waiting for loadHistoryPeriod...")
+                        await self._ws.send(f'42["loadHistoryPeriod",{{"asset":"{asset}","period":{tf_sec},"offset":0}}]')
+                        logger.info(f"[SCANNER] Sent changeSymbol+loadHistoryPeriod for {asset} (attempt {attempt+1}/3)")
                     except Exception:
                         self._pending_candle_requests.pop(request_key, None)
                         continue
