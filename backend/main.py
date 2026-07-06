@@ -487,6 +487,7 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False) -> dict:
 
     # 2. Get payout — must be active AND >= 70%
     payout = po_scanner.get_payout(pair)
+    logger.info(f"[SNIPER-TRACE] {pair} step=2 payout={payout} force={force}")
     if payout is None:
         logger.info(f"[{pair}] Cannot determine payout — pair inactive or not found")
         return None
@@ -497,18 +498,22 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False) -> dict:
 
     # 3. Fetch 1-minute candles (need 25+ for Bollinger/RSI/Stoch/CCI)
     df_m1 = await po_scanner.get_candles(pair, timeframe="1m", count=100)
+    candle_count = len(df_m1) if df_m1 is not None and not df_m1.empty else 0
+    logger.info(f"[SNIPER-TRACE] {pair} step=3 candles={candle_count}/25 needed")
     if df_m1 is None or df_m1.empty or len(df_m1) < 25:
         logger.info(
             f"[{pair}] Insufficient candles for sniper engine: "
-            f"{len(df_m1) if df_m1 is not None else 0}/25 — waiting for warm-up"
+            f"{candle_count}/25 — waiting for warm-up"
         )
         return None
 
     # 4. Calculate all indicators (RSI, Bollinger, Stochastic, CCI, EMA, ATR, ADX)
     df_with_indicators = indicators.calculate_all(df_m1)
+    logger.info(f"[SNIPER-TRACE] {pair} step=4 indicators_calculated columns={list(df_with_indicators.columns)[:10]}")
 
     # 5. Validate data quality (rejects identical candles, suspicious jumps, zero volume)
     is_valid, validation_reason = validate_candle_data(df_with_indicators, min_bars=25)
+    logger.info(f"[SNIPER-TRACE] {pair} step=5 data_valid={is_valid} reason={validation_reason}")
     if not is_valid:
         logger.info(f"[{pair}] Sniper data rejected: {validation_reason}")
         return None
