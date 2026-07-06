@@ -103,3 +103,35 @@ class ComplianceManager:
         #     }
         #
         # return {'allowed': True}
+
+
+# ---------------------------------------------------------------------------
+# FastAPI Dependency for Geographic Restriction Enforcement
+# ---------------------------------------------------------------------------
+
+_compliance_instance = ComplianceManager()
+
+
+async def _get_country_from_ip(ip_address: str) -> str:
+    """Resolve an IP address to a country code using a free GeoIP service."""
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(f"http://ip-api.com/json/{ip_address}")
+            if resp.status_code == 200:
+                data = resp.json()
+                return data.get('countryCode', '')
+    except Exception as e:
+        logger.warning(f"[COMPLIANCE] GeoIP lookup failed for {ip_address}: {e}")
+    return ''
+
+
+async def geographic_restriction_dependency(request: Request) -> dict:
+    """
+    FastAPI dependency that checks geographic restrictions on the requesting IP.
+
+    NOTE: Geographic restriction is DISABLED — always returns allowed=True.
+    The function is kept for API compatibility (main.py imports it as a
+    Depends() parameter on signal endpoints).
+    """
+    return {'allowed': True, 'reason': 'Geographic restriction disabled'}
