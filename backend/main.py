@@ -1403,26 +1403,24 @@ async def request_live_signal(request: Request, credentials: HTTPAuthorizationCr
             )
         )
 
-    # ═══ MULTI-PAIR SNIPER SCAN ═══════════════════════════════════
-    # Instead of analyzing just ONE pair, scan ALL active pairs and return
-    # the one with the highest confluence score. This is the true SNIPER
-    # approach — find the BEST setup across ALL pairs.
-    #
-    # The scan uses 5/7 threshold first (high winrate). If no pair has 5/7,
-    # it falls back to 1/7 so the user ALWAYS gets a signal.
-    logger.info(f"[SIGNAL-REQUEST] Starting multi-pair sniper scan (user requested {pair}, but scanning ALL pairs for best confluence)")
-    signal = await multi_pair_sniper_scan(min_factors=5)
+    # ═══ SNIPER ENGINE — Single Pair (user selected this pair) ═══
+    # The user explicitly selected this pair and clicked "Request Signal".
+    # We analyze THIS pair with the sniper engine.
+    # Force mode uses min_factors=1 so the user ALWAYS gets a signal.
+    # The winrate honestly reflects the confluence score (1/7 → 60%, 5/7 → 78%, etc.)
+    logger.info(f"[SIGNAL-REQUEST] pair={pair} payout={real_payout}% — running sniper engine")
+    signal = await force_analyze_pair(pair)
     if signal:
-        logger.info(f"[SIGNAL-REQUEST] ✅ Multi-pair scan found signal: {signal['pair']} ({signal['score']}/7, {signal['winrate']}%)")
-        return {"status": "success", "signal": signal, "mode": "multi-scan"}
+        logger.info(f"[SIGNAL-REQUEST] ✅ Signal generated for {pair} (score={signal.get('score', '?')}/7, winrate={signal.get('winrate', '?')}%)")
+        return {"status": "success", "signal": signal, "mode": "sniper"}
 
     # ═══ NO SIGNAL AVAILABLE ════════════════════════════════════════
-    logger.info(f"[SIGNAL-REQUEST] Multi-pair scan found no signal across any pair")
+    logger.info(f"[SIGNAL-REQUEST] No signal for {pair} — insufficient data or confluence")
     raise HTTPException(
         status_code=404,
         detail=(
-            f"No signal available right now. The sniper engine scanned all active pairs "
-            f"but none had sufficient confluence. Please wait 1-2 minutes and try again."
+            f"No signal available for {pair} right now. "
+            f"The market data is still loading — please try again in 5-10 seconds."
         )
     )
 
