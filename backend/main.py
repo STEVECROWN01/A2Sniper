@@ -36,7 +36,7 @@ from engine.sniper_engine import generate_sniper_signal, validate_candle_data
 from neural_models.voting import VotingClassifierModel
 from engine.compliance import ComplianceManager, geographic_restriction_dependency
 from bot.telegram_bot import TelegramSignalBot
-from db import (init_db, SignalRecord, AsyncSessionLocal, User, UserSubscription,
+from db import (init_db, SignalRecord, CandleRecord, AsyncSessionLocal, User, UserSubscription,
                   PasswordResetOTP, SystemLog, RefreshToken, RevokedToken, RateLimitEntry)
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(name)s] %(levelname)s: %(message)s')
@@ -741,18 +741,21 @@ async def trading_loop():
                     # Skip pairs that don't currently meet the threshold (active + ≥ 70%)
                     continue
 
-                # ═══ SNIPER ENGINE (ONLY) ═════════════════════════════
-                # The sniper engine is the ONLY signal generator.
-                # It uses 7-factor confluence (1M mean-reversion + 3M trend-pullback).
-                # Requires 5+ factors to align. If no setup is found, no signal
-                # is generated — this is correct (no signal > low-quality signal).
+                # ═══ SNIPER ENGINE + CANDLE PERSISTENCE ════════════════
                 try:
                     await analyze_pair(pair)
                 except Exception as e:
                     logger.debug(f"[SNIPER-ERROR] pair={pair} err={e}")
-                # Small delay between pairs to avoid saturating the CPU.
-                # 0.3s keeps a 10-pair cycle under 5s total so we can hit
-                # the 5s cycle interval below.
+                
+                # Save candles to database (non-blocking, for persistence)
+                try:
+                    asset = po_scanner.get_asset_symbol(pair)
+                    cached_df = po_scanner._candles_cache.get(f"{asset}_1m")
+                    if cached_df is not None and not cached_df.empty:
+                        await save_candles_to_db(asset, cached_df.tail(5))
+                except Exception:
+                    pass
+                
                 await asyncio.sleep(0.3)
 
             # 5s cycle interval (was 15s) — user requirement: "every 5s so
@@ -981,6 +984,18 @@ async def lifespan(app):
 
     logger.info("Waiting for real market connection to start analysis.")
 
+    # ═══ LOAD CACHED CANDLES FROM DATABASE ═════════════════════════
+    # Load historical candles from PostgreSQL so the sniper engine has
+    # data immediately when a user connects (no 15-minute warm-up).
+    try:
+        candles_map = await load_all_candles_from_db()
+        if candles_map:
+            logger.info(f"[STARTUP] ✅ Loaded candles for {len(candles_map)} pairs from database — sniper engine ready immediately")
+        else:
+            logger.info("[STARTUP] No cached candles in database — first connection will need tick aggregation warm-up")
+    except Exception as e:
+        logger.warning(f"[STARTUP] Could not load cached candles: {e}")
+
     # Auto-promote admin emails to admin + Pro plan
     # Reads from ADMIN_EMAIL env var (comma-separated)
     try:
@@ -1071,6 +1086,256 @@ app.add_middleware(
 )
 
 
+# ═══════════════════════════════════════════════════════════════════
+# CANDLE PERSISTENCE — Save/Load candles to PostgreSQL
+# ═══════════════════════════════════════════════════════════════════
+async def save_candles_to_db(pair: str, df: pd.DataFrame, timeframe: str = "1m"):
+    """Save candles from a DataFrame to the database."""
+    if df is None or df.empty:
+        return
+    try:
+        async with AsyncSessionLocal() as session:
+            from sqlalchemy import text
+            for _, row in df.iterrows():
+                ts = int(row.name.timestamp()) if hasattr(row.name, 'timestamp') else int(row.name)
+                exists = await session.execute(
+                    text("SELECT 1 FROM candles WHERE pair=:p AND timestamp=:t LIMIT 1"),
+                    {"p": pair, "t": ts}
+                )
+                if exists.fetchone():
+                    continue
+                candle = CandleRecord(
+                    pair=pair, timestamp=ts,
+                    open=float(row['open']), high=float(row['high']),
+                    low=float(row['low']), close=float(row['close']),
+                    volume=float(row.get('volume', 0)),
+                    timeframe=timeframe
+                )
+                session.add(candle)
+            await session.commit()
+    except Exception as e:
+        logger.debug(f"[CANDLE-DB] Save error for {pair}: {e}")
+
+
+async def load_candles_from_db(pair: str, timeframe: str = "1m", limit: int = 200) -> pd.DataFrame:
+    """Load candles from the database for a given pair."""
+    try:
+        async with AsyncSessionLocal() as session:
+            from sqlalchemy import text
+            result = await session.execute(
+                text("SELECT timestamp, open, high, low, close, volume FROM candles "
+                     "WHERE pair=:p AND timeframe=:tf ORDER BY timestamp DESC LIMIT :lim"),
+                {"p": pair, "tf": timeframe, "lim": limit}
+            )
+            rows = result.fetchall()
+            if not rows:
+                return pd.DataFrame()
+            rows = list(reversed(rows))
+            df = pd.DataFrame(
+                [(r[1], r[2], r[3], r[4], r[5]) for r in rows],
+                columns=['open', 'high', 'low', 'close', 'volume'],
+                index=pd.DatetimeIndex(
+                    [pd.Timestamp(r[0], unit='s', tz='UTC') for r in rows],
+                    name='time'
+                )
+            )
+            logger.info(f"[CANDLE-DB] Loaded {len(df)} candles for {pair} from database")
+            return df
+    except Exception as e:
+        logger.warning(f"[CANDLE-DB] Load error for {pair}: {e}")
+        return pd.DataFrame()
+
+
+async def load_all_candles_from_db() -> dict:
+    """Load candles for ALL pairs from the database."""
+    try:
+        async with AsyncSessionLocal() as session:
+            from sqlalchemy import text
+            result = await session.execute(
+                text("SELECT DISTINCT pair FROM candles WHERE timeframe='1m'")
+            )
+            pairs = [r[0] for r in result.fetchall()]
+            if not pairs:
+                logger.info("[CANDLE-DB] No candles in database — starting fresh")
+                return {}
+            candles_map = {}
+            for pair in pairs:
+                df = await load_candles_from_db(pair)
+                if df is not None and not df.empty:
+                    candles_map[pair] = df
+                    # Also populate the scanner's cache
+                    cache_key = f"{pair}_1m"
+                    po_scanner._candles_cache[cache_key] = df
+            logger.info(f"[CANDLE-DB] Loaded candles for {len(candles_map)}/{len(pairs)} pairs from database")
+            return candles_map
+    except Exception as e:
+        logger.warning(f"[CANDLE-DB] Load all error: {e}")
+        return {}
+
+
+# ═══════════════════════════════════════════════════════════════════
+# MULTI-PAIR SNIPER SCAN — Find the BEST signal across ALL pairs
+# ═══════════════════════════════════════════════════════════════════
+async def multi_pair_sniper_scan(min_factors: int = 5) -> Optional[dict]:
+    """Scan ALL active pairs and return the signal with the highest confluence."""
+    if not po_scanner.is_connected:
+        return None
+    
+    active_pairs = po_scanner.find_pairs_above_payout(
+        min_payout=70.0, pair_filter="OTC", active_only=True, forex_only=True
+    )
+    if not active_pairs:
+        logger.info("[MULTI-SCAN] No active pairs available")
+        return None
+    
+    logger.info(f"[MULTI-SCAN] Scanning {len(active_pairs)} pairs for best confluence (min_factors={min_factors})...")
+    
+    best_signal = None
+    best_score = 0
+    scan_results = []
+    
+    for pair in active_pairs.keys():
+        try:
+            payout = po_scanner.get_payout(pair)
+            if payout is None or payout < 70:
+                continue
+            
+            df_m1 = await po_scanner.get_candles(pair, timeframe="1m", count=100)
+            if df_m1 is None or df_m1.empty or len(df_m1) < 14:
+                continue
+            
+            df_with_indicators = indicators.calculate_all(df_m1)
+            is_valid, _ = validate_candle_data(df_with_indicators, min_bars=14)
+            if not is_valid:
+                continue
+            
+            result = generate_sniper_signal(df_with_indicators, payout, min_factors=min_factors)
+            
+            if result:
+                scan_results.append((pair, result['score'], result['winrate'], result['direction']))
+                if result['score'] > best_score:
+                    best_score = result['score']
+                    best_signal = (pair, payout, df_with_indicators, result)
+        except Exception as e:
+            logger.debug(f"[MULTI-SCAN] Error scanning {pair}: {e}")
+            continue
+    
+    if scan_results:
+        scan_results.sort(key=lambda x: x[1], reverse=True)
+        top_5 = scan_results[:5]
+        logger.info(
+            f"[MULTI-SCAN] Scanned {len(active_pairs)} pairs, "
+            f"{len(scan_results)} had signals. Top 5: " +
+            " | ".join([f"{p} ({s}/7, {w}%, {d})" for p, s, w, d in top_5])
+        )
+    else:
+        if min_factors > 1:
+            logger.info(f"[MULTI-SCAN] No pairs had {min_factors}+ factors. Retrying with min_factors=1...")
+            return await multi_pair_sniper_scan(min_factors=1)
+        logger.info("[MULTI-SCAN] No signals found across any pair")
+        return None
+    
+    if best_signal:
+        pair, payout, df, result = best_signal
+        logger.info(f"[MULTI-SCAN] ✅ BEST: {pair} score={result['score']}/7 winrate={result['winrate']}% direction={result['direction']}")
+        return await _build_signal_from_sniper_result(pair, payout, df, result)
+    
+    if min_factors > 1:
+        return await multi_pair_sniper_scan(min_factors=1)
+    return None
+
+
+async def _build_signal_from_sniper_result(pair: str, payout: float, df: pd.DataFrame, sniper_result: dict) -> dict:
+    """Build a complete signal dict from a pre-computed sniper result."""
+    if not hasattr(analyze_pair_internal, '_last_signal_time'):
+        analyze_pair_internal._last_signal_time = {}
+    last_time = analyze_pair_internal._last_signal_time.get(pair, 0)
+    now_ts = datetime.now(timezone.utc).timestamp()
+    if (now_ts - last_time) < 30:
+        return None
+    
+    now = datetime.now(timezone.utc)
+    sniper_mode = sniper_result.get('mode', 'SNIPER_1M')
+    is_1m = sniper_mode == 'SNIPER_1M'
+    factors_hit = sniper_result['factors']['factors_hit']
+    
+    if is_1m:
+        strategy_label = f"Mean Reversion ({sniper_result['score']}/7 factors)"
+        indicator_summary = f"RSI {sniper_result['factors']['rsi']:.0f} / Stoch {sniper_result['factors']['stoch_k']:.0f} / CCI {sniper_result['factors']['cci']:.0f}"
+        rsi_status = 'Oversold' if sniper_result['direction'] == 'CALL' else 'Overbought'
+    else:
+        strategy_label = f"Trend Pullback ({sniper_result['score']}/7 factors)"
+        indicator_summary = f"RSI {sniper_result['factors']['rsi']:.0f} / Stoch {sniper_result['factors']['stoch_k']:.0f} / ADX {sniper_result['factors']['adx']:.0f}"
+        rsi_status = 'Mid-range (trend resume)'
+    
+    signal = {
+        'id': f'SIG-{now.strftime("%Y%m%d")}-{uuid.uuid4().hex[:6].upper()}',
+        'pair': pair,
+        'direction': sniper_result['direction'],
+        'time': now.strftime('%H:%M:%S'),
+        'timestamp': now.isoformat(),
+        'entry_price': sniper_result['entry_price'],
+        'expiration': sniper_result['expiration'],
+        'winrate': sniper_result['winrate'],
+        'score': sniper_result['score'],
+        'raw_points': sniper_result['score'],
+        'payout': payout,
+        'classification': sniper_result['classification'],
+        'smc_structure': strategy_label,
+        'smc_zone': ', '.join(factors_hit[:3]),
+        'chart_pattern': sniper_result['factors'].get('reversal_pattern', 'N/A') or 'N/A',
+        'fibonacci': indicator_summary,
+        'rsi_status': rsi_status,
+        'recommended_stake': 10,
+        'analysis_details': {
+            'mode': 'sniper_1m_mean_reversion' if is_1m else 'sniper_3m_trend_pullback',
+            'sniper_mode': sniper_mode,
+            'expiration_minutes': sniper_result['expiration'],
+            'factors_hit': factors_hit,
+            'factors_description': sniper_result['factors']['factors_description'],
+            'call_score': sniper_result['factors']['call_score'],
+            'put_score': sniper_result['factors']['put_score'],
+            'rsi': sniper_result['factors'].get('rsi'),
+            'stoch_k': sniper_result['factors'].get('stoch_k'),
+            'cci': sniper_result['factors'].get('cci'),
+            'adx': sniper_result['factors'].get('adx'),
+            'multi_pair_scan': True,
+        },
+    }
+    
+    try:
+        signal['hash_signature'] = compliance.generate_immutable_log(signal)
+    except Exception:
+        signal['hash_signature'] = 'ERROR'
+    
+    try:
+        async with AsyncSessionLocal() as session:
+            db_signal = SignalRecord(
+                id=signal['id'], pair=signal['pair'], direction=signal['direction'],
+                entry_price=signal['entry_price'], expiration=signal['expiration'],
+                winrate=signal['winrate'], score=signal['score'], payout=signal['payout'],
+                classification=signal['classification'], timestamp=now,
+                analysis_details=signal['analysis_details'],
+                hash_signature=signal['hash_signature']
+            )
+            session.add(db_signal)
+            await session.commit()
+    except Exception as db_err:
+        logger.warning(f"[{pair}] DB save error: {db_err}")
+    
+    generated_signals.append(signal)
+    analyze_pair_internal._last_signal_time[pair] = now_ts
+    monitor.record_signal(signal['id'], pair, signal['direction'], signal['winrate'])
+    
+    logger.info(
+        f"[MULTI-SCAN-EMITTED] id={signal['id']} pair={signal['pair']} "
+        f"mode={sniper_mode} direction={signal['direction']} "
+        f"score={signal['score']}/7 winrate={signal['winrate']}% "
+        f"expiration={signal['expiration']}m payout={signal['payout']}%"
+    )
+    return signal
+
+
 @app.post("/api/signals/request")
 async def request_live_signal(request: Request, credentials: HTTPAuthorizationCredentials = Security(security), geo: dict = Depends(geographic_restriction_dependency)):
     """Génère un signal en direct à la demande pour une paire. Requires authentication."""
@@ -1138,33 +1403,26 @@ async def request_live_signal(request: Request, credentials: HTTPAuthorizationCr
             )
         )
 
-    # ═══ SNIPER ENGINE (ONLY SIGNAL GENERATOR) ═════════════════════
-    # The sniper engine is the ONLY signal generator in the system.
-    # It uses 7-factor confluence with two strategies:
-    #   - SNIPER 1M: Mean reversion at Bollinger/RSI/Stoch/CCI extremes (1m expiration)
-    #   - SNIPER 3M: Trend pullback at EMA21 with trend alignment (3m expiration)
-    # Requires 5+ of 7 factors to align. If no setup is found, returns None.
+    # ═══ MULTI-PAIR SNIPER SCAN ═══════════════════════════════════
+    # Instead of analyzing just ONE pair, scan ALL active pairs and return
+    # the one with the highest confluence score. This is the true SNIPER
+    # approach — find the BEST setup across ALL pairs.
     #
-    # In force mode (user explicitly requested), if the sniper doesn't find
-    # a setup, we return a clean "no signal" message — NO legacy fallbacks.
-    logger.info(f"[SIGNAL-REQUEST] pair={pair} payout={real_payout}% — running sniper engine")
-    signal = await force_analyze_pair(pair)
+    # The scan uses 5/7 threshold first (high winrate). If no pair has 5/7,
+    # it falls back to 1/7 so the user ALWAYS gets a signal.
+    logger.info(f"[SIGNAL-REQUEST] Starting multi-pair sniper scan (user requested {pair}, but scanning ALL pairs for best confluence)")
+    signal = await multi_pair_sniper_scan(min_factors=5)
     if signal:
-        logger.info(f"[SIGNAL-REQUEST] ✅ Sniper engine produced signal for {pair} (mode={signal.get('analysis_details', {}).get('sniper_mode', 'unknown')})")
-        return {"status": "success", "signal": signal, "mode": "sniper"}
+        logger.info(f"[SIGNAL-REQUEST] ✅ Multi-pair scan found signal: {signal['pair']} ({signal['score']}/7, {signal['winrate']}%)")
+        return {"status": "success", "signal": signal, "mode": "multi-scan"}
 
     # ═══ NO SIGNAL AVAILABLE ════════════════════════════════════════
-    # The sniper engine didn't find a 5+ factor confluence setup.
-    # This is CORRECT behavior — no signal is better than a low-quality signal.
-    # Return a clean message so the bot/frontend can display it.
-    logger.info(f"[SIGNAL-REQUEST] No sniper setup for {pair} — insufficient confluence (<3 factors in force mode). Try another pair or wait for better conditions.")
+    logger.info(f"[SIGNAL-REQUEST] Multi-pair scan found no signal across any pair")
     raise HTTPException(
         status_code=404,
         detail=(
-            f"No signal available for {pair} right now. "
-            f"The sniper engine requires at least 3 of 7 confluence factors to align "
-            f"(Bollinger + RSI + Stochastic + Candlestick + CCI + EMA deviation + Momentum). "
-            f"Try another pair or wait 1-2 minutes for better market conditions."
+            f"No signal available right now. The sniper engine scanned all active pairs "
+            f"but none had sufficient confluence. Please wait 1-2 minutes and try again."
         )
     )
 

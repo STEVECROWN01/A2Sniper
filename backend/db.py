@@ -74,6 +74,31 @@ class SignalRecord(Base):
     analysis_details = Column(JSON)
     hash_signature = Column(String)
 
+
+class CandleRecord(Base):
+    """Historical candle storage — persists across Railway redeploys.
+    
+    When the backend restarts, candles are loaded from this table so the
+    sniper engine has data immediately (no 15-minute warm-up needed).
+    Each candle is uniquely identified by (pair, timestamp) to prevent duplicates.
+    """
+    __tablename__ = "candles"
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    pair = Column(String, index=True, nullable=False)  # e.g., "EURUSD_otc"
+    timestamp = Column(Integer, index=True, nullable=False)  # Unix timestamp (seconds)
+    open = Column(Float, nullable=False)
+    high = Column(Float, nullable=False)
+    low = Column(Float, nullable=False)
+    close = Column(Float, nullable=False)
+    volume = Column(Float, default=0)
+    timeframe = Column(String, default="1m")  # e.g., "1m", "5m"
+    
+    # Unique constraint to prevent duplicate candles
+    __table_args__ = (
+        Index('idx_candles_pair_ts', 'pair', 'timestamp', unique=True),
+    )
+
 class User(Base):
     """Utilisateur du système."""
     __tablename__ = "users"
