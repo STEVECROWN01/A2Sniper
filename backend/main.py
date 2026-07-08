@@ -984,8 +984,18 @@ async def _load_candles_background():
 
 
 async def _startup_background_tasks():
-    """Run heavy startup tasks in background (non-blocking)."""
-    await asyncio.sleep(3)  # Wait for server to start
+    """Run ALL heavy startup tasks in background (non-blocking).
+    This includes init_db — the server starts before DB is ready."""
+    await asyncio.sleep(2)  # Wait for server to start
+    
+    # 0. Initialize database (create tables, run migrations)
+    try:
+        await asyncio.wait_for(init_db(), timeout=120.0)
+        logger.info("[STARTUP] ✅ Database initialized (tables created/migrated)")
+    except asyncio.TimeoutError:
+        logger.error("[STARTUP] DB init timed out after 120s. Continuing without DB init.")
+    except Exception as e:
+        logger.error(f"[STARTUP] DB init failed: {e}. Continuing without DB tables.")
     
     # 1. Load historical signals into monitoring
     try:
@@ -1033,17 +1043,11 @@ async def _startup_background_tasks():
 
 @asynccontextmanager
 async def lifespan(app):
-    # ═══ MINIMAL STARTUP — just init DB, then yield immediately ═══
-    # Everything else runs in background tasks AFTER the server starts.
-    # This ensures the healthcheck passes within seconds.
-    try:
-        await asyncio.wait_for(init_db(), timeout=60.0)
-    except asyncio.TimeoutError:
-        logger.error("[STARTUP] DB init timed out after 60s. Continuing without DB init.")
-    except Exception as e:
-        logger.error(f"[STARTUP] DB init failed: {e}. Continuing without DB tables.")
-
-    logger.info("[STARTUP] DB initialized. Starting server (healthcheck ready)...")
+    # ═══ MINIMAL STARTUP — yield immediately, everything in background ═══
+    # The server must respond to healthcheck within 300s. We don't run ANY
+    # DB operations before yield — not even init_db. Everything runs in
+    # background tasks after the server starts.
+    logger.info("[STARTUP] Server starting (healthcheck ready)...")
 
     # Start ALL background tasks (non-blocking — server starts immediately)
     try:
