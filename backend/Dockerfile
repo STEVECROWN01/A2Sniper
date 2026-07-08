@@ -12,11 +12,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy requirements first for better Docker layer caching
 COPY requirements.txt .
 
-# Install Python dependencies.
-# PyTorch is installed from the CPU-only wheel index to keep the image small
-# (~200 MB torch vs 2+ GB CUDA torch). Railway standard plans have no GPU.
+# Install Python dependencies (torch REMOVED — AI gate is disabled)
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu && \
     pip install --no-cache-dir -r requirements.txt
 
 # Copy the entire backend code
