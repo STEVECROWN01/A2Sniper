@@ -747,12 +747,14 @@ async def trading_loop():
                 except Exception as e:
                     logger.debug(f"[SNIPER-ERROR] pair={pair} err={e}")
                 
-                # Save candles to database (non-blocking, for persistence)
+                # Save completed candles to database (for persistence across redeploys)
+                # save_candles_to_db automatically excludes the last (incomplete) candle
                 try:
                     asset = po_scanner.get_asset_symbol(pair)
                     cached_df = po_scanner._candles_cache.get(f"{asset}_1m")
-                    if cached_df is not None and not cached_df.empty:
-                        await save_candles_to_db(asset, cached_df.tail(5))
+                    if cached_df is not None and not cached_df.empty and len(cached_df) > 1:
+                        # Only save if there are completed candles (exclude the forming one)
+                        await save_candles_to_db(asset, cached_df.tail(10))
                 except Exception:
                     pass
                 
@@ -872,15 +874,20 @@ async def resolution_loop():
 
 
 async def daily_report_loop():
-    """Envoi du rapport journalier automatique à 23h59 UTC (CDC Section 11.3)."""
+    """Daily report at 23:59 UTC + candle cleanup."""
     while True:
         now = datetime.now(timezone.utc)
-        # Calculate seconds until 23:59
         target = now.replace(hour=23, minute=59, second=0, microsecond=0)
         if now >= target:
             target = target + timedelta(days=1)
         wait_seconds = (target - now).total_seconds()
         await asyncio.sleep(wait_seconds)
+        
+        # Cleanup old candles (keep max 500 per pair)
+        try:
+            await cleanup_old_candles()
+        except Exception:
+            pass
         
         # Generate and send report
         try:
@@ -1090,31 +1097,50 @@ app.add_middleware(
 # CANDLE PERSISTENCE — Save/Load candles to PostgreSQL
 # ═══════════════════════════════════════════════════════════════════
 async def save_candles_to_db(pair: str, df: pd.DataFrame, timeframe: str = "1m"):
-    """Save candles from a DataFrame to the database."""
+    """Save candles to the database using batch UPSERT (single query, no N+1).
+    
+    Uses PostgreSQL INSERT ... ON CONFLICT DO NOTHING for dedup.
+    Only saves COMPLETED candles (excludes the last/incomplete candle).
+    """
     if df is None or df.empty:
         return
     try:
+        # Exclude the last candle (it's still forming — its close price changes every tick)
+        if len(df) > 1:
+            df_to_save = df.iloc[:-1]
+        else:
+            return
+        
+        if df_to_save.empty:
+            return
+        
         async with AsyncSessionLocal() as session:
             from sqlalchemy import text
-            for _, row in df.iterrows():
+            # Batch UPSERT: insert all candles in ONE query, skip duplicates
+            values = []
+            params = {}
+            for i, (_, row) in enumerate(df_to_save.iterrows()):
                 ts = int(row.name.timestamp()) if hasattr(row.name, 'timestamp') else int(row.name)
-                exists = await session.execute(
-                    text("SELECT 1 FROM candles WHERE pair=:p AND timestamp=:t LIMIT 1"),
-                    {"p": pair, "t": ts}
-                )
-                if exists.fetchone():
-                    continue
-                candle = CandleRecord(
-                    pair=pair, timestamp=ts,
-                    open=float(row['open']), high=float(row['high']),
-                    low=float(row['low']), close=float(row['close']),
-                    volume=float(row.get('volume', 0)),
-                    timeframe=timeframe
-                )
-                session.add(candle)
+                params[f"p{i}"] = pair
+                params[f"t{i}"] = ts
+                params[f"o{i}"] = float(row['open'])
+                params[f"h{i}"] = float(row['high'])
+                params[f"l{i}"] = float(row['low'])
+                params[f"c{i}"] = float(row['close'])
+                params[f"v{i}"] = float(row.get('volume', 0))
+                values.append(f"(:p{i}, :t{i}, :o{i}, :h{i}, :l{i}, :c{i}, :v{i}, '{timeframe}')")
+            
+            sql = text(
+                f"INSERT INTO candles (pair, timestamp, open, high, low, close, volume, timeframe) "
+                f"VALUES {', '.join(values)} "
+                f"ON CONFLICT (pair, timestamp) DO NOTHING"
+            )
+            result = await session.execute(sql, params)
             await session.commit()
+            if result.rowcount > 0:
+                logger.info(f"[CANDLE-DB] Saved {result.rowcount} new candles for {pair}")
     except Exception as e:
-        logger.debug(f"[CANDLE-DB] Save error for {pair}: {e}")
+        logger.warning(f"[CANDLE-DB] Save error for {pair}: {e}")
 
 
 async def load_candles_from_db(pair: str, timeframe: str = "1m", limit: int = 200) -> pd.DataFrame:
@@ -1130,6 +1156,7 @@ async def load_candles_from_db(pair: str, timeframe: str = "1m", limit: int = 20
             rows = result.fetchall()
             if not rows:
                 return pd.DataFrame()
+            # Reverse to chronological order (oldest first)
             rows = list(reversed(rows))
             df = pd.DataFrame(
                 [(r[1], r[2], r[3], r[4], r[5]) for r in rows],
@@ -1147,30 +1174,79 @@ async def load_candles_from_db(pair: str, timeframe: str = "1m", limit: int = 20
 
 
 async def load_all_candles_from_db() -> dict:
-    """Load candles for ALL pairs from the database."""
+    """Load candles for ALL pairs from the database in a SINGLE query."""
     try:
         async with AsyncSessionLocal() as session:
             from sqlalchemy import text
+            # Get all pairs + their candles in ONE query using window function
             result = await session.execute(
-                text("SELECT DISTINCT pair FROM candles WHERE timeframe='1m'")
+                text("""
+                    SELECT pair, timestamp, open, high, low, close, volume
+                    FROM (
+                        SELECT *, ROW_NUMBER() OVER (PARTITION BY pair ORDER BY timestamp DESC) as rn
+                        FROM candles
+                        WHERE timeframe = '1m'
+                    ) sub
+                    WHERE rn <= 200
+                    ORDER BY pair, timestamp ASC
+                """)
             )
-            pairs = [r[0] for r in result.fetchall()]
-            if not pairs:
+            rows = result.fetchall()
+            if not rows:
                 logger.info("[CANDLE-DB] No candles in database — starting fresh")
                 return {}
+            
+            # Group by pair
+            from collections import defaultdict
+            pair_data = defaultdict(list)
+            for r in rows:
+                pair_data[r[0]].append(r)
+            
             candles_map = {}
-            for pair in pairs:
-                df = await load_candles_from_db(pair)
-                if df is not None and not df.empty:
-                    candles_map[pair] = df
-                    # Also populate the scanner's cache
-                    cache_key = f"{pair}_1m"
-                    po_scanner._candles_cache[cache_key] = df
-            logger.info(f"[CANDLE-DB] Loaded candles for {len(candles_map)}/{len(pairs)} pairs from database")
+            for pair, pair_rows in pair_data.items():
+                df = pd.DataFrame(
+                    [(r[2], r[3], r[4], r[5], r[6]) for r in pair_rows],
+                    columns=['open', 'high', 'low', 'close', 'volume'],
+                    index=pd.DatetimeIndex(
+                        [pd.Timestamp(r[1], unit='s', tz='UTC') for r in pair_rows],
+                        name='time'
+                    )
+                )
+                candles_map[pair] = df
+                # Also populate the scanner's cache so get_candles returns immediately
+                cache_key = f"{pair}_1m"
+                po_scanner._candles_cache[cache_key] = df
+            
+            logger.info(f"[CANDLE-DB] ✅ Loaded candles for {len(candles_map)} pairs from database (single query)")
+            for pair, df in candles_map.items():
+                logger.info(f"[CANDLE-DB]   {pair}: {len(df)} candles")
             return candles_map
     except Exception as e:
         logger.warning(f"[CANDLE-DB] Load all error: {e}")
         return {}
+
+
+async def cleanup_old_candles():
+    """Delete candles older than 500 per pair to prevent database bloat."""
+    try:
+        async with AsyncSessionLocal() as session:
+            from sqlalchemy import text
+            await session.execute(
+                text("""
+                    DELETE FROM candles
+                    WHERE id NOT IN (
+                        SELECT id FROM (
+                            SELECT id, ROW_NUMBER() OVER (PARTITION BY pair ORDER BY timestamp DESC) as rn
+                            FROM candles WHERE timeframe = '1m'
+                        ) sub
+                        WHERE rn <= 500
+                    )
+                """)
+            )
+            await session.commit()
+            logger.info("[CANDLE-DB] Old candles cleaned up (max 500 per pair)")
+    except Exception as e:
+        logger.warning(f"[CANDLE-DB] Cleanup error: {e}")
 
 
 # ═══════════════════════════════════════════════════════════════════
