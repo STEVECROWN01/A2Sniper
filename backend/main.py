@@ -994,14 +994,18 @@ async def lifespan(app):
     # ═══ LOAD CACHED CANDLES FROM DATABASE ═════════════════════════
     # Load historical candles from PostgreSQL so the sniper engine has
     # data immediately when a user connects (no 15-minute warm-up).
+    # This is NON-BLOCKING — if it fails, the system continues without
+    # cached candles (first-time deploy or DB issue).
     try:
-        candles_map = await load_all_candles_from_db()
+        candles_map = await asyncio.wait_for(load_all_candles_from_db(), timeout=15.0)
         if candles_map:
             logger.info(f"[STARTUP] ✅ Loaded candles for {len(candles_map)} pairs from database — sniper engine ready immediately")
         else:
             logger.info("[STARTUP] No cached candles in database — first connection will need tick aggregation warm-up")
+    except asyncio.TimeoutError:
+        logger.warning("[STARTUP] Candle loading timed out (15s) — continuing without cached candles")
     except Exception as e:
-        logger.warning(f"[STARTUP] Could not load cached candles: {e}")
+        logger.warning(f"[STARTUP] Could not load cached candles: {e} — continuing without cached candles")
 
     # Auto-promote admin emails to admin + Pro plan
     # Reads from ADMIN_EMAIL env var (comma-separated)
@@ -1174,10 +1178,18 @@ async def load_candles_from_db(pair: str, timeframe: str = "1m", limit: int = 20
 
 
 async def load_all_candles_from_db() -> dict:
-    """Load candles for ALL pairs from the database in a SINGLE query."""
+    """Load candles for ALL pairs from the database in a SINGLE query.
+    Returns empty dict if table doesn't exist yet (first deploy)."""
     try:
         async with AsyncSessionLocal() as session:
             from sqlalchemy import text
+            # First check if the candles table exists (it might not on first deploy)
+            table_check = await session.execute(
+                text("SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'candles')")
+            )
+            if not table_check.scalar():
+                logger.info("[CANDLE-DB] candles table does not exist yet — skipping load")
+                return {}
             # Get all pairs + their candles in ONE query using window function
             result = await session.execute(
                 text("""
