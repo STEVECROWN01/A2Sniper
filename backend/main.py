@@ -11,6 +11,7 @@ import os
 import secrets
 import json
 import numpy as np
+import pandas as pd
 from collections import deque
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone, timedelta
