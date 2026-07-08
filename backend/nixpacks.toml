@@ -5,4 +5,4 @@ nixPkgs = ["gcc", "g++"]
 cmds = ["pip install --no-cache-dir --upgrade pip", "pip install --no-cache-dir -r requirements.txt"]
 
 [start]
-cmd = "python start.py"
+cmd = "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1"
