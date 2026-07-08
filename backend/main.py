@@ -983,16 +983,11 @@ async def _load_candles_background():
         logger.warning(f"[STARTUP] Could not load cached candles: {e} — continuing without cached candles")
 
 
-@asynccontextmanager
-async def lifespan(app):
-    # Startup — resilient: don't crash if DB or background tasks fail
-    try:
-        await asyncio.wait_for(init_db(), timeout=30.0)
-    except asyncio.TimeoutError:
-        logger.error("[STARTUP] DB init timed out after 30s. Continuing without DB init.")
-    except Exception as e:
-        logger.error(f"[STARTUP] DB init failed: {e}. Continuing without DB tables (they may already exist).")
-
+async def _startup_background_tasks():
+    """Run heavy startup tasks in background (non-blocking)."""
+    await asyncio.sleep(3)  # Wait for server to start
+    
+    # 1. Load historical signals into monitoring
     try:
         async with AsyncSessionLocal() as session:
             result = await session.execute(select(SignalRecord).order_by(SignalRecord.timestamp.asc()))
@@ -1000,70 +995,68 @@ async def lifespan(app):
             for s in historical_signals:
                 monitor.record_signal(s.id, s.pair, s.direction, s.winrate, is_win=s.is_win)
                 monitor.signal_history[-1]['timestamp'] = s.timestamp.replace(tzinfo=timezone.utc) if s.timestamp.tzinfo is None else s.timestamp
-        logger.info(f"Database initialized. Loaded {len(historical_signals)} signals into monitoring history.")
+        logger.info(f"[STARTUP] Loaded {len(historical_signals)} historical signals into monitoring.")
     except Exception as e:
-        logger.warning(f"[STARTUP] Could not load historical signals: {e}. Starting with empty history.")
+        logger.warning(f"[STARTUP] Could not load historical signals: {e}")
 
-    logger.info("Waiting for real market connection to start analysis.")
-
-    # NOTE: Candle loading is deferred to a background task (see below)
-    # so it doesn't block the healthcheck. The server starts immediately,
-    # then loads candles in the background.
-
-    # Auto-promote admin emails to admin + Pro plan
-    # Reads from ADMIN_EMAIL env var (comma-separated)
+    # 2. Auto-promote admin emails
     try:
         admin_emails = []
         admin_env = os.getenv("ADMIN_EMAIL", "").strip()
         if admin_env:
             admin_emails.extend([e.strip() for e in admin_env.split(",") if e.strip()])
-
         async with AsyncSessionLocal() as session:
             for admin_email in admin_emails:
-                result = await session.execute(
-                    select(User).where(User.email == admin_email)
-                )
+                result = await session.execute(select(User).where(User.email == admin_email))
                 owner = result.scalar_one_or_none()
                 if owner:
                     if not owner.is_admin:
                         owner.is_admin = True
                         logger.info(f"[STARTUP] Promoted {admin_email} to admin")
-                    # Ensure Pro subscription
-                    sub_result = await session.execute(
-                        select(UserSubscription).where(UserSubscription.user_id == owner.id)
-                    )
+                    sub_result = await session.execute(select(UserSubscription).where(UserSubscription.user_id == owner.id))
                     sub = sub_result.scalar_one_or_none()
                     if sub:
                         if sub.plan_name != "Pro":
                             sub.plan_name = "Pro"
-                            sub.active_until = datetime.now(timezone.utc) + timedelta(days=3650)  # 10 years
-                            logger.info(f"[STARTUP] Upgraded {admin_email} to Pro plan (10 years)")
+                            sub.active_until = datetime.now(timezone.utc) + timedelta(days=3650)
+                            logger.info(f"[STARTUP] Upgraded {admin_email} to Pro plan")
                     else:
-                        new_sub = UserSubscription(
-                            user_id=owner.id,
-                            plan_name="Pro",
-                            active_until=datetime.now(timezone.utc) + timedelta(days=3650)
-                        )
+                        new_sub = UserSubscription(user_id=owner.id, plan_name="Pro", active_until=datetime.now(timezone.utc) + timedelta(days=3650))
                         session.add(new_sub)
-                        logger.info(f"[STARTUP] Created Pro subscription for {admin_email}")
                     await session.commit()
     except Exception as e:
         logger.warning(f"[STARTUP] Could not auto-promote admin: {e}")
 
+    # 3. Load cached candles
+    await _load_candles_background()
+
+
+@asynccontextmanager
+async def lifespan(app):
+    # ═══ MINIMAL STARTUP — just init DB, then yield immediately ═══
+    # Everything else runs in background tasks AFTER the server starts.
+    # This ensures the healthcheck passes within seconds.
     try:
+        await asyncio.wait_for(init_db(), timeout=60.0)
+    except asyncio.TimeoutError:
+        logger.error("[STARTUP] DB init timed out after 60s. Continuing without DB init.")
+    except Exception as e:
+        logger.error(f"[STARTUP] DB init failed: {e}. Continuing without DB tables.")
+
+    logger.info("[STARTUP] DB initialized. Starting server (healthcheck ready)...")
+
+    # Start ALL background tasks (non-blocking — server starts immediately)
+    try:
+        asyncio.create_task(_startup_background_tasks())
         asyncio.create_task(trading_loop())
         asyncio.create_task(resolution_loop())
         asyncio.create_task(telegram_bot.start_polling())
         asyncio.create_task(daily_report_loop())
         asyncio.create_task(retraining_loop())
-        # Load candles in the BACKGROUND (non-blocking) — doesn't delay healthcheck
-        asyncio.create_task(_load_candles_background())
     except Exception as e:
         logger.warning(f"[STARTUP] Background task creation issue: {e}")
 
-    # NO auto-reconnect on startup — connection only happens on user's explicit click
-
-    yield  # Application runs here
+    yield  # Server starts here — healthcheck passes immediately
 
     # Shutdown cleanup could go here
 
