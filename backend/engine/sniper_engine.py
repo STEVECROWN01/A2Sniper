@@ -267,9 +267,9 @@ def score_mean_reversion(df: pd.DataFrame, min_factors: int = 3) -> Optional[Dic
         return None
 
     # ═══ DERIVE WINRATE ═══
-    # 3 factors → 68%, 4 → 72%, 5 → 78%, 6 → 85%, 7 → 92%
-    winrate_map = {3: 68, 4: 72, 5: 78, 6: 85, 7: 92}
-    winrate = winrate_map.get(score, 68 if score >= 3 else 0)
+    # 1 factor → 60%, 2 → 65%, 3 → 68%, 4 → 72%, 5 → 78%, 6 → 85%, 7 → 92%
+    winrate_map = {1: 60, 2: 65, 3: 68, 4: 72, 5: 78, 6: 85, 7: 92}
+    winrate = winrate_map.get(score, 60 if score >= 1 else 0)
 
     # Classification
     if score == 7:
@@ -280,8 +280,12 @@ def score_mean_reversion(df: pd.DataFrame, min_factors: int = 3) -> Optional[Dic
         classification = 'Strong Signal (5/7 confluence)'
     elif score == 4:
         classification = 'Confirmed Signal (4/7 confluence)'
-    else:
+    elif score == 3:
         classification = 'Standard Signal (3/7 confluence)'
+    elif score == 2:
+        classification = 'Basic Signal (2/7 confluence)'
+    else:
+        classification = 'Minimal Signal (1/7 confluence)'
 
     # Build factor details for transparency
     factor_names = [f[0] for f in factors]
@@ -511,10 +515,9 @@ def score_trend_pullback(df: pd.DataFrame, min_factors: int = 3) -> Optional[Dic
         return None
 
     # ═══ DERIVE WINRATE ═══
-    # 3 factors → 65%, 4 → 68%, 5 → 72%, 6 → 80%, 7 → 87%
-    # (Slightly lower than 1M mean-reversion because 3M has more time for things to go wrong)
-    winrate_map = {3: 65, 4: 68, 5: 72, 6: 80, 7: 87}
-    winrate = winrate_map.get(score, 65 if score >= 3 else 0)
+    # 1 factor → 58%, 2 → 62%, 3 → 65%, 4 → 68%, 5 → 72%, 6 → 80%, 7 → 87%
+    winrate_map = {1: 58, 2: 62, 3: 65, 4: 68, 5: 72, 6: 80, 7: 87}
+    winrate = winrate_map.get(score, 58 if score >= 1 else 0)
 
     # Classification
     if score == 7:
@@ -525,8 +528,12 @@ def score_trend_pullback(df: pd.DataFrame, min_factors: int = 3) -> Optional[Dic
         classification = 'Strong 3M Signal (5/7 trend-pullback)'
     elif score == 4:
         classification = 'Confirmed 3M Signal (4/7 trend-pullback)'
-    else:
+    elif score == 3:
         classification = 'Standard 3M Signal (3/7 trend-pullback)'
+    elif score == 2:
+        classification = 'Basic 3M Signal (2/7 trend-pullback)'
+    else:
+        classification = 'Minimal 3M Signal (1/7 trend-pullback)'
 
     factor_names = [f[0] for f in factors]
     factor_details = {

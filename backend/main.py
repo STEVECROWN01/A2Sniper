@@ -519,9 +519,11 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False) -> dict:
         return None
 
     # 6. Run the sniper engine (dual-mode: 1M mean-reversion + 3M trend-pullback)
-    # Force mode (user requested): min_factors=3 (more signals, lower winrate)
+    # Force mode (user requested): min_factors=1 (ALWAYS generate a signal when user asks)
     # Background mode (auto): min_factors=5 (fewer signals, higher winrate)
-    min_factors = 3 if force else 5
+    # The user explicitly clicked "Request Signal" — they should ALWAYS get one.
+    # The winrate honestly reflects how many factors aligned (1/7 = 60%, 2/7 = 65%, etc.)
+    min_factors = 1 if force else 5
     sniper_result = generate_sniper_signal(df_with_indicators, payout, min_factors=min_factors)
     if sniper_result is None:
         # No confluence found — log the indicator values for debugging
