@@ -968,6 +968,21 @@ async def retraining_loop():
 
 # ═══════════ LIFESPAN (replaces deprecated on_event) ═══════════
 
+async def _load_candles_background():
+    """Background task: load candles from DB without blocking startup/healthcheck."""
+    await asyncio.sleep(5)  # Wait 5s for server to start first
+    try:
+        candles_map = await asyncio.wait_for(load_all_candles_from_db(), timeout=30.0)
+        if candles_map:
+            logger.info(f"[STARTUP] ✅ Loaded candles for {len(candles_map)} pairs from database — sniper engine ready")
+        else:
+            logger.info("[STARTUP] No cached candles in database — first connection needs tick aggregation warm-up")
+    except asyncio.TimeoutError:
+        logger.warning("[STARTUP] Candle loading timed out (30s) — continuing without cached candles")
+    except Exception as e:
+        logger.warning(f"[STARTUP] Could not load cached candles: {e} — continuing without cached candles")
+
+
 @asynccontextmanager
 async def lifespan(app):
     # Startup — resilient: don't crash if DB or background tasks fail
@@ -991,21 +1006,9 @@ async def lifespan(app):
 
     logger.info("Waiting for real market connection to start analysis.")
 
-    # ═══ LOAD CACHED CANDLES FROM DATABASE ═════════════════════════
-    # Load historical candles from PostgreSQL so the sniper engine has
-    # data immediately when a user connects (no 15-minute warm-up).
-    # This is NON-BLOCKING — if it fails, the system continues without
-    # cached candles (first-time deploy or DB issue).
-    try:
-        candles_map = await asyncio.wait_for(load_all_candles_from_db(), timeout=15.0)
-        if candles_map:
-            logger.info(f"[STARTUP] ✅ Loaded candles for {len(candles_map)} pairs from database — sniper engine ready immediately")
-        else:
-            logger.info("[STARTUP] No cached candles in database — first connection will need tick aggregation warm-up")
-    except asyncio.TimeoutError:
-        logger.warning("[STARTUP] Candle loading timed out (15s) — continuing without cached candles")
-    except Exception as e:
-        logger.warning(f"[STARTUP] Could not load cached candles: {e} — continuing without cached candles")
+    # NOTE: Candle loading is deferred to a background task (see below)
+    # so it doesn't block the healthcheck. The server starts immediately,
+    # then loads candles in the background.
 
     # Auto-promote admin emails to admin + Pro plan
     # Reads from ADMIN_EMAIL env var (comma-separated)
@@ -1053,6 +1056,8 @@ async def lifespan(app):
         asyncio.create_task(telegram_bot.start_polling())
         asyncio.create_task(daily_report_loop())
         asyncio.create_task(retraining_loop())
+        # Load candles in the BACKGROUND (non-blocking) — doesn't delay healthcheck
+        asyncio.create_task(_load_candles_background())
     except Exception as e:
         logger.warning(f"[STARTUP] Background task creation issue: {e}")
 
