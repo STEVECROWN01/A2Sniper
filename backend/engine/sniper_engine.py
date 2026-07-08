@@ -594,7 +594,12 @@ def generate_sniper_signal(df: pd.DataFrame, payout: float, min_factors: int = 3
     result_1m = score_mean_reversion(df, min_factors=min_factors)
     result_3m = score_trend_pullback(df, min_factors=min_factors) if len(df) >= 50 else None
 
-    # ─── Apply trend filter to 1M signal ───
+    # ─── Trend alignment BONUS (not a filter) ───
+    # Mean reversion is DESIGNED to take counter-trend trades (fade extremes).
+    # We do NOT reject counter-trend signals — we give a BONUS to trend-aligned
+    # signals instead. This way:
+    #   - Counter-trend mean reversion: valid (the core strategy)
+    #   - Trend-aligned mean reversion: even better (bonus factor)
     if result_1m is not None:
         if 'EMA_50' in df.columns and len(df) >= 50:
             ema50 = float(df.iloc[-1].get('EMA_50', 0))
@@ -602,20 +607,11 @@ def generate_sniper_signal(df: pd.DataFrame, payout: float, min_factors: int = 3
             direction = result_1m['direction']
 
             if not np.isnan(ema50) and ema50 > 0:
-                if direction == 'CALL' and close < ema50:
-                    logger.info(
-                        f"[SNIPER-1M] CALL rejected by trend filter: "
-                        f"close {close:.5f} < EMA50 {ema50:.5f}"
-                    )
-                    result_1m = None
-                elif direction == 'PUT' and close > ema50:
-                    logger.info(
-                        f"[SNIPER-1M] PUT rejected by trend filter: "
-                        f"close {close:.5f} > EMA50 {ema50:.5f}"
-                    )
-                    result_1m = None
-                else:
-                    # Signal aligns with trend — bonus factor
+                # Check if signal aligns with EMA50 trend
+                aligned = (direction == 'CALL' and close >= ema50) or \
+                          (direction == 'PUT' and close <= ema50)
+                if aligned:
+                    # Bonus factor for trend alignment (don't reject counter-trend!)
                     result_1m['score'] = min(7, result_1m['score'] + 1)
                     result_1m['factors']['factors_hit'].append('trend_alignment_ema50')
                     result_1m['factors']['factors_description'].append(
@@ -632,6 +628,7 @@ def generate_sniper_signal(df: pd.DataFrame, payout: float, min_factors: int = 3
                         result_1m['classification'] = 'Strong 1M Signal (6/7 confluence)'
                     else:
                         result_1m['classification'] = 'Confirmed 1M Signal (5/7 confluence)'
+                # Counter-trend: NO rejection — this is valid mean reversion!
 
     # ─── Tag the 1M result with mode ───
     if result_1m is not None:
