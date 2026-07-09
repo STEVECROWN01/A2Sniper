@@ -1334,10 +1334,22 @@ async def request_live_signal(request: Request, credentials: HTTPAuthorizationCr
     # ═══ SNIPER ENGINE — Single Pair (user selected this pair) ═══
     # The user explicitly selected this pair and clicked "Request Signal".
     # We analyze THIS pair with the sniper engine.
-    # Force mode uses min_factors=1 so the user ALWAYS gets a signal.
-    # The winrate honestly reflects the confluence score (1/7 → 60%, 5/7 → 78%, etc.)
+    # 5/7 factors required for 80%+ winrate.
     logger.info(f"[SIGNAL-REQUEST] pair={pair} payout={real_payout}% — running sniper engine")
-    signal = await force_analyze_pair(pair)
+    try:
+        signal = await asyncio.wait_for(force_analyze_pair(pair), timeout=30.0)
+    except asyncio.TimeoutError:
+        logger.warning(f"[SIGNAL-REQUEST] Sniper engine timed out (30s) for {pair}")
+        raise HTTPException(
+            status_code=404,
+            detail=f"Signal analysis timed out for {pair}. The market data is still loading — please try again in 5-10 seconds."
+        )
+    except Exception as e:
+        logger.error(f"[SIGNAL-REQUEST] Error analyzing {pair}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=404,
+            detail=f"Could not analyze {pair} right now. Please try another pair or wait 1-2 minutes."
+        )
     if signal:
         logger.info(f"[SIGNAL-REQUEST] ✅ Signal generated for {pair} (score={signal.get('score', '?')}/7, winrate={signal.get('winrate', '?')}%)")
         return {"status": "success", "signal": signal, "mode": "sniper"}

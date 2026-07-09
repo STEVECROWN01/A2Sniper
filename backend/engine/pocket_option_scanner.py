@@ -2385,7 +2385,7 @@ class PocketOptionScanner:
                         continue
 
                 # Wait for the response — timeout increases with each attempt
-                timeout = 3.0 + (attempt * 2.0)  # 3s, 5s, 7s
+                timeout = 2.0 + (attempt * 1.0)  # 2s, 3s, 4s — fast retries
                 future = self._pending_candle_requests.get(request_key)
                 if future and not future.done():
                     try:
