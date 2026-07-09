@@ -77,11 +77,9 @@ function SignalCountdown({ timestamp, expiration, onExpire }: { timestamp?: stri
       const now = new Date();
       const expMinutes = Number(expiration) || 1;
 
-      // For binary options, the signal expires at the next candle boundary
-      // after the signal timestamp + expiration duration.
-      const expiryTime = new Date(sigTime);
-      expiryTime.setSeconds(0, 0); // Align to minute boundary
-      expiryTime.setMinutes(expiryTime.getMinutes() + expMinutes);
+      // Expiry = signal timestamp + expiration minutes (NOT candle boundary).
+      // A 1-minute signal generated at 12:30:45 expires at 12:31:45 (exactly 60s).
+      const expiryTime = new Date(sigTime.getTime() + (expMinutes * 60 * 1000));
 
       const remaining = expiryTime.getTime() - now.getTime();
       if (remaining <= 0) {
