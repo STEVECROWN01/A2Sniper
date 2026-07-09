@@ -16,6 +16,7 @@ from collections import deque
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone, timedelta
 from time import time
+from typing import Optional
 from fastapi import FastAPI, HTTPException, Request, Security, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import select
