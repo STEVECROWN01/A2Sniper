@@ -2967,7 +2967,8 @@ class PocketOptionScanner:
             self._receive_task = None
 
         self._payouts = {}
-        self._candles_cache = {}
+        # DO NOT clear _candles_cache — candles persist across reconnects.
+        # Candles loaded from PostgreSQL survive disconnect/reconnect.
         self._tick_buffer = {}
         self._balance = None
         self._last_assets_update = None
@@ -2976,4 +2977,4 @@ class PocketOptionScanner:
         self._pending_candle_requests = {}
 
         await self._close_ws()
-        logger.info("[SCANNER] 🔌 DÉCONNECTÉ — SSID cleared, all state reset")
+        logger.info(f"[SCANNER] Disconnected — candle cache PRESERVED ({len(self._candles_cache)} pairs cached)")
