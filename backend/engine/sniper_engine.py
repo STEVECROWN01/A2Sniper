@@ -169,30 +169,30 @@ def score_mean_reversion(df: pd.DataFrame, min_factors: int = 5) -> Optional[Dic
     # ═══ FACTOR 1: Bollinger Band penetration / touch ═══
     # Price pierces OR touches the LOWER band → oversold → CALL bias
     # Price pierces OR touches the UPPER band → overbought → PUT bias
-    # Broadened: also count "near" the band (within 0.3 ATR)
+    # Broadened: within 0.5 ATR of the band
     if not np.isnan(bbu) and not np.isnan(bbl) and atr > 0:
-        if close <= bbl or (close - bbl) < 0.3 * atr:
+        if close <= bbl or (close - bbl) < 0.5 * atr:
             call_factors.append(('bb_near_lower', f'Close {close:.5f} near/below BB Lower {bbl:.5f}'))
-        elif close >= bbu or (bbu - close) < 0.3 * atr:
+        elif close >= bbu or (bbu - close) < 0.5 * atr:
             put_factors.append(('bb_near_upper', f'Close {close:.5f} near/above BB Upper {bbu:.5f}'))
 
     # ═══ FACTOR 2: RSI extreme ═══
-    # Broadened: ≤35 oversold, ≥65 overbought (was 25/75 hard, 30/70 soft)
-    if rsi <= 35:
-        call_factors.append(('rsi_oversold', f'RSI {rsi:.1f} ≤ 35'))
-    elif rsi >= 65:
-        put_factors.append(('rsi_overbought', f'RSI {rsi:.1f} ≥ 65'))
+    # Broadened: ≤45 oversold, ≥55 overbought
+    if rsi <= 45:
+        call_factors.append(('rsi_oversold', f'RSI {rsi:.1f} ≤ 45'))
+    elif rsi >= 55:
+        put_factors.append(('rsi_overbought', f'RSI {rsi:.1f} ≥ 55'))
 
     # ═══ FACTOR 3: Stochastic extreme + reversal crossover ═══
     # Broadened: ≤30 oversold, ≥70 overbought (was 20/80 hard, 15/85 soft)
-    if stoch_k <= 30 and stoch_k > prev_stoch_k:
-        call_factors.append(('stoch_bull_cross', f'K {stoch_k:.1f} ≤30 and rising'))
-    elif stoch_k >= 70 and stoch_k < prev_stoch_k:
-        put_factors.append(('stoch_bear_cross', f'K {stoch_k:.1f} ≥70 and falling'))
-    elif stoch_k <= 25:
-        call_factors.append(('stoch_oversold', f'K {stoch_k:.1f} ≤ 25'))
-    elif stoch_k >= 75:
-        put_factors.append(('stoch_overbought', f'K {stoch_k:.1f} ≥ 75'))
+    if stoch_k <= 40 and stoch_k > prev_stoch_k:
+        call_factors.append(('stoch_bull_cross', f'K {stoch_k:.1f} ≤40 and rising'))
+    elif stoch_k >= 60 and stoch_k < prev_stoch_k:
+        put_factors.append(('stoch_bear_cross', f'K {stoch_k:.1f} ≥60 and falling'))
+    elif stoch_k <= 35:
+        call_factors.append(('stoch_oversold', f'K {stoch_k:.1f} ≤ 35'))
+    elif stoch_k >= 65:
+        put_factors.append(('stoch_overbought', f'K {stoch_k:.1f} ≥ 65'))
 
     # ═══ FACTOR 4: Candlestick rejection pattern ═══
     pattern = detect_reversal_candle(last, prev)
@@ -203,19 +203,19 @@ def score_mean_reversion(df: pd.DataFrame, min_factors: int = 5) -> Optional[Dic
 
     # ═══ FACTOR 5: CCI extreme ═══
     # Broadened: ≤-100 oversold, ≥100 overbought (was -150/150 hard, -100/100 soft)
-    if cci <= -100:
-        call_factors.append(('cci_oversold', f'CCI {cci:.0f} ≤ -100'))
-    elif cci >= 100:
-        put_factors.append(('cci_overbought', f'CCI {cci:.0f} ≥ 100'))
+    if cci <= -50:
+        call_factors.append(('cci_oversold', f'CCI {cci:.0f} ≤ -50'))
+    elif cci >= 50:
+        put_factors.append(('cci_overbought', f'CCI {cci:.0f} ≥ 50'))
 
     # ═══ FACTOR 6: Price deviation from EMA21 (stretched) ═══
     # Broadened: ≥1.0 ATR deviation (was 1.5 ATR)
     if atr > 0 and not np.isnan(ema21):
         deviation = close - ema21
         atr_multiple = abs(deviation) / atr
-        if deviation <= -1.0 * atr:
+        if deviation <= -0.5 * atr:
             call_factors.append(('deviation_below_ema', f'{atr_multiple:.2f} ATR below EMA21'))
-        elif deviation >= 1.0 * atr:
+        elif deviation >= 0.5 * atr:
             put_factors.append(('deviation_above_ema', f'{atr_multiple:.2f} ATR above EMA21'))
 
     # ═══ FACTOR 7: Momentum exhaustion (last 3 candles decelerating) ═══
