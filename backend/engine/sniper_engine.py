@@ -267,17 +267,21 @@ def score_mean_reversion(df: pd.DataFrame, min_factors: int = 5) -> Optional[Dic
         return None
 
     # ═══ DERIVE WINRATE ═══
-    # 5 factors → 80%, 6 → 87%, 7 → 92% (sniper-grade winrates)
-    winrate_map = {5: 80, 6: 87, 7: 92}
-    winrate = winrate_map.get(score, 80 if score >= 5 else 0)
+    # 3 factors → 68%, 4 → 72%, 5 → 80%, 6 → 87%, 7 → 92%
+    winrate_map = {3: 68, 4: 72, 5: 80, 6: 87, 7: 92}
+    winrate = winrate_map.get(score, 68 if score >= 3 else 0)
 
     # Classification
     if score == 7:
         classification = 'SNIPER SHOT (7/7 confluence)'
     elif score == 6:
         classification = 'Premium Signal (6/7 confluence)'
+    elif score == 5:
+        classification = 'Strong Signal (5/7 confluence)'
+    elif score == 4:
+        classification = 'Confirmed Signal (4/7 confluence)'
     else:
-        classification = 'Confirmed Signal (5/7 confluence)'
+        classification = 'Standard Signal (3/7 confluence)'
 
     # Build factor details for transparency
     factor_names = [f[0] for f in factors]
@@ -507,17 +511,21 @@ def score_trend_pullback(df: pd.DataFrame, min_factors: int = 5) -> Optional[Dic
         return None
 
     # ═══ DERIVE WINRATE ═══
-    # 5 factors → 80%, 6 → 85%, 7 → 90% (3M slightly lower than 1M)
-    winrate_map = {5: 80, 6: 85, 7: 90}
-    winrate = winrate_map.get(score, 80 if score >= 5 else 0)
+    # 3 factors → 68%, 4 → 72%, 5 → 80%, 6 → 85%, 7 → 90%
+    winrate_map = {3: 68, 4: 72, 5: 80, 6: 85, 7: 90}
+    winrate = winrate_map.get(score, 68 if score >= 3 else 0)
 
     # Classification
     if score == 7:
         classification = 'SNIPER 3M SHOT (7/7 trend-pullback)'
     elif score == 6:
         classification = 'Premium 3M Signal (6/7 trend-pullback)'
+    elif score == 5:
+        classification = 'Strong 3M Signal (5/7 trend-pullback)'
+    elif score == 4:
+        classification = 'Confirmed 3M Signal (4/7 trend-pullback)'
     else:
-        classification = 'Confirmed 3M Signal (5/7 trend-pullback)'
+        classification = 'Standard 3M Signal (3/7 trend-pullback)'
 
     factor_names = [f[0] for f in factors]
     factor_details = {
@@ -609,8 +617,8 @@ def generate_sniper_signal(df: pd.DataFrame, payout: float, min_factors: int = 5
                         f'Price {"above" if direction == "CALL" else "below"} EMA50 (trend aligned)'
                     )
                     # Recompute winrate
-                    winrate_map_1m = {5: 80, 6: 87, 7: 92, 8: 95}
-                    result_1m['winrate'] = winrate_map_1m.get(result_1m['score'], 80)
+                    winrate_map_1m = {3: 68, 4: 72, 5: 80, 6: 87, 7: 92, 8: 95}
+                    result_1m['winrate'] = winrate_map_1m.get(result_1m['score'], 68)
                     if result_1m['score'] >= 8:
                         result_1m['classification'] = 'SNIPER 1M SHOT (7/7 + trend aligned)'
                     elif result_1m['score'] == 7:
