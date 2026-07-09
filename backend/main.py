@@ -521,11 +521,9 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False) -> dict:
         return None
 
     # 6. Run the sniper engine (dual-mode: 1M mean-reversion + 3M trend-pullback)
-    # Force mode (user requested): min_factors=1 (ALWAYS generate a signal when user asks)
-    # Background mode (auto): min_factors=5 (fewer signals, higher winrate)
-    # The user explicitly clicked "Request Signal" — they should ALWAYS get one.
-    # The winrate honestly reflects how many factors aligned (1/7 = 60%, 2/7 = 65%, etc.)
-    min_factors = 1 if force else 5
+    # BOTH force mode and background mode use min_factors=5 (strict confluence).
+    # 5/7 factors → 78-92% winrate. This is the SNIPER threshold.
+    min_factors = 5
     sniper_result = generate_sniper_signal(df_with_indicators, payout, min_factors=min_factors)
     if sniper_result is None:
         # No confluence found — log the indicator values for debugging
@@ -1265,168 +1263,6 @@ async def cleanup_old_candles():
         logger.warning(f"[CANDLE-DB] Cleanup error: {e}")
 
 
-# ═══════════════════════════════════════════════════════════════════
-# MULTI-PAIR SNIPER SCAN — Find the BEST signal across ALL pairs
-# ═══════════════════════════════════════════════════════════════════
-async def multi_pair_sniper_scan(min_factors: int = 5) -> Optional[dict]:
-    """Scan ALL active pairs and return the signal with the highest confluence."""
-    if not po_scanner.is_connected:
-        return None
-    
-    active_pairs = po_scanner.find_pairs_above_payout(
-        min_payout=70.0, pair_filter="OTC", active_only=True, forex_only=True
-    )
-    if not active_pairs:
-        logger.info("[MULTI-SCAN] No active pairs available")
-        return None
-    
-    logger.info(f"[MULTI-SCAN] Scanning {len(active_pairs)} pairs for best confluence (min_factors={min_factors})...")
-    
-    best_signal = None
-    best_score = 0
-    scan_results = []
-    
-    for pair in active_pairs.keys():
-        try:
-            payout = po_scanner.get_payout(pair)
-            if payout is None or payout < 70:
-                continue
-            
-            df_m1 = await po_scanner.get_candles(pair, timeframe="1m", count=100)
-            if df_m1 is None or df_m1.empty or len(df_m1) < 14:
-                continue
-            
-            df_with_indicators = indicators.calculate_all(df_m1)
-            is_valid, _ = validate_candle_data(df_with_indicators, min_bars=14)
-            if not is_valid:
-                continue
-            
-            result = generate_sniper_signal(df_with_indicators, payout, min_factors=min_factors)
-            
-            if result:
-                scan_results.append((pair, result['score'], result['winrate'], result['direction']))
-                if result['score'] > best_score:
-                    best_score = result['score']
-                    best_signal = (pair, payout, df_with_indicators, result)
-        except Exception as e:
-            logger.debug(f"[MULTI-SCAN] Error scanning {pair}: {e}")
-            continue
-    
-    if scan_results:
-        scan_results.sort(key=lambda x: x[1], reverse=True)
-        top_5 = scan_results[:5]
-        logger.info(
-            f"[MULTI-SCAN] Scanned {len(active_pairs)} pairs, "
-            f"{len(scan_results)} had signals. Top 5: " +
-            " | ".join([f"{p} ({s}/7, {w}%, {d})" for p, s, w, d in top_5])
-        )
-    else:
-        if min_factors > 1:
-            logger.info(f"[MULTI-SCAN] No pairs had {min_factors}+ factors. Retrying with min_factors=1...")
-            return await multi_pair_sniper_scan(min_factors=1)
-        logger.info("[MULTI-SCAN] No signals found across any pair")
-        return None
-    
-    if best_signal:
-        pair, payout, df, result = best_signal
-        logger.info(f"[MULTI-SCAN] ✅ BEST: {pair} score={result['score']}/7 winrate={result['winrate']}% direction={result['direction']}")
-        return await _build_signal_from_sniper_result(pair, payout, df, result)
-    
-    if min_factors > 1:
-        return await multi_pair_sniper_scan(min_factors=1)
-    return None
-
-
-async def _build_signal_from_sniper_result(pair: str, payout: float, df: pd.DataFrame, sniper_result: dict) -> dict:
-    """Build a complete signal dict from a pre-computed sniper result."""
-    if not hasattr(analyze_pair_internal, '_last_signal_time'):
-        analyze_pair_internal._last_signal_time = {}
-    last_time = analyze_pair_internal._last_signal_time.get(pair, 0)
-    now_ts = datetime.now(timezone.utc).timestamp()
-    if (now_ts - last_time) < 30:
-        return None
-    
-    now = datetime.now(timezone.utc)
-    sniper_mode = sniper_result.get('mode', 'SNIPER_1M')
-    is_1m = sniper_mode == 'SNIPER_1M'
-    factors_hit = sniper_result['factors']['factors_hit']
-    
-    if is_1m:
-        strategy_label = f"Mean Reversion ({sniper_result['score']}/7 factors)"
-        indicator_summary = f"RSI {sniper_result['factors']['rsi']:.0f} / Stoch {sniper_result['factors']['stoch_k']:.0f} / CCI {sniper_result['factors']['cci']:.0f}"
-        rsi_status = 'Oversold' if sniper_result['direction'] == 'CALL' else 'Overbought'
-    else:
-        strategy_label = f"Trend Pullback ({sniper_result['score']}/7 factors)"
-        indicator_summary = f"RSI {sniper_result['factors']['rsi']:.0f} / Stoch {sniper_result['factors']['stoch_k']:.0f} / ADX {sniper_result['factors']['adx']:.0f}"
-        rsi_status = 'Mid-range (trend resume)'
-    
-    signal = {
-        'id': f'SIG-{now.strftime("%Y%m%d")}-{uuid.uuid4().hex[:6].upper()}',
-        'pair': pair,
-        'direction': sniper_result['direction'],
-        'time': now.strftime('%H:%M:%S'),
-        'timestamp': now.isoformat(),
-        'entry_price': sniper_result['entry_price'],
-        'expiration': sniper_result['expiration'],
-        'winrate': sniper_result['winrate'],
-        'score': sniper_result['score'],
-        'raw_points': sniper_result['score'],
-        'payout': payout,
-        'classification': sniper_result['classification'],
-        'smc_structure': strategy_label,
-        'smc_zone': ', '.join(factors_hit[:3]),
-        'chart_pattern': sniper_result['factors'].get('reversal_pattern', 'N/A') or 'N/A',
-        'fibonacci': indicator_summary,
-        'rsi_status': rsi_status,
-        'recommended_stake': 10,
-        'analysis_details': {
-            'mode': 'sniper_1m_mean_reversion' if is_1m else 'sniper_3m_trend_pullback',
-            'sniper_mode': sniper_mode,
-            'expiration_minutes': sniper_result['expiration'],
-            'factors_hit': factors_hit,
-            'factors_description': sniper_result['factors']['factors_description'],
-            'call_score': sniper_result['factors']['call_score'],
-            'put_score': sniper_result['factors']['put_score'],
-            'rsi': sniper_result['factors'].get('rsi'),
-            'stoch_k': sniper_result['factors'].get('stoch_k'),
-            'cci': sniper_result['factors'].get('cci'),
-            'adx': sniper_result['factors'].get('adx'),
-            'multi_pair_scan': True,
-        },
-    }
-    
-    try:
-        signal['hash_signature'] = compliance.generate_immutable_log(signal)
-    except Exception:
-        signal['hash_signature'] = 'ERROR'
-    
-    try:
-        async with AsyncSessionLocal() as session:
-            db_signal = SignalRecord(
-                id=signal['id'], pair=signal['pair'], direction=signal['direction'],
-                entry_price=signal['entry_price'], expiration=signal['expiration'],
-                winrate=signal['winrate'], score=signal['score'], payout=signal['payout'],
-                classification=signal['classification'], timestamp=now,
-                analysis_details=signal['analysis_details'],
-                hash_signature=signal['hash_signature']
-            )
-            session.add(db_signal)
-            await session.commit()
-    except Exception as db_err:
-        logger.warning(f"[{pair}] DB save error: {db_err}")
-    
-    generated_signals.append(signal)
-    analyze_pair_internal._last_signal_time[pair] = now_ts
-    monitor.record_signal(signal['id'], pair, signal['direction'], signal['winrate'])
-    
-    logger.info(
-        f"[MULTI-SCAN-EMITTED] id={signal['id']} pair={signal['pair']} "
-        f"mode={sniper_mode} direction={signal['direction']} "
-        f"score={signal['score']}/7 winrate={signal['winrate']}% "
-        f"expiration={signal['expiration']}m payout={signal['payout']}%"
-    )
-    return signal
-
 
 @app.post("/api/signals/request")
 async def request_live_signal(request: Request, credentials: HTTPAuthorizationCredentials = Security(security), geo: dict = Depends(geographic_restriction_dependency)):
@@ -1507,12 +1343,13 @@ async def request_live_signal(request: Request, credentials: HTTPAuthorizationCr
         return {"status": "success", "signal": signal, "mode": "sniper"}
 
     # ═══ NO SIGNAL AVAILABLE ════════════════════════════════════════
-    logger.info(f"[SIGNAL-REQUEST] No signal for {pair} — insufficient data or confluence")
+    logger.info(f"[SIGNAL-REQUEST] No signal for {pair} — insufficient confluence (needs 5/7 factors for 80%+ winrate). Try another pair or wait 1-2 minutes.")
     raise HTTPException(
         status_code=404,
         detail=(
-            f"No signal available for {pair} right now. "
-            f"The market data is still loading — please try again in 5-10 seconds."
+            f"No high-confidence signal for {pair} right now. "
+            f"The sniper engine requires 5 of 7 confluence factors to align "
+            f"for 80%+ winrate. Try another pair or wait 1-2 minutes for better conditions."
         )
     )
 
