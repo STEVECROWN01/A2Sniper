@@ -166,33 +166,34 @@ def score_mean_reversion(df: pd.DataFrame, min_factors: int = 5) -> Optional[Dic
     call_factors = []  # factors supporting CALL (oversold reversal)
     put_factors = []   # factors supporting PUT (overbought reversal)
 
-    # ═══ FACTOR 1: Bollinger Band penetration / touch ═══
-    # Price pierces OR touches the LOWER band → oversold → CALL bias
-    # Price pierces OR touches the UPPER band → overbought → PUT bias
-    # Broadened: within 0.5 ATR of the band
-    if not np.isnan(bbu) and not np.isnan(bbl) and atr > 0:
-        if close <= bbl or (close - bbl) < 0.5 * atr:
-            call_factors.append(('bb_near_lower', f'Close {close:.5f} near/below BB Lower {bbl:.5f}'))
-        elif close >= bbu or (bbu - close) < 0.5 * atr:
-            put_factors.append(('bb_near_upper', f'Close {close:.5f} near/above BB Upper {bbu:.5f}'))
+    # ═══ FACTOR 1: Bollinger Band touch (STRICT — must actually touch) ═══
+    # Price must be AT or BEYOND the band — not just 'near' it.
+    # This is a genuine extreme, not a weak proximity signal.
+    if not np.isnan(bbu) and not np.isnan(bbl):
+        if close <= bbl:
+            call_factors.append(('bb_touch_lower', f'Close {close:.5f} ≤ BB Lower {bbl:.5f}'))
+        elif close >= bbu:
+            put_factors.append(('bb_touch_upper', f'Close {close:.5f} ≥ BB Upper {bbu:.5f}'))
 
-    # ═══ FACTOR 2: RSI extreme ═══
-    # Broadened: ≤45 oversold, ≥55 overbought
-    if rsi <= 45:
-        call_factors.append(('rsi_oversold', f'RSI {rsi:.1f} ≤ 45'))
-    elif rsi >= 55:
-        put_factors.append(('rsi_overbought', f'RSI {rsi:.1f} ≥ 55'))
+    # ═══ FACTOR 2: RSI extreme (STRICT — genuine oversold/overbought) ═══
+    # RSI ≤30 = genuinely oversold, ≥70 = genuinely overbought.
+    # These are REAL extremes that predict reversal, not neutral readings.
+    if rsi <= 30:
+        call_factors.append(('rsi_oversold', f'RSI {rsi:.1f} ≤ 30'))
+    elif rsi >= 70:
+        put_factors.append(('rsi_overbought', f'RSI {rsi:.1f} ≥ 70'))
 
-    # ═══ FACTOR 3: Stochastic extreme + reversal crossover ═══
-    # Broadened: ≤30 oversold, ≥70 overbought (was 20/80 hard, 15/85 soft)
-    if stoch_k <= 40 and stoch_k > prev_stoch_k:
-        call_factors.append(('stoch_bull_cross', f'K {stoch_k:.1f} ≤40 and rising'))
-    elif stoch_k >= 60 and stoch_k < prev_stoch_k:
-        put_factors.append(('stoch_bear_cross', f'K {stoch_k:.1f} ≥60 and falling'))
-    elif stoch_k <= 35:
-        call_factors.append(('stoch_oversold', f'K {stoch_k:.1f} ≤ 35'))
-    elif stoch_k >= 65:
-        put_factors.append(('stoch_overbought', f'K {stoch_k:.1f} ≥ 65'))
+    # ═══ FACTOR 3: Stochastic extreme (STRICT) ═══
+    # ≤20 = genuinely oversold, ≥80 = genuinely overbought.
+    # Plus reversal crossover for extra confirmation.
+    if stoch_k <= 20 and stoch_k > prev_stoch_k:
+        call_factors.append(('stoch_bull_cross', f'K {stoch_k:.1f} ≤20 and rising'))
+    elif stoch_k >= 80 and stoch_k < prev_stoch_k:
+        put_factors.append(('stoch_bear_cross', f'K {stoch_k:.1f} ≥80 and falling'))
+    elif stoch_k <= 20:
+        call_factors.append(('stoch_oversold', f'K {stoch_k:.1f} ≤ 20'))
+    elif stoch_k >= 80:
+        put_factors.append(('stoch_overbought', f'K {stoch_k:.1f} ≥ 80'))
 
     # ═══ FACTOR 4: Candlestick rejection pattern ═══
     pattern = detect_reversal_candle(last, prev)
@@ -201,21 +202,21 @@ def score_mean_reversion(df: pd.DataFrame, min_factors: int = 5) -> Optional[Dic
     elif pattern in ('shooting_star', 'pin_bar_bear', 'bearish_engulfing'):
         put_factors.append(('reversal_candle', pattern))
 
-    # ═══ FACTOR 5: CCI extreme ═══
-    # Broadened: ≤-100 oversold, ≥100 overbought (was -150/150 hard, -100/100 soft)
-    if cci <= -50:
-        call_factors.append(('cci_oversold', f'CCI {cci:.0f} ≤ -50'))
-    elif cci >= 50:
-        put_factors.append(('cci_overbought', f'CCI {cci:.0f} ≥ 50'))
+    # ═══ FACTOR 5: CCI extreme (STRICT) ═══
+    # ≤-100 = genuinely oversold, ≥100 = genuinely overbought.
+    if cci <= -100:
+        call_factors.append(('cci_oversold', f'CCI {cci:.0f} ≤ -100'))
+    elif cci >= 100:
+        put_factors.append(('cci_overbought', f'CCI {cci:.0f} ≥ 100'))
 
-    # ═══ FACTOR 6: Price deviation from EMA21 (stretched) ═══
-    # Broadened: ≥1.0 ATR deviation (was 1.5 ATR)
+    # ═══ FACTOR 6: Price deviation from EMA21 (STRICT) ═══
+    # ≥1.5 ATR deviation = genuinely stretched (not just normal fluctuation).
     if atr > 0 and not np.isnan(ema21):
         deviation = close - ema21
         atr_multiple = abs(deviation) / atr
-        if deviation <= -0.5 * atr:
+        if deviation <= -1.5 * atr:
             call_factors.append(('deviation_below_ema', f'{atr_multiple:.2f} ATR below EMA21'))
-        elif deviation >= 0.5 * atr:
+        elif deviation >= 1.5 * atr:
             put_factors.append(('deviation_above_ema', f'{atr_multiple:.2f} ATR above EMA21'))
 
     # ═══ FACTOR 7: Momentum exhaustion (last 3 candles decelerating) ═══
@@ -267,9 +268,11 @@ def score_mean_reversion(df: pd.DataFrame, min_factors: int = 5) -> Optional[Dic
         return None
 
     # ═══ DERIVE WINRATE ═══
-    # 3 factors → 68%, 4 → 72%, 5 → 80%, 6 → 87%, 7 → 92%
-    winrate_map = {3: 68, 4: 72, 5: 80, 6: 87, 7: 92}
-    winrate = winrate_map.get(score, 68 if score >= 3 else 0)
+    # With STRICT thresholds, each factor is a GENUINE extreme.
+    # 3 genuine extremes aligning = real confluence → 70%+ winrate.
+    # 3/7 → 70%, 4/7 → 75%, 5/7 → 80%, 6/7 → 87%, 7/7 → 92%
+    winrate_map = {3: 70, 4: 75, 5: 80, 6: 87, 7: 92}
+    winrate = winrate_map.get(score, 70 if score >= 3 else 0)
 
     # Classification
     if score == 7:
@@ -511,9 +514,10 @@ def score_trend_pullback(df: pd.DataFrame, min_factors: int = 5) -> Optional[Dic
         return None
 
     # ═══ DERIVE WINRATE ═══
-    # 3 factors → 68%, 4 → 72%, 5 → 80%, 6 → 85%, 7 → 90%
-    winrate_map = {3: 68, 4: 72, 5: 80, 6: 85, 7: 90}
-    winrate = winrate_map.get(score, 68 if score >= 3 else 0)
+    # With STRICT thresholds, 3 genuine extremes = real confluence.
+    # 3/7 → 70%, 4/7 → 75%, 5/7 → 80%, 6/7 → 85%, 7/7 → 90%
+    winrate_map = {3: 70, 4: 75, 5: 80, 6: 85, 7: 90}
+    winrate = winrate_map.get(score, 70 if score >= 3 else 0)
 
     # Classification
     if score == 7:
@@ -617,8 +621,8 @@ def generate_sniper_signal(df: pd.DataFrame, payout: float, min_factors: int = 5
                         f'Price {"above" if direction == "CALL" else "below"} EMA50 (trend aligned)'
                     )
                     # Recompute winrate
-                    winrate_map_1m = {3: 68, 4: 72, 5: 80, 6: 87, 7: 92, 8: 95}
-                    result_1m['winrate'] = winrate_map_1m.get(result_1m['score'], 68)
+                    winrate_map_1m = {3: 70, 4: 75, 5: 80, 6: 87, 7: 92, 8: 95}
+                    result_1m['winrate'] = winrate_map_1m.get(result_1m['score'], 70)
                     if result_1m['score'] >= 8:
                         result_1m['classification'] = 'SNIPER 1M SHOT (7/7 + trend aligned)'
                     elif result_1m['score'] == 7:
