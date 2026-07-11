@@ -116,14 +116,14 @@ def detect_reversal_candle(row: pd.Series, prev_row: pd.Series) -> Optional[str]
 # 7-FACTOR CONFLUENCE SCORING
 # ═══════════════════════════════════════════════════════════════════
 
-def score_mean_reversion(df: pd.DataFrame, min_factors: int = 5) -> Optional[Dict[str, Any]]:
+def score_mean_reversion(df: pd.DataFrame, min_factors: int = 4) -> Optional[Dict[str, Any]]:
     """
     Evaluate the last candle in df against 7 mean-reversion factors.
 
     Args:
         df: DataFrame with OHLCV + indicators
-        min_factors: Minimum number of confirming factors (default 5 = sniper grade).
-                     5/7 → 80% winrate, 6/7 → 87%, 7/7 → 92%.
+        min_factors: Minimum number of confirming factors (default 4 = sniper grade).
+                     4/7 → 75% winrate, 5/7 → 80%, 6/7 → 87%, 7/7 → 92%.
 
     Returns a dict with:
       - 'direction': 'CALL' or 'PUT' or None (no signal)
@@ -298,10 +298,10 @@ def score_mean_reversion(df: pd.DataFrame, min_factors: int = 5) -> Optional[Dic
 
     # ═══ DERIVE WINRATE ═══
     # With STRICT thresholds, each factor is a GENUINE extreme.
-    # 3 genuine extremes aligning = real confluence → 70%+ winrate.
-    # 3/7 → 70%, 4/7 → 75%, 5/7 → 80%, 6/7 → 87%, 7/7 → 92%
-    winrate_map = {3: 70, 4: 75, 5: 80, 6: 87, 7: 92}
-    winrate = winrate_map.get(score, 70 if score >= 3 else 0)
+    # 4 genuine extremes aligning = real confluence → 75%+ winrate.
+    # 4/7 → 75%, 5/7 → 80%, 6/7 → 87%, 7/7 → 92%
+    winrate_map = {4: 75, 5: 80, 6: 87, 7: 92}
+    winrate = winrate_map.get(score, 75 if score >= 4 else 0)
 
     # Classification
     if score == 7:
@@ -313,7 +313,7 @@ def score_mean_reversion(df: pd.DataFrame, min_factors: int = 5) -> Optional[Dic
     elif score == 4:
         classification = 'Confirmed Signal (4/7 confluence)'
     else:
-        classification = 'Standard Signal (3/7 confluence)'
+        classification = 'Confirmed Signal (4/7 confluence)'
 
     # Build factor details for transparency
     factor_names = [f[0] for f in factors]
@@ -404,13 +404,13 @@ def validate_candle_data(df: pd.DataFrame, min_bars: int = 14) -> Tuple[bool, st
 #   6. Volume confirmation (pullback volume < trend average)
 #   7. ADX trend strength (ADX > 25)
 
-def score_trend_pullback(df: pd.DataFrame, min_factors: int = 5) -> Optional[Dict[str, Any]]:
+def score_trend_pullback(df: pd.DataFrame, min_factors: int = 4) -> Optional[Dict[str, Any]]:
     """
     Evaluate the last candle for a trend-pullback setup (3-minute expiration).
 
     Args:
         df: DataFrame with OHLCV + indicators
-        min_factors: Minimum number of confirming factors (default 5 = sniper grade).
+        min_factors: Minimum number of confirming factors (default 4 = sniper grade).
 
     Returns a dict with direction, score, winrate, etc. — or None if no setup.
     Requires 50+ candles for EMA50/EMA200 + ADX.
@@ -544,10 +544,10 @@ def score_trend_pullback(df: pd.DataFrame, min_factors: int = 5) -> Optional[Dic
         return None
 
     # ═══ DERIVE WINRATE ═══
-    # With STRICT thresholds, 3 genuine extremes = real confluence.
-    # 3/7 → 70%, 4/7 → 75%, 5/7 → 80%, 6/7 → 85%, 7/7 → 90%
-    winrate_map = {3: 70, 4: 75, 5: 80, 6: 85, 7: 90}
-    winrate = winrate_map.get(score, 70 if score >= 3 else 0)
+    # With STRICT thresholds, 4 genuine extremes = real confluence.
+    # 4/7 → 75%, 5/7 → 80%, 6/7 → 85%, 7/7 → 90%
+    winrate_map = {4: 75, 5: 80, 6: 85, 7: 90}
+    winrate = winrate_map.get(score, 75 if score >= 4 else 0)
 
     # Classification
     if score == 7:
@@ -559,7 +559,7 @@ def score_trend_pullback(df: pd.DataFrame, min_factors: int = 5) -> Optional[Dic
     elif score == 4:
         classification = 'Confirmed 3M Signal (4/7 trend-pullback)'
     else:
-        classification = 'Standard 3M Signal (3/7 trend-pullback)'
+        classification = 'Confirmed 3M Signal (4/7 trend-pullback)'
 
     factor_names = [f[0] for f in factors]
     factor_details = {
@@ -598,7 +598,7 @@ def score_trend_pullback(df: pd.DataFrame, min_factors: int = 5) -> Optional[Dic
 # MAIN ENTRY POINT — DUAL-MODE SNIPER ENGINE
 # ═══════════════════════════════════════════════════════════════════
 
-def generate_sniper_signal(df: pd.DataFrame, payout: float, min_factors: int = 5) -> Optional[Dict[str, Any]]:
+def generate_sniper_signal(df: pd.DataFrame, payout: float, min_factors: int = 4) -> Optional[Dict[str, Any]]:
     """
     Generate a sniper signal using DUAL-MODE detection.
 
@@ -652,8 +652,8 @@ def generate_sniper_signal(df: pd.DataFrame, payout: float, min_factors: int = 5
                         f'Price {"above" if direction == "CALL" else "below"} EMA50 (trend aligned)'
                     )
                     # Recompute winrate
-                    winrate_map_1m = {3: 70, 4: 75, 5: 80, 6: 87, 7: 92, 8: 95}
-                    result_1m['winrate'] = winrate_map_1m.get(result_1m['score'], 70)
+                    winrate_map_1m = {4: 75, 5: 80, 6: 87, 7: 92, 8: 95}
+                    result_1m['winrate'] = winrate_map_1m.get(result_1m['score'], 75)
                     if result_1m['score'] >= 8:
                         result_1m['classification'] = 'SNIPER 1M SHOT (7/7 + trend aligned)'
                     elif result_1m['score'] == 7:

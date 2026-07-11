@@ -521,14 +521,13 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False) -> dict:
         return None
 
     # 6. Run the sniper engine (dual-mode: 1M mean-reversion + 3M trend-pullback)
-    # min_factors=3 for BOTH modes. The broadened factor thresholds (RSI ≤35,
-    # Stoch ≤30, CCI ≤-100, BB touch, 1.0 ATR deviation) ensure that even 3/7
-    # factors represents genuine confluence at an extreme condition.
+    # min_factors=4 for BOTH modes. With STRICT thresholds (RSI ≤30, Stoch ≤20,
+    # CCI ≤-100, BB touch, 1.5 ATR deviation), 4/7 factors = genuine confluence.
+    # Plus ADX ≤ 30 trend filter (no signals in trending markets).
+    # Plus at least 1 STRONG factor required (RSI/Stoch/BB/CCI).
     #
-    # Winrate: 3/7 → 68%, 4/7 → 72%, 5/7 → 80%, 6/7 → 87%, 7/7 → 92%
-    # Average expected: ~72-78% (most signals 3-4/7, some 5-6/7)
-    # This is realistic and profitable with 80-92% PO payout.
-    min_factors = 3
+    # Winrate: 4/7 → 75%, 5/7 → 80%, 6/7 → 87%, 7/7 → 92%
+    min_factors = 4
     sniper_result = generate_sniper_signal(df_with_indicators, payout, min_factors=min_factors)
     if sniper_result is None:
         # No confluence found — log the indicator values for debugging
