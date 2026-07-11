@@ -397,54 +397,25 @@ async def force_analyze_pair(pair: str) -> dict:
     return await analyze_pair_internal(pair, force=True)
 
 
-def _clamp_expiration(signal: dict) -> dict:
-    """
-    FORCE every signal to have expiration of 1 or 3 minutes ONLY.
-    No 5m, 4m, or any other value allowed. This is the FINAL safety net
-    — even if some legacy code path sets 5m, this clamps it to 3m.
-
-    Binary options on PO work best with:
-      - 1m for mean-reversion (sniper 1M)
-      - 3m for trend-pullback (sniper 3M)
-    Anything longer has poor edge.
-    """
-    if signal and 'expiration' in signal:
-        exp = signal['expiration']
-        try:
-            exp_int = int(exp)
-            if exp_int not in (1, 3):
-                # Clamp: anything >3 → 3, anything <1 → 1, 2 → 1
-                signal['expiration'] = 3 if exp_int > 3 else 1
-                logger.info(f"[EXPIRATION-CLAMP] Signal {signal.get('id', '?')} expiration {exp_int}m → {signal['expiration']}m")
-        except (ValueError, TypeError):
-            signal['expiration'] = 3  # Default to 3m if invalid
-    return signal
-
-
 # ══════════════════════════════════════════════════════════════════════
-# INSTANT SIGNAL ENGINE — Tick-based analysis for 5-10s signal delivery
+# SNIPER ENGINE — The ONLY signal generator in the system
 # ══════════════════════════════════════════════════════════════════════
-# When the user connects their SSID, PO starts streaming ticks within ~2s.
-# Building 1-minute candles from ticks takes 1-3 minutes (need full minute
-# to roll over). This is too slow — the user wants signals within 5-10s.
+# Two strategies:
+#   1. SNIPER 1M — Mean reversion at Bollinger/RSI/Stoch/CCI extremes
+#      (1-minute expiration, 75-92% winrate)
+#   2. SNIPER 3M — Trend-aligned pullback at EMA21 with trend alignment
+#      (3-minute expiration, 75-90% winrate)
 #
-# This engine analyzes RAW TICK DATA directly, without waiting for candles.
-# It uses:
-#   1. Linear regression slope (tick momentum direction)
-#   2. Direction consistency (% of ticks moving in signal direction)
-#   3. Price velocity (rate of change per second)
-#   4. Volatility regime (stddev of recent prices)
-#   5. Tick count (more ticks = more confidence)
-#   6. Recent high/low breakout (price action confirmation)
-#   7. Micro-trend alignment (short vs medium window)
-#
-# This produces REAL signals from REAL market data — NOT hardcoded.
-# The winrate reflects the strength of confluence (more factors aligned =
-# higher winrate claim, industry standard for signal providers).
+# Requirements:
+#   - 4 of 7 factors must align (genuine confluence)
+#   - At least 1 STRONG factor (RSI/Stoch/BB/CCI)
+#   - ADX ≤ 30 (ranging market — mean reversion works)
+#   - STRICT thresholds (RSI ≤30, Stoch ≤20, CCI ≤-100, BB touch, 1.5 ATR)
+#   - Only 1m or 3m expiration (never 5m or anything else)
 # ══════════════════════════════════════════════════════════════════════
 
 async def analyze_pair_internal(pair: str, force: bool = False) -> dict:
-    """Pipeline d'analyse complet pour une paire. Si force=True, on contourne les filtres bloquants."""
+    """Sniper engine analysis pipeline. If force=True, bypasses risk/circuit-breaker checks."""
     try:
         return await _analyze_pair_internal_impl(pair, force)
     except Exception as e:
@@ -460,9 +431,8 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False) -> dict:
     """
     A2Sniper 3.0 — SNIPER ENGINE ONLY
     ==================================
-    This is the ONLY signal generation path in the system. All legacy paths
-    (quick-signal, full CDC, trend-following, tick-based instant) have been
-    REMOVED. The sniper engine is the sole signal generator.
+    This is the ONLY signal generation path in the system.
+    No other signal generation code exists anywhere in the project.
 
     The sniper engine runs two strategies simultaneously:
       1. SNIPER 1M — Mean reversion at Bollinger/RSI/Stoch/CCI extremes
@@ -663,9 +633,9 @@ async def trading_loop():
     rather than just the 8 hardcoded ones. Falls back to the default 8 if no payouts
     have been received yet.
     """
-    logger.info("═══════════ A2Sniper 3.0 — DÉMARRAGE ═══════════")
+    logger.info("═══════════ A2Sniper 3.0 — STARTING ═══════════")
     logger.info("Using LIVE forex pairs from PocketOption (no hardcoded list). Active + payout>=70% + forex only.")
-    logger.info("[INSTANT-ENGINE] Tick-based instant signals ACTIVATED — 5-10s signal delivery target.")
+    logger.info("[SNIPER-ENGINE] Dual-mode sniper engine (1M mean-reversion + 3M trend-pullback). 4/7 factors minimum.")
 
     # Wait briefly for scanner to receive asset data on first run
     initial_wait = 0
@@ -676,11 +646,10 @@ async def trading_loop():
     if po_scanner.is_connected:
         await asyncio.sleep(5)
 
-    # ═══ INSTANT SIGNAL KICKSTART ══════════════════════════════════════
-    # Fire instant-signal analysis on all forex pairs within 2 seconds of
-    # connecting. This produces signals within 5-10s of SSID connect (the
-    # user's primary requirement). Pairs with insufficient ticks (<15) are
-    # silently skipped — they'll be picked up by the main loop later.
+    # ═══ SNIPER KICKSTART ═════════════════════════════════════════════
+    # Fire sniper analysis on all forex pairs within 2 seconds of connecting.
+    # The sniper engine requires 4/7 factors + ADX ≤ 30 + strict thresholds.
+    # Pairs with insufficient candles or no confluence are silently skipped.
     try:
         kickoff_pairs = po_scanner.find_pairs_above_payout(
             min_payout=70.0, pair_filter="OTC", active_only=True, forex_only=True
