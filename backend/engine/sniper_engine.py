@@ -158,6 +158,22 @@ def score_mean_reversion(df: pd.DataFrame, min_factors: int = 5) -> Optional[Dic
     cci = float(last.get('CCI_20', 0)) if 'CCI_20' in df.columns else 0
     ema21 = float(last.get('EMA_21', close)) if 'EMA_21' in df.columns else close
     atr = float(last.get('ATRr_14', 0)) if 'ATRr_14' in df.columns else 0
+    adx = float(last.get('ADX_14', 25)) if 'ADX_14' in df.columns else 25
+
+    # ─── TREND FILTER (CRITICAL) ────────────────────────────────────
+    # Mean reversion ONLY works in ranging markets. In trending markets,
+    # price touches Bollinger Band and KEEPS GOING — causing losses.
+    # ADX > 25 = strong trend → REJECT signal (mean reversion will fail)
+    # ADX ≤ 25 = ranging market → mean reversion works → ALLOW signal
+    #
+    # This is the single most important filter. It prevents the 10%
+    # winrate sessions that happen when the market is trending hard.
+    if adx > 30:
+        logger.info(
+            f"[SNIPER-1M] REJECTED by trend filter: ADX={adx:.1f} > 30 "
+            f"(strong trend — mean reversion will fail). RSI={rsi:.1f}"
+        )
+        return None
 
     # Previous stoch for crossover detection
     prev_stoch_k = float(prev.get('STOCH_K', 50)) if prev is not None and 'STOCH_K' in df.columns else 50
@@ -249,17 +265,30 @@ def score_mean_reversion(df: pd.DataFrame, min_factors: int = 5) -> Optional[Dic
     # Log the factor scores for debugging
     logger.info(
         f"[SNIPER-1M-SCORE] call={call_score}/7 put={put_score}/7 min_required={min_factors} "
-        f"rsi={rsi:.1f} stoch={stoch_k:.1f} cci={cci:.0f} "
+        f"rsi={rsi:.1f} stoch={stoch_k:.1f} cci={cci:.0f} adx={adx:.1f} "
         f"call_factors={[f[0] for f in call_factors]} put_factors={[f[0] for f in put_factors]}"
     )
 
-    # Minimum factors for a valid signal. Default is 3 (broadened from 5).
+    # ═══ STRONG FACTOR REQUIREMENT ═════════════════════════════════
+    # Require at least ONE strong factor (RSI, Stoch, BB, or CCI) to be
+    # present. This prevents signals that only have weak factors (momentum
+    # exhaustion + candlestick + EMA deviation) which have low predictive
+    # value. The strong factors are the ones that measure genuine extremes.
+    STRONG_FACTORS = {'rsi_oversold', 'rsi_overbought', 'stoch_bull_cross',
+                      'stoch_bear_cross', 'stoch_oversold', 'stoch_overbought',
+                      'bb_touch_lower', 'bb_touch_upper',
+                      'cci_oversold', 'cci_overbought'}
+
+    chosen_factors = call_factors if call_score > put_score else put_factors
+    has_strong_factor = any(f[0] in STRONG_FACTORS for f in chosen_factors)
+
+    # Minimum factors for a valid signal.
     MIN_FACTORS = min_factors
-    if call_score >= MIN_FACTORS and call_score > put_score:
+    if call_score >= MIN_FACTORS and call_score > put_score and has_strong_factor:
         direction = 'CALL'
         factors = call_factors
         score = call_score
-    elif put_score >= MIN_FACTORS and put_score > call_score:
+    elif put_score >= MIN_FACTORS and put_score > call_score and has_strong_factor:
         direction = 'PUT'
         factors = put_factors
         score = put_score
@@ -298,6 +327,7 @@ def score_mean_reversion(df: pd.DataFrame, min_factors: int = 5) -> Optional[Dic
         'cci': cci,
         'bb_position': 'lower' if close <= bbl else 'upper' if close >= bbu else 'middle' if not np.isnan(bbm) else 'unknown',
         'atr': atr,
+        'adx': adx,
         'ema21_deviation_atr': abs(close - ema21) / atr if atr > 0 and not np.isnan(ema21) else 0,
         'reversal_pattern': pattern,
     }
@@ -541,6 +571,7 @@ def score_trend_pullback(df: pd.DataFrame, min_factors: int = 5) -> Optional[Dic
         'stoch_k': stoch_k,
         'adx': adx,
         'atr': atr,
+        'adx': adx,
         'ema50': ema50,
         'ema200': ema200,
         'ema21': ema21,
