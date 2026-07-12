@@ -50,6 +50,8 @@ engine = create_async_engine(
     pool_pre_ping=True if _is_pg else False,
     pool_size=5 if _is_pg else 5,
     max_overflow=10 if _is_pg else 0,
+    pool_recycle=300,  # Recycle connections every 5 minutes
+    pool_timeout=30,   # Wait 30s for a connection before giving up
 )
 AsyncSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 Base = declarative_base()

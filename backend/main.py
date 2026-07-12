@@ -2008,6 +2008,21 @@ async def auth_google(request: Request):
     if not email:
         raise HTTPException(status_code=400, detail="Email not provided by Google")
         
+    # Retry database connection up to 3 times (handles PostgreSQL recovery mode)
+    user = None
+    for attempt in range(3):
+        try:
+            async with AsyncSessionLocal() as session:
+                result = await session.execute(select(User).where(User.email == email))
+                user = result.scalar_one_or_none()
+                break
+        except Exception as db_conn_err:
+            if attempt < 2:
+                logger.warning(f"[Google Auth] DB connection attempt {attempt+1}/3 failed: {db_conn_err} — retrying in 2s...")
+                await asyncio.sleep(2)
+            else:
+                raise HTTPException(status_code=500, detail=f"Database temporarily unavailable (recovery mode). Please try again in 30 seconds.")
+
     try:
         async with AsyncSessionLocal() as session:
             result = await session.execute(select(User).where(User.email == email))
