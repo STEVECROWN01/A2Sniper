@@ -986,16 +986,22 @@ async def _load_candles_background():
 async def _startup_background_tasks():
     """Run ALL heavy startup tasks in background (non-blocking).
     This includes init_db — the server starts before DB is ready."""
-    await asyncio.sleep(2)  # Wait for server to start
+    await asyncio.sleep(5)  # Wait 5s for server to start
     
-    # 0. Initialize database (create tables, run migrations)
-    try:
-        await asyncio.wait_for(init_db(), timeout=120.0)
-        logger.info("[STARTUP] ✅ Database initialized (tables created/migrated)")
-    except asyncio.TimeoutError:
-        logger.error("[STARTUP] DB init timed out after 120s. Continuing without DB init.")
-    except Exception as e:
-        logger.error(f"[STARTUP] DB init failed: {e}. Continuing without DB tables.")
+    # 0. Initialize database — retry up to 10 times with 10s delay
+    # PostgreSQL may be in "recovery mode" after Railway redeploys
+    for db_attempt in range(10):
+        try:
+            await asyncio.wait_for(init_db(), timeout=60.0)
+            logger.info(f"[STARTUP] ✅ Database initialized (attempt {db_attempt+1}/10)")
+            break
+        except Exception as e:
+            logger.warning(f"[STARTUP] DB init attempt {db_attempt+1}/10 failed: {e}")
+            if db_attempt < 9:
+                logger.info(f"[STARTUP] Waiting 10s before retry...")
+                await asyncio.sleep(10)
+            else:
+                logger.error("[STARTUP] All 10 DB init attempts failed. Continuing without DB.")
     
     # 1. Load historical signals into monitoring
     try:
