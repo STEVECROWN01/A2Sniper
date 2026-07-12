@@ -35,6 +35,7 @@ from engine.pocket_option_scanner import PocketOptionScanner
 from engine.monitoring_engine import MonitoringEngine
 from engine.risk_manager import RiskManager
 from engine.sniper_engine import generate_sniper_signal, validate_candle_data
+from engine.momentum_engine import generate_momentum_signal, validate_momentum_data
 from neural_models.voting import VotingClassifierModel
 from engine.compliance import ComplianceManager, geographic_restriction_dependency
 from bot.telegram_bot import TelegramSignalBot
@@ -88,6 +89,13 @@ logger.addHandler(_db_log_handler)
 
 indicators = TechnicalIndicators()
 compliance = ComplianceManager()
+
+# ═══ SIGNAL ENGINE TOGGLE ═════════════════════════════════════════
+# Controls which signal generation engine is active.
+# "momentum" = Momentum Continuation Engine (new — for testing)
+# "sniper"   = 7-Factor Mean Reversion Engine (original)
+# Change this to switch engines without modifying signal generation code.
+SIGNAL_ENGINE = "momentum"  # Currently testing momentum engine
 risk_mgr = RiskManager()
 monitor = MonitoringEngine()
 voting_model = VotingClassifierModel()
@@ -498,23 +506,38 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False) -> dict:
     #
     # Winrate: 4/7 → 75%, 5/7 → 80%, 6/7 → 87%, 7/7 → 92%
     min_factors = 4
-    sniper_result = generate_sniper_signal(df_with_indicators, payout, min_factors=min_factors)
-    if sniper_result is None:
-        # No confluence found — log the indicator values for debugging
-        last_row = df_with_indicators.iloc[-1]
-        rsi_val = float(last_row.get('RSI_14', 50)) if 'RSI_14' in df_with_indicators.columns else 50
-        stoch_val = float(last_row.get('STOCH_K', 50)) if 'STOCH_K' in df_with_indicators.columns else 50
-        cci_val = float(last_row.get('CCI_20', 0)) if 'CCI_20' in df_with_indicators.columns else 0
-        bbu_val = float(last_row.get('BBU_20_2.0', 0)) if 'BBU_20_2.0' in df_with_indicators.columns else 0
-        bbl_val = float(last_row.get('BBL_20_2.0', 0)) if 'BBL_20_2.0' in df_with_indicators.columns else 0
-        close_val = float(last_row['close'])
-        logger.info(
-            f"[{pair}] No sniper signal — insufficient confluence (<{min_factors} factors, force={force}). "
-            f"Indicators: RSI={rsi_val:.1f}, Stoch={stoch_val:.1f}, CCI={cci_val:.0f}, "
-            f"Close={close_val:.5f}, BB_Lower={bbl_val:.5f}, BB_Upper={bbu_val:.5f}, "
-            f"candles={len(df_with_indicators)}"
-        )
-        return None
+
+    # ═══ ENGINE TOGGLE ═════════════════════════════════════════════
+    # Uses SIGNAL_ENGINE global to select which engine to run.
+    # "momentum" = Momentum Continuation (new — for testing)
+    # "sniper"   = 7-Factor Mean Reversion (original)
+    if SIGNAL_ENGINE == "momentum":
+        engine_result = generate_momentum_signal(df_with_indicators, payout, min_factors=min_factors)
+        if engine_result is None:
+            last_row = df_with_indicators.iloc[-1]
+            rsi_val = float(last_row.get('RSI_14', 50)) if 'RSI_14' in df_with_indicators.columns else 50
+            adx_val = float(last_row.get('ADX_14', 0)) if 'ADX_14' in df_with_indicators.columns else 0
+            logger.info(
+                f"[{pair}] No momentum signal — insufficient confluence (<{min_factors} factors, force={force}). "
+                f"RSI={rsi_val:.1f}, ADX={adx_val:.1f}, candles={len(df_with_indicators)}"
+            )
+            return None
+    else:
+        engine_result = generate_sniper_signal(df_with_indicators, payout, min_factors=min_factors)
+        if engine_result is None:
+            last_row = df_with_indicators.iloc[-1]
+            rsi_val = float(last_row.get('RSI_14', 50)) if 'RSI_14' in df_with_indicators.columns else 50
+            stoch_val = float(last_row.get('STOCH_K', 50)) if 'STOCH_K' in df_with_indicators.columns else 50
+            cci_val = float(last_row.get('CCI_20', 0)) if 'CCI_20' in df_with_indicators.columns else 0
+            logger.info(
+                f"[{pair}] No sniper signal — insufficient confluence (<{min_factors} factors, force={force}). "
+                f"RSI={rsi_val:.1f}, Stoch={stoch_val:.1f}, CCI={cci_val:.0f}, "
+                f"candles={len(df_with_indicators)}"
+            )
+            return None
+
+    # Use the result from whichever engine ran
+    sniper_result = engine_result
 
     # 7. Risk check (skip in force mode — user explicitly requested)
     if not force:
@@ -537,13 +560,17 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False) -> dict:
         logger.debug(f"[{pair}] Sniper signal skipped — duplicate within 60s window")
         return None
 
-    # 9. Build the signal dict from sniper result
+    # 9. Build the signal dict from engine result
     now = datetime.now(timezone.utc)
-    sniper_mode = sniper_result.get('mode', 'SNIPER_1M')
-    is_1m = sniper_mode == 'SNIPER_1M'
+    engine_mode = sniper_result.get('mode', 'SNIPER_1M')
+    is_momentum = engine_mode == 'MOMENTUM_1M'
     factors_hit = sniper_result['factors']['factors_hit']
 
-    if is_1m:
+    if is_momentum:
+        strategy_label = f"Momentum Continuation ({sniper_result['score']}/7 factors)"
+        indicator_summary = f"RSI {sniper_result['factors']['rsi']:.0f} / ADX {sniper_result['factors']['adx']:.0f}"
+        rsi_status = 'Mid-range (momentum)'
+    elif engine_mode == 'SNIPER_1M':
         strategy_label = f"Mean Reversion ({sniper_result['score']}/7 factors)"
         indicator_summary = f"RSI {sniper_result['factors']['rsi']:.0f} / Stoch {sniper_result['factors']['stoch_k']:.0f} / CCI {sniper_result['factors']['cci']:.0f}"
         rsi_status = 'Oversold' if sniper_result['direction'] == 'CALL' else 'Overbought'
