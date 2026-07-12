@@ -2008,20 +2008,22 @@ async def auth_google(request: Request):
     if not email:
         raise HTTPException(status_code=400, detail="Email not provided by Google")
         
-    # Retry database connection up to 3 times (handles PostgreSQL recovery mode)
+    # Retry database connection up to 5 times with 5s delay
+    # Handles PostgreSQL "in recovery mode" after Railway redeploys
     user = None
-    for attempt in range(3):
+    for attempt in range(5):
         try:
             async with AsyncSessionLocal() as session:
                 result = await session.execute(select(User).where(User.email == email))
                 user = result.scalar_one_or_none()
                 break
         except Exception as db_conn_err:
-            if attempt < 2:
-                logger.warning(f"[Google Auth] DB connection attempt {attempt+1}/3 failed: {db_conn_err} — retrying in 2s...")
-                await asyncio.sleep(2)
+            if attempt < 4:
+                logger.warning(f"[Google Auth] DB attempt {attempt+1}/5 failed: {db_conn_err} — retrying in 5s...")
+                await asyncio.sleep(5)
             else:
-                raise HTTPException(status_code=500, detail=f"Database temporarily unavailable (recovery mode). Please try again in 30 seconds.")
+                logger.error(f"[Google Auth] All 5 DB attempts failed. Database may be permanently in recovery mode.")
+                raise HTTPException(status_code=500, detail=f"Database is in recovery mode after recent redeploys. Please go to Railway → Postgres → Settings → Restart to fix this, then try again.")
 
     try:
         async with AsyncSessionLocal() as session:
