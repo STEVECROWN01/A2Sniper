@@ -31,7 +31,7 @@ export default function GoogleCallbackPage() {
     const timeout = setTimeout(() => {
       setError('Google sign-in timed out. Please try again.');
       setTimeout(() => router.replace('/login'), 3000);
-    }, 15000); // 15-second timeout
+    }, 60000); // 60-second timeout (backend retries 5x with 5s delay = 25s + DB query time)
 
     (async () => {
       try {
