@@ -2113,7 +2113,7 @@ async def auth_google(request: Request):
         import traceback
         logger.error(f"[Google Auth] Database error during user lookup/creation: {type(e).__name__}: {e}")
         logger.error(f"[Google Auth] Full traceback: {traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail="An internal error occurred during sign-in. Please try again.")
+        raise HTTPException(status_code=500, detail=f"Sign-in error: {type(e).__name__}: {str(e)[:200]}")
 
 
 async def send_otp_email(recipient_email: str, otp_code: str, purpose: str = "password_reset"):
