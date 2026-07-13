@@ -41,6 +41,14 @@ else:
 
 # PgBouncer compatibility: disable prepared statement cache for Supabase pooler
 _is_pg = DATABASE_URL.startswith("postgresql")
+
+# Strip query parameters that asyncpg doesn't understand (pgbouncer, etc.)
+# Supabase pooler URLs include ?pgbouncer=true which breaks asyncpg connect()
+if _is_pg and '?' in DATABASE_URL:
+    # Keep only the base URL without query params
+    DATABASE_URL = DATABASE_URL.split('?')[0]
+    logger.info(f"[DB] Stripped query parameters from DATABASE_URL for asyncpg compatibility")
+
 connect_args = {"statement_cache_size": 0} if _is_pg else {}
 
 engine = create_async_engine(
