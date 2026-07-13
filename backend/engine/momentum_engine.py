@@ -218,8 +218,15 @@ def score_momentum_continuation(df: pd.DataFrame, min_factors: int = 4) -> Optio
     put_score = len(put_factors)
 
     # Log the factor scores
+    # Try to get pair name from the DataFrame index for identification
+    pair_name = "unknown"
+    try:
+        if hasattr(df, 'attrs') and 'pair' in df.attrs:
+            pair_name = df.attrs['pair']
+    except:
+        pass
     logger.info(
-        f"[MOMENTUM-SCORE] call={call_score}/7 put={put_score}/7 min_required={min_factors} "
+        f"[MOMENTUM-SCORE] pair={pair_name} call={call_score}/7 put={put_score}/7 min_required={min_factors} "
         f"rsi={rsi:.1f} adx={adx:.1f} ema9={ema9:.5f} ema21={ema21:.5f} "
         f"call_factors={[f[0] for f in call_factors]} put_factors={[f[0] for f in put_factors]}"
     )

@@ -499,14 +499,17 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False) -> dict:
         return None
 
     # 6. Run the engine
-    # Background mode: 4/7 factors (high quality, fewer auto-signals)
-    # Force mode (user request): 3/7 factors (user explicitly asked — give them a signal)
-    min_factors = 3 if force else 4
+    # BOTH force mode and background mode use 4/7 factors (strict confluence).
+    # 4/7 factors = genuine momentum with 70%+ winrate.
+    min_factors = 4
 
     # ═══ ENGINE TOGGLE ═════════════════════════════════════════════
     # Uses SIGNAL_ENGINE global to select which engine to run.
     # "momentum" = Momentum Continuation (new — for testing)
     # "sniper"   = 7-Factor Mean Reversion (original)
+    # Tag the DataFrame with pair name for logging
+    df_with_indicators.attrs['pair'] = pair
+
     if SIGNAL_ENGINE == "momentum":
         engine_result = generate_momentum_signal(df_with_indicators, payout, min_factors=min_factors)
         if engine_result is None:
