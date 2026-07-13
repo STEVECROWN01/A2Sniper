@@ -550,17 +550,16 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False) -> dict:
             logger.warning(f"[{pair}] Circuit breaker active: {cb.get('reason', 'unknown')}")
             return None
 
-    # 8. Deduplication: don't emit for the same pair within X seconds
-    # Background mode: 60s dedup (prevent spam)
-    # Force mode (user request): 10s dedup (user explicitly asked — let them through)
-    if not hasattr(analyze_pair_internal, '_last_signal_time'):
-        analyze_pair_internal._last_signal_time = {}
-    last_time = analyze_pair_internal._last_signal_time.get(pair, 0)
-    now_ts = datetime.now(timezone.utc).timestamp()
-    dedup_window = 10 if force else 60
-    if (now_ts - last_time) < dedup_window:
-        logger.debug(f"[{pair}] Signal skipped — duplicate within {dedup_window}s window (force={force})")
-        return None
+    # 8. Deduplication: only for background mode (prevent spam)
+    # Force mode (user request): NO dedup — user explicitly asked for a signal
+    if not force:
+        if not hasattr(analyze_pair_internal, '_last_signal_time'):
+            analyze_pair_internal._last_signal_time = {}
+        last_time = analyze_pair_internal._last_signal_time.get(pair, 0)
+        now_ts = datetime.now(timezone.utc).timestamp()
+        if (now_ts - last_time) < 60:
+            logger.debug(f"[{pair}] Background signal skipped — duplicate within 60s window")
+            return None
 
     # 9. Build the signal dict from engine result
     now = datetime.now(timezone.utc)
