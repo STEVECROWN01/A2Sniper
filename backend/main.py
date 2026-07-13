@@ -498,14 +498,10 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False) -> dict:
         logger.info(f"[{pair}] Sniper data rejected: {validation_reason}")
         return None
 
-    # 6. Run the sniper engine (dual-mode: 1M mean-reversion + 3M trend-pullback)
-    # min_factors=4 for BOTH modes. With STRICT thresholds (RSI ≤30, Stoch ≤20,
-    # CCI ≤-100, BB touch, 1.5 ATR deviation), 4/7 factors = genuine confluence.
-    # Plus ADX ≤ 30 trend filter (no signals in trending markets).
-    # Plus at least 1 STRONG factor required (RSI/Stoch/BB/CCI).
-    #
-    # Winrate: 4/7 → 75%, 5/7 → 80%, 6/7 → 87%, 7/7 → 92%
-    min_factors = 4
+    # 6. Run the engine
+    # Background mode: 4/7 factors (high quality, fewer auto-signals)
+    # Force mode (user request): 3/7 factors (user explicitly asked — give them a signal)
+    min_factors = 3 if force else 4
 
     # ═══ ENGINE TOGGLE ═════════════════════════════════════════════
     # Uses SIGNAL_ENGINE global to select which engine to run.
