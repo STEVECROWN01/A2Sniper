@@ -617,8 +617,8 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False) -> dict:
         'rsi_status': rsi_status,
         'recommended_stake': 10,
         'analysis_details': {
-            'mode': 'sniper_1m_mean_reversion' if is_1m else 'sniper_3m_trend_pullback',
-            'sniper_mode': sniper_mode,
+            'mode': 'momentum_continuation' if is_momentum else ('sniper_1m_mean_reversion' if engine_mode == 'SNIPER_1M' else 'sniper_3m_trend_pullback'),
+            'engine_mode': engine_mode,
             'expiration_minutes': sniper_result['expiration'],
             'factors_hit': factors_hit,
             'factors_description': sniper_result['factors']['factors_description'],
