@@ -2028,8 +2028,8 @@ async def auth_google(request: Request):
                 logger.warning(f"[Google Auth] DB attempt {attempt+1}/5 failed: {db_conn_err} — retrying in 5s...")
                 await asyncio.sleep(5)
             else:
-                logger.error(f"[Google Auth] All 5 DB attempts failed. Database may be permanently in recovery mode.")
-                raise HTTPException(status_code=500, detail=f"Database is in recovery mode after recent redeploys. Please go to Railway → Postgres → Settings → Restart to fix this, then try again.")
+                logger.error(f"[Google Auth] All 5 DB attempts failed. Last error: {db_conn_err}")
+                raise HTTPException(status_code=500, detail=f"Database connection failed after 5 retries: {type(db_conn_err).__name__}: {str(db_conn_err)[:200]}")
 
     try:
         async with AsyncSessionLocal() as session:
