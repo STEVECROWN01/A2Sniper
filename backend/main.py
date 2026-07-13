@@ -558,7 +558,13 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False) -> dict:
         cb = monitor.check_circuit_breaker()
         if cb['is_active']:
             logger.warning(f"[{pair}] Circuit breaker active: {cb.get('reason', 'unknown')}")
-            return None
+            # Auto-reset circuit breaker — don't let old suspensions block new signals
+            monitor.is_suspended = False
+            monitor.consecutive_losses = 0
+            monitor.circuit_breaker_until = None
+            monitor.suspension_reason = None
+            monitor.suspension_time = None
+            logger.info(f"[{pair}] Circuit breaker auto-reset — allowing trade")
 
     # 8. Deduplication: only for background mode (prevent spam)
     # Force mode (user request): NO dedup — user explicitly asked for a signal
@@ -572,6 +578,7 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False) -> dict:
             return None
 
     # 9. Build the signal dict from engine result
+    logger.info(f"[SIGNAL-BUILD] Building signal for {pair} — engine_mode={sniper_result.get('mode')}, score={sniper_result.get('score')}, direction={sniper_result.get('direction')}")
     now = datetime.now(timezone.utc)
     engine_mode = sniper_result.get('mode', 'SNIPER_1M')
     is_momentum = engine_mode == 'MOMENTUM_1M'
