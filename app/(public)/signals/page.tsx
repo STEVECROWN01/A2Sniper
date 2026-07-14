@@ -220,11 +220,14 @@ export default function SignalsPage() {
     if (store.fetchSignals) store.fetchSignals();
     if (store.fetchMarketStatus) store.fetchMarketStatus();
 
-    // Real-time refresh every 1s (user requirement: never miss an update)
+    // Real-time refresh every 5s (was 1s — caused event-loop contention
+    // with the backend trading loop, delaying signal delivery by 60+s).
+    // 5s is fast enough for countdown accuracy (the card itself ticks
+    // every 1s client-side) while keeping the backend responsive.
     const apiTimer = setInterval(() => {
       if (store.fetchSignals) store.fetchSignals();
       if (store.fetchMarketStatus) store.fetchMarketStatus();
-    }, 1000);
+    }, 5000);
 
     return () => clearInterval(apiTimer);
   }, []);

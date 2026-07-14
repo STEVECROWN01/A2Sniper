@@ -245,10 +245,12 @@ export const useAppStore = create<AppState>((set, get) => ({
     try {
       const url = get().getApiUrl();
       const startTime = Date.now();
-      // Request up to 500 most-recent signals — covers ~50 trading sessions (10 trades each).
-      // Aggregate counts (total/won/lost/active) are returned separately by the backend
-      // so stat cards stay accurate even when the signals array is paginated.
-      const res = await fetch(`${url}/api/signals?limit=500`, { credentials: 'include' });
+      // Request the 100 most-recent signals — enough for the signals page grid
+      // + the current session's 10 trade-dot visualization. Aggregate counts
+      // (total/won/lost/active) come separately from the backend, so stat
+      // cards stay accurate regardless of this limit. Was 500 — too heavy
+      // for 1-5s polling, caused event-loop contention.
+      const res = await fetch(`${url}/api/signals?limit=100`, { credentials: 'include' });
       if (res.ok) {
         // Calculate clock offset from HTTP Date header
         const serverDateStr = res.headers.get('Date');

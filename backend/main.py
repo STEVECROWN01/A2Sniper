@@ -527,6 +527,10 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False, return_can
 
     # 3. Fetch 1-minute candles (need 25+ for Bollinger/RSI/Stoch/CCI)
     df_m1 = await po_scanner.get_candles(pair, timeframe="1m", count=100)
+    # Yield to event loop after the WebSocket candle fetch — allows pending
+    # HTTP requests to be processed between the slow WebSocket I/O and the
+    # CPU-bound indicator calculation that follows.
+    await asyncio.sleep(0)
     candle_count = len(df_m1) if df_m1 is not None and not df_m1.empty else 0
     logger.info(f"[SNIPER-TRACE] {pair} step=3 candles={candle_count}/14 needed")
     if df_m1 is None or df_m1.empty or len(df_m1) < 14:
@@ -538,6 +542,8 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False, return_can
 
     # 4. Calculate all indicators (RSI, Bollinger, Stochastic, CCI, EMA, ATR, ADX)
     df_with_indicators = indicators.calculate_all(df_m1)
+    # Yield again after CPU-bound indicator calculation
+    await asyncio.sleep(0)
     logger.info(f"[SNIPER-TRACE] {pair} step=4 indicators_calculated columns={list(df_with_indicators.columns)[:10]}")
 
     # 5. Validate data quality (rejects identical candles, suspicious jumps, zero volume)
@@ -862,7 +868,8 @@ async def _emit_candidate(candidate: dict, force: bool = False) -> dict:
         f"trade={_session_state['trade_count']}/{TRADES_PER_SESSION}"
     )
 
-    # Telegram notification
+    # Telegram notification — fire-and-forget (non-blocking) so the emission
+    # pipeline doesn't wait for Telegram's API response (can take 1-5s).
     try:
         signal_msg = f"""🎯 <b>A2SNIPER SIGNAL {"LIVE" if not force else "SUR DEMANDE"}</b>
 ━━━━━━━━━━━━━━━━━━━━━
@@ -876,7 +883,7 @@ async def _emit_candidate(candidate: dict, force: bool = False) -> dict:
 ⚡ Confluence : <i>{signal['fibonacci']}</i>
 
 Zéro Simulation. 100% Real-Market."""
-        await telegram_bot.send_signal(signal_msg)
+        asyncio.create_task(telegram_bot.send_signal(signal_msg))
     except Exception as tg_err:
         logger.warning(f"[SIGNAL-TELEGRAM-ERROR] pair={pair} err={tg_err}")
 
@@ -925,7 +932,8 @@ async def trading_loop():
                         logger.info(f"[SNIPER-KICKSTART] ✅ Candidate: {candidate['pair']} {candidate['direction']} score={candidate['score']}/7 ({candidate['winrate']}%)")
                 except Exception:
                     pass
-                await asyncio.sleep(0.05)  # 50ms between pairs — fast kickoff
+                # Yield to event loop so HTTP requests can be processed during kickoff
+                await asyncio.sleep(0)
 
             # Emit the best candidate from kickstart (gate is open on first run)
             if kickoff_candidates:
@@ -1010,7 +1018,11 @@ async def trading_loop():
                 except Exception:
                     pass
 
-                await asyncio.sleep(0.1)  # small delay between pairs
+                # CRITICAL: yield to the event loop after each pair so pending
+                # HTTP requests (frontend polling, bot signal requests) can be
+                # processed. Without this, a 30-pair scan blocks the event
+                # loop for 30-90s, delaying signal delivery until after expiry.
+                await asyncio.sleep(0)
 
             # ═══ EMIT BEST CANDIDATE (if gate allows) ═══════════════════════
             # The 30s gate ensures signals come one by one, 30s apart — never
