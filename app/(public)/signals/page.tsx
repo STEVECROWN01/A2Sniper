@@ -13,7 +13,7 @@ import { toast } from 'sonner';
 
 export default function SignalsPage() {
   useAuth();
-  const { signals, liveStatus, connectMarket, disconnectMarket, fetchMarketStatus, marketInfo, user, attemptReconnect, reconnectAttempts, maxReconnectAttempts } = useAppStore();
+  const { signals, totalSignals, totalActive, totalWon, totalLost, liveStatus, connectMarket, disconnectMarket, fetchMarketStatus, marketInfo, user, attemptReconnect, reconnectAttempts, maxReconnectAttempts } = useAppStore();
   // Persist SSID in localStorage so it survives page refreshes
   const [ssid, setSsidState] = useState('');
   const [isConnecting, setIsConnecting] = useState(false);
@@ -113,21 +113,29 @@ export default function SignalsPage() {
     return result;
   }, [signals, selectedPayout, selectedPair, selectedStatus, selectedDirection, minWinrate]);
 
+  // Global stats — sourced from backend SQL COUNT aggregates (accurate regardless
+  // of pagination). Falls back to in-memory computation only if backend hasn't
+  // returned totals yet (e.g., first render before fetch completes).
   const stats = useMemo(() => {
-    const active = signals.filter(s => s.status === 'ACTIVE').length;
-    const won = signals.filter(s => s.status === 'WON').length;
-    const lost = signals.filter(s => s.status === 'LOST').length;
+    const useBackend = totalSignals > 0 || totalWon > 0 || totalLost > 0 || totalActive > 0;
+    const total = useBackend ? totalSignals : signals.length;
+    const active = useBackend ? totalActive : signals.filter(s => s.status === 'ACTIVE').length;
+    const won = useBackend ? totalWon : signals.filter(s => s.status === 'WON').length;
+    const lost = useBackend ? totalLost : signals.filter(s => s.status === 'LOST').length;
     const settled = won + lost;
     const winrate = settled > 0 ? Math.round((won / settled) * 100) : 0;
     return {
-      total: signals.length,
+      total,
       active,
       won,
       lost,
       settled,
       winrate,
+      // How many signals are loaded in-memory vs. total in DB — for the "showing N of M" indicator
+      loaded: signals.length,
+      isPaginated: useBackend && total > signals.length,
     };
-  }, [signals]);
+  }, [signals, totalSignals, totalActive, totalWon, totalLost]);
 
   // ─── Per-session stats ────────────────────────────────────────────────────
   // Groups all signals by session_id. The "current" session is whichever session
@@ -554,7 +562,15 @@ export default function SignalsPage() {
               {/* Stats Bar */}
               <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-8">
                 {[
-                  { label: 'Total Signals', value: stats.total, sub: `${stats.settled} settled`, color: 'text-gray-400 bg-white/[0.02]', icon: TrendingUp },
+                  {
+                    label: 'Total Signals',
+                    value: stats.total,
+                    sub: stats.isPaginated
+                      ? `${stats.settled} settled · showing ${stats.loaded} of ${stats.total}`
+                      : `${stats.settled} settled`,
+                    color: 'text-gray-400 bg-white/[0.02]',
+                    icon: TrendingUp,
+                  },
                   { label: 'Active', value: stats.active, sub: 'in progress', color: 'text-[#D4AF37] bg-[#D4AF37]/10', icon: Clock },
                   { label: 'Won', value: stats.won, sub: 'closed wins', color: 'text-green-500 bg-green-500/10', icon: Target },
                   { label: 'Lost', value: stats.lost, sub: 'closed losses', color: 'text-red-500 bg-red-500/10', icon: TrendingDown },

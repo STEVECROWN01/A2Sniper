@@ -1417,21 +1417,23 @@ async def request_live_signal(request: Request, credentials: HTTPAuthorizationCr
 
 
 @app.get("/api/signals")
-async def get_signals(pair: str = None, limit: int = 200, credentials: HTTPAuthorizationCredentials = Security(security)):
+async def get_signals(pair: str = None, limit: int = 200, offset: int = 0, credentials: HTTPAuthorizationCredentials = Security(security)):
     # Validate token type and check revocation
     payload = decode_access_token(credentials.credentials)
     _jti = payload.get("jti")
     if _jti and await is_token_revoked(_jti):
         raise HTTPException(status_code=401, detail="Token has been revoked")
 
-    # Validate and clamp limit — allow up to 500 for full history
-    limit = max(1, min(limit, 500))
+    # Validate and clamp — allow up to 2000 for full history browsing
+    limit = max(1, min(limit, 2000))
+    offset = max(0, offset)
 
     # Build the output list — try DB first, fall back to in-memory deque
     output = []
     now = datetime.now(timezone.utc)
 
-    # Get total count from DB (not limited by the query limit)
+    # Aggregate counts — computed via SQL COUNT (single fast query, no row loading)
+    # so the frontend stats card is accurate regardless of the `limit` pagination.
     total_in_db = 0
     active_count = 0
     won_count = 0
@@ -1439,31 +1441,34 @@ async def get_signals(pair: str = None, limit: int = 200, credentials: HTTPAutho
 
     try:
         async with AsyncSessionLocal() as session:
-            # First, get ALL signals to count them properly
-            count_query = select(SignalRecord)
+            from sqlalchemy import func as sql_func
+            count_query = select(
+                sql_func.count(SignalRecord.id).label('total'),
+                sql_func.count(SignalRecord.id).filter(SignalRecord.is_win == True).label('won'),
+                sql_func.count(SignalRecord.id).filter(SignalRecord.is_win == False).label('lost'),
+            )
             if pair:
                 count_query = count_query.where(SignalRecord.pair == pair)
             count_result = await session.execute(count_query)
-            all_db_signals = count_result.scalars().all()
-            total_in_db = len(all_db_signals)
+            count_row = count_result.one()
+            total_in_db = count_row.total or 0
+            won_count = count_row.won or 0
+            lost_count = count_row.lost or 0
+            # "Active" = unresolved (is_win IS NULL) AND not yet expired.
+            # We count this in SQL: unresolved signals whose timestamp is within
+            # the max expiration window (3 minutes = 180s) from now.
+            active_cutoff = now - timedelta(seconds=200)  # 200s covers 3m expirations + buffer
+            active_query = select(sql_func.count(SignalRecord.id)).where(
+                SignalRecord.is_win == None,
+                SignalRecord.timestamp >= active_cutoff
+            )
+            if pair:
+                active_query = active_query.where(SignalRecord.pair == pair)
+            active_result = await session.execute(active_query)
+            active_count = active_result.scalar() or 0
 
-            # Count by status
-            for s in all_db_signals:
-                sig_time = s.timestamp
-                if sig_time and sig_time.tzinfo is None:
-                    sig_time = sig_time.replace(tzinfo=timezone.utc)
-                expiration_seconds = (s.expiration or 5) * 60
-                age_seconds = (now - sig_time).total_seconds() if sig_time else 999
-
-                if s.is_win is True:
-                    won_count += 1
-                elif s.is_win is False:
-                    lost_count += 1
-                elif age_seconds < expiration_seconds:
-                    active_count += 1
-
-            # Now get the limited set for display (most recent first)
-            query = select(SignalRecord).order_by(SignalRecord.timestamp.desc()).limit(limit)
+            # Get the limited set for display (most recent first, with offset for pagination)
+            query = select(SignalRecord).order_by(SignalRecord.timestamp.desc()).offset(offset).limit(limit)
             if pair:
                 query = query.where(SignalRecord.pair == pair)
             result = await session.execute(query)

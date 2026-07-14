@@ -62,6 +62,13 @@ const DEFAULT_PLAN: SubscriptionPlan = {
 
 interface AppState {
   signals: Signal[];
+  // Aggregate counts from backend — accurate regardless of pagination limit.
+  // The frontend `signals[]` array is capped (default 200) for performance,
+  // but these totals reflect the true DB state. Use these for stat cards.
+  totalSignals: number;
+  totalActive: number;
+  totalWon: number;
+  totalLost: number;
   userStats: UserStats;
   selectedPairs: string[];
   isAuthenticated: boolean;
@@ -124,6 +131,10 @@ interface AppState {
 
 export const useAppStore = create<AppState>((set, get) => ({
   signals: mockSignals,
+  totalSignals: 0,
+  totalActive: 0,
+  totalWon: 0,
+  totalLost: 0,
   userStats: mockUserStats,
   selectedPairs: ['EUR/USD OTC', 'GBP/USD OTC', 'USD/JPY OTC'],
   isAuthenticated: false,
@@ -234,8 +245,10 @@ export const useAppStore = create<AppState>((set, get) => ({
     try {
       const url = get().getApiUrl();
       const startTime = Date.now();
-      // Cookies are sent automatically — no need to add Authorization header
-      const res = await fetch(`${url}/api/signals`, { credentials: 'include' });
+      // Request up to 500 most-recent signals — covers ~50 trading sessions (10 trades each).
+      // Aggregate counts (total/won/lost/active) are returned separately by the backend
+      // so stat cards stay accurate even when the signals array is paginated.
+      const res = await fetch(`${url}/api/signals?limit=500`, { credentials: 'include' });
       if (res.ok) {
         // Calculate clock offset from HTTP Date header
         const serverDateStr = res.headers.get('Date');
@@ -266,8 +279,14 @@ export const useAppStore = create<AppState>((set, get) => ({
             rsi_status: (s.rsi_status as string) || 'Neutral',
           } as Signal;
         });
-        set({ 
+        set({
           signals: parsedSignals,
+          // Capture aggregate counts from backend — these are SQL COUNT(*) results,
+          // accurate regardless of the `?limit=500` pagination above.
+          totalSignals: typeof data.total === 'number' ? data.total : parsedSignals.length,
+          totalActive: typeof data.active_count === 'number' ? data.active_count : 0,
+          totalWon: typeof data.won_count === 'number' ? data.won_count : 0,
+          totalLost: typeof data.lost_count === 'number' ? data.lost_count : 0,
           liveStatus: data.live_status || 'DISCONNECTED'
         });
       }
