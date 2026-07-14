@@ -1479,7 +1479,7 @@ async def get_signals(pair: str = None, limit: int = 200, offset: int = 0, crede
                 sig_time = s.timestamp
                 if sig_time and sig_time.tzinfo is None:
                     sig_time = sig_time.replace(tzinfo=timezone.utc)
-                expiration_seconds = (s.expiration or 5) * 60
+                expiration_seconds = (s.expiration or 1) * 60
                 age_seconds = (now - sig_time).total_seconds() if sig_time else 999
 
                 if s.is_win is True:
@@ -1530,7 +1530,7 @@ async def get_signals(pair: str = None, limit: int = 200, offset: int = 0, crede
                 sig_time = datetime.fromisoformat(s['timestamp']) if isinstance(s.get('timestamp'), str) else s.get('timestamp')
                 if sig_time and sig_time.tzinfo is None:
                     sig_time = sig_time.replace(tzinfo=timezone.utc)
-                expiration_seconds = (s.get('expiration', 5)) * 60
+                expiration_seconds = (s.get('expiration', 1)) * 60
                 age_seconds = (now - sig_time).total_seconds() if sig_time else 999
 
                 if s.get('is_win') is True:

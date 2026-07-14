@@ -74,7 +74,11 @@ function SignalCountdown({ timestamp, expiration, onExpire }: { timestamp?: stri
         return 0;
       }
 
-      const now = new Date();
+      // Use server-synced time so the countdown matches what signal-card.tsx shows.
+      // If the user's browser clock is off by even a few seconds, raw `new Date()`
+      // would make the simulator disagree with the signals page.
+      const clockOffset = useAppStore.getState().clockOffset || 0;
+      const now = new Date(Date.now() + clockOffset);
       const expMinutes = Number(expiration) || 1;
 
       // Expiry = signal timestamp + expiration minutes (NOT candle boundary).

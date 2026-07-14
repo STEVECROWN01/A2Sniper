@@ -18,14 +18,29 @@ export function SignalCard({ signal }: SignalCardProps) {
   const [timeLeft, setTimeLeft] = useState(0);
   const [isExpiring, setIsExpiring] = useState(false);
   const [elapsedSinceExpiry, setElapsedSinceExpiry] = useState<string>('');
+  // Client-side expired fallback: when countdown reaches 0, mark the signal as
+  // expired locally so the card transitions immediately — don't wait for the
+  // backend resolution_loop (which runs every ~5s) or the next fetchSignals()
+  // poll. Reset whenever the signal's status prop changes (e.g., backend
+  // resolved it to WON/LOST).
+  const [clientExpired, setClientExpired] = useState(false);
+
+  // Effective status: backend status wins once it's not ACTIVE; otherwise
+  // fall back to clientExpired to drive the expired UI.
+  const effectiveStatus = signal.status === 'ACTIVE' && clientExpired
+    ? 'EXPIRED' as const
+    : signal.status;
 
   useEffect(() => {
+    // Reset client-side expired flag whenever the backend status changes
+    setClientExpired(false);
+
     if (signal.status === 'ACTIVE') {
       const calculateRemaining = () => {
         // Use synchronized now time
         const clockOffset = useAppStore.getState().clockOffset || 0;
         const now = Date.now() + clockOffset;
-        
+
         // Expiry = signal timestamp + expiration minutes
         // Each signal expires at its OWN time — different countdown per signal
         const expMinutes = Number(signal.expiration) || 1;
@@ -43,9 +58,12 @@ export function SignalCard({ signal }: SignalCardProps) {
         const remaining = calculateRemaining();
         setTimeLeft(remaining);
         setIsExpiring(remaining < 30000);
-        
+
         if (remaining <= 0) {
-          // If remaining time hits 0, trigger fetch to update status from backend
+          // Countdown hit zero — flip client-side state immediately so the
+          // card transitions to expired without waiting for backend poll.
+          setClientExpired(true);
+          // Also trigger a fetch so the backend can resolve WON/LOST ASAP.
           useAppStore.getState().fetchSignals();
         }
       }, 1000);
@@ -53,21 +71,19 @@ export function SignalCard({ signal }: SignalCardProps) {
       return () => clearInterval(interval);
     }
 
-    // For non-active signals, compute "Expire il y a X" (time elapsed since expiry)
+    // For non-active signals, compute "expired X ago" (time elapsed since expiry)
     // (TypeScript already narrowed away 'ACTIVE' — this branch handles WON/LOST/EXPIRED)
     {
       const computeElapsed = () => {
         const clockOffset = useAppStore.getState().clockOffset || 0;
         const now = Date.now() + clockOffset;
-        // Expiry time = signal timestamp + expiration minutes
-        // For non-active signals, the signal.timestamp is the emission time.
-        // The actual expiry is the next candle boundary after that.
-        const minutes = signal.timestamp.getMinutes();
-        const minutesToBoundary = signal.expiration - (minutes % signal.expiration);
-        const boundaryDate = new Date(signal.timestamp);
-        boundaryDate.setSeconds(0, 0);
-        boundaryDate.setMinutes(boundaryDate.getMinutes() + minutesToBoundary);
-        const elapsedMs = now - boundaryDate.getTime();
+        // Expiry = signal timestamp + expiration minutes (MUST match the ACTIVE
+        // countdown above and the backend resolution_loop). Previously this used
+        // candle-boundary alignment which was wrong — the backend resolves at
+        // timestamp + expiration, not at the next candle close.
+        const expMinutes = Number(signal.expiration) || 1;
+        const expiryTime = signal.timestamp.getTime() + (expMinutes * 60 * 1000);
+        const elapsedMs = now - expiryTime;
         if (elapsedMs < 0) return '';
         const seconds = Math.floor(elapsedMs / 1000);
         const minutes2 = Math.floor(seconds / 60);
@@ -187,12 +203,12 @@ Timestamp: ${signal.timestamp.toLocaleString('en-US')}
               </button>
               
               <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider ${
-                signal.status === 'ACTIVE' ? 'bg-[#D4AF37] text-black shadow-[0_0_10px_rgba(212,175,55,0.3)]' :
-                signal.status === 'WON' ? 'bg-green-500/20 text-green-500 border border-green-500/30' :
-                signal.status === 'LOST' ? 'bg-red-500/20 text-red-500 border border-red-500/30' :
+                effectiveStatus === 'ACTIVE' ? 'bg-[#D4AF37] text-black shadow-[0_0_10px_rgba(212,175,55,0.3)]' :
+                effectiveStatus === 'WON' ? 'bg-green-500/20 text-green-500 border border-green-500/30' :
+                effectiveStatus === 'LOST' ? 'bg-red-500/20 text-red-500 border border-red-500/30' :
                 'bg-white/5 text-gray-400'
               }`}>
-                {signal.status}
+                {effectiveStatus}
               </span>
             </div>
           </div>
@@ -224,7 +240,7 @@ Timestamp: ${signal.timestamp.toLocaleString('en-US')}
             <div className="flex items-center justify-end space-x-1">
               <Clock className={`w-3.5 h-3.5 ${isExpiring ? 'text-[#D4AF37] animate-pulse' : 'text-gray-400'}`} />
               <span className={`text-sm font-black ${isExpiring ? 'text-[#D4AF37]' : 'text-white'}`}>
-                {signal.status === 'ACTIVE' ? formatTime(timeLeft) : `${signal.expiration}m`}
+                {effectiveStatus === 'ACTIVE' ? formatTime(timeLeft) : `${signal.expiration}m`}
               </span>
             </div>
           </div>
@@ -233,7 +249,7 @@ Timestamp: ${signal.timestamp.toLocaleString('en-US')}
         {/* ─── Zone: Trade Now / Elapsed time ─── */}
         {/* Active signal → "Trade Now" button (replaces old duplicate result zone) */}
         {/* Expired signal → "X ago" elapsed time */}
-        {signal.status === 'ACTIVE' ? (
+        {effectiveStatus === 'ACTIVE' ? (
           <button
             onClick={(e) => {
               e.stopPropagation();
@@ -270,7 +286,7 @@ Timestamp: ${signal.timestamp.toLocaleString('en-US')}
             <span>Copy</span>
           </button>
           
-          {signal.status === 'ACTIVE' && (
+          {effectiveStatus === 'ACTIVE' && (
             <>
               <button
                 onClick={(e) => {
@@ -365,7 +381,7 @@ Timestamp: ${signal.timestamp.toLocaleString('en-US')}
                 </div>
 
                 {/* Countdown Timer — real-time remaining for active signals */}
-                {signal.status === 'ACTIVE' && (
+                {effectiveStatus === 'ACTIVE' && (
                   <div className="p-3 bg-[#050507] rounded-xl border border-[#D4AF37]/20">
                     <p className="text-[9px] text-gray-500 font-bold uppercase tracking-wider mb-1">Time Remaining</p>
                     <p className={`text-lg font-black font-mono ${timeLeft < 30000 ? 'text-[#D4AF37] animate-pulse' : 'text-white'}`}>
@@ -425,7 +441,7 @@ Timestamp: ${signal.timestamp.toLocaleString('en-US')}
                     <span>Copy</span>
                   </button>
                   
-                  {signal.status === 'ACTIVE' && (
+                  {effectiveStatus === 'ACTIVE' && (
                     <button
                       onClick={handleTrade}
                       className="flex-1 bg-gradient-to-r from-[#D4AF37] to-[#C5A059] text-black px-4 py-3 rounded-xl text-xs font-black uppercase tracking-wider hover:from-[#c5a059] hover:to-[#D4AF37] transition-all flex items-center justify-center space-x-2"
