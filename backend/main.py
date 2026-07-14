@@ -97,6 +97,29 @@ compliance = ComplianceManager()
 # Change this to switch engines without modifying signal generation code.
 SIGNAL_ENGINE = "momentum"  # Currently testing momentum engine
 risk_mgr = RiskManager()
+
+# ─── Trading Session Tracking (10 trades per session) ─────────────────────────
+# A "session" is a batch of 10 consecutive trades. Every signal emitted is tagged
+# with the current session_id. When the counter reaches TRADES_PER_SESSION, a new
+# session_id is generated. This lets the frontend show per-session winrate stats
+# so the user can see how each batch of 10 trades performs against the 70-80% target.
+TRADES_PER_SESSION = 10
+_session_state = {
+    "current_id": f"SES-{datetime.now(timezone.utc).strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}",
+    "trade_count": 0,
+}
+
+def get_current_session_id() -> str:
+    """Returns the active session_id, rolling over to a new session every 10 trades."""
+    if _session_state["trade_count"] >= TRADES_PER_SESSION:
+        _session_state["current_id"] = f"SES-{datetime.now(timezone.utc).strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
+        _session_state["trade_count"] = 0
+        logger.info(f"[SESSION-ROLLOVER] new session_id={_session_state['current_id']} (previous session reached {TRADES_PER_SESSION} trades)")
+    return _session_state["current_id"]
+
+def increment_session_trade_count():
+    """Call after a signal is successfully emitted."""
+    _session_state["trade_count"] += 1
 monitor = MonitoringEngine()
 voting_model = VotingClassifierModel()
 po_scanner = PocketOptionScanner()
@@ -610,6 +633,7 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False) -> dict:
         'raw_points': sniper_result['score'],
         'payout': payout,
         'classification': sniper_result['classification'],
+        'session_id': get_current_session_id(),
         'smc_structure': strategy_label,
         'smc_zone': ', '.join(factors_hit[:3]),
         'chart_pattern': sniper_result['factors'].get('reversal_pattern', 'N/A') or 'N/A',
@@ -648,7 +672,8 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False) -> dict:
                 winrate=signal['winrate'], score=signal['score'], payout=signal['payout'],
                 classification=signal['classification'], timestamp=now,
                 analysis_details=signal['analysis_details'],
-                hash_signature=signal['hash_signature']
+                hash_signature=signal['hash_signature'],
+                session_id=signal['session_id']
             )
             session.add(db_signal)
             await session.commit()
@@ -659,12 +684,14 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False) -> dict:
     generated_signals.append(signal)
     analyze_pair_internal._last_signal_time[pair] = now_ts
     monitor.record_signal(signal['id'], pair, signal['direction'], signal['winrate'])
+    increment_session_trade_count()
 
     logger.info(
         f"[SNIPER-EMITTED] id={signal['id']} pair={signal['pair']} "
         f"mode={sniper_mode} direction={signal['direction']} "
         f"score={signal['score']}/7 winrate={signal['winrate']}% "
-        f"expiration={signal['expiration']}m payout={signal['payout']}%"
+        f"expiration={signal['expiration']}m payout={signal['payout']}% "
+        f"session={signal['session_id']} trade={_session_state['trade_count']}/{TRADES_PER_SESSION}"
     )
 
     return signal
@@ -1478,6 +1505,7 @@ async def get_signals(pair: str = None, limit: int = 200, credentials: HTTPAutho
                     "is_win": s.is_win,
                     "status": status,
                     "hash_signature": s.hash_signature,
+                    "session_id": getattr(s, 'session_id', None),
                     # Analysis fields — stored in analysis_details JSON, not separate columns
                     "smc_structure": details.get('smc_structure', 'Price Action'),
                     "smc_zone": details.get('smc_zone', 'N/A'),
@@ -1523,6 +1551,7 @@ async def get_signals(pair: str = None, limit: int = 200, credentials: HTTPAutho
                     "is_win": s.get('is_win'),
                     "status": status,
                     "hash_signature": s.get('hash_signature', ''),
+                    "session_id": s.get('session_id'),
                     # Analysis fields from in-memory signal dict
                     "smc_structure": s.get('smc_structure', 'Price Action'),
                     "smc_zone": s.get('smc_zone', 'N/A'),
@@ -1573,7 +1602,8 @@ async def get_signals(pair: str = None, limit: int = 200, credentials: HTTPAutho
                 "timestamp": s['timestamp'],
                 "is_win": None,
                 "status": status,
-                "hash_signature": s.get('hash_signature', '')
+                "hash_signature": s.get('hash_signature', ''),
+                "session_id": s.get('session_id')
             }
             output.append(d)
             if len(output) >= limit:

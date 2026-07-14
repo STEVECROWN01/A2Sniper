@@ -83,6 +83,7 @@ class SignalRecord(Base):
     is_win = Column(Boolean, nullable=True)
     analysis_details = Column(JSON)
     hash_signature = Column(String)
+    session_id = Column(String, index=True, nullable=True)  # Trading session (10 trades per session)
 
 
 class CandleRecord(Base):
@@ -419,6 +420,26 @@ async def init_db():
                         logger.info(f"[DB] Migration: Changed {table_name}.{col} to TIMESTAMP WITH TIME ZONE")
         except Exception as e:
             logger.warning(f"[DB] Migration for signal_logs timestamp tz failed (non-fatal): {e}")
+
+        # Add session_id column to signals table (10-trades-per-session feature)
+        try:
+            async with engine.begin() as conn:
+                result = await conn.execute(
+                    __import__('sqlalchemy').text(
+                        "SELECT column_name FROM information_schema.columns "
+                        "WHERE table_name='signals' AND column_name='session_id'"
+                    )
+                )
+                if not result.fetchone():
+                    await conn.execute(__import__('sqlalchemy').text(
+                        "ALTER TABLE signals ADD COLUMN session_id VARCHAR"
+                    ))
+                    await conn.execute(__import__('sqlalchemy').text(
+                        "CREATE INDEX IF NOT EXISTS ix_signals_session_id ON signals (session_id)"
+                    ))
+                    logger.info("[DB] Migration: Added session_id column to signals table")
+        except Exception as e:
+            logger.warning(f"[DB] Migration for signals.session_id failed (non-fatal): {e}")
 
         # Ensure deleted_accounts table exists
         try:

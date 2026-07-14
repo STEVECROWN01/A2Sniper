@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import { motion } from 'framer-motion';
-import { Search, Filter, TrendingUp, Clock, Target, RefreshCw, Download, Settings, Link2, Check, Wifi, WifiOff, AlertTriangle, Zap } from 'lucide-react';
+import { Search, Filter, TrendingUp, TrendingDown, Clock, Target, RefreshCw, Download, Settings, Link2, Check, Wifi, WifiOff, AlertTriangle, Zap, Award } from 'lucide-react';
 import { SignalCard } from '@/components/ui/signal-card';
 import { useAppStore } from '@/lib/store';
 import { useAuth } from '@/hooks/use-auth';
@@ -113,12 +113,99 @@ export default function SignalsPage() {
     return result;
   }, [signals, selectedPayout, selectedPair, selectedStatus, selectedDirection, minWinrate]);
 
-  const stats = {
-    total: signals.length,
-    active: signals.filter(s => s.status === 'ACTIVE').length,
-    won: signals.filter(s => s.status === 'WON').length,
-    lost: signals.filter(s => s.status === 'LOST').length
+  const stats = useMemo(() => {
+    const active = signals.filter(s => s.status === 'ACTIVE').length;
+    const won = signals.filter(s => s.status === 'WON').length;
+    const lost = signals.filter(s => s.status === 'LOST').length;
+    const settled = won + lost;
+    const winrate = settled > 0 ? Math.round((won / settled) * 100) : 0;
+    return {
+      total: signals.length,
+      active,
+      won,
+      lost,
+      settled,
+      winrate,
+    };
+  }, [signals]);
+
+  // ─── Per-session stats ────────────────────────────────────────────────────
+  // Groups all signals by session_id. The "current" session is whichever session
+  // has at least one ACTIVE signal, or the most recent session if none are active.
+  // Each session shows: trade count, won, lost, winrate, target gap (70-80%).
+  const sessions = useMemo(() => {
+    const byId = new Map<string, {
+      id: string;
+      total: number;
+      active: number;
+      won: number;
+      lost: number;
+      settled: number;
+      winrate: number;
+      firstTimestamp: Date;
+      lastTimestamp: Date;
+    }>();
+
+    for (const s of signals) {
+      const sid = s.session_id || 'LEGACY';
+      let entry = byId.get(sid);
+      if (!entry) {
+        entry = {
+          id: sid,
+          total: 0, active: 0, won: 0, lost: 0, settled: 0, winrate: 0,
+          firstTimestamp: s.timestamp,
+          lastTimestamp: s.timestamp,
+        };
+        byId.set(sid, entry);
+      }
+      entry.total += 1;
+      if (s.status === 'ACTIVE') entry.active += 1;
+      if (s.status === 'WON') entry.won += 1;
+      if (s.status === 'LOST') entry.lost += 1;
+      if (s.timestamp < entry.firstTimestamp) entry.firstTimestamp = s.timestamp;
+      if (s.timestamp > entry.lastTimestamp) entry.lastTimestamp = s.timestamp;
+    }
+
+    const arr = Array.from(byId.values()).map(e => {
+      e.settled = e.won + e.lost;
+      e.winrate = e.settled > 0 ? Math.round((e.won / e.settled) * 100) : 0;
+      return e;
+    });
+    // Sort: sessions with active signals first, then by most recent timestamp
+    arr.sort((a, b) => {
+      if (a.active > 0 && b.active === 0) return -1;
+      if (a.active === 0 && b.active > 0) return 1;
+      return b.lastTimestamp.getTime() - a.lastTimestamp.getTime();
+    });
+    return arr;
+  }, [signals]);
+
+  const currentSession = sessions[0] || null;
+  const [sessionFilter, setSessionFilter] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('a2sniper_filter_session') || 'CURRENT';
+    }
+    return 'CURRENT';
+  });
+  const handleSessionChange = (v: string) => {
+    setSessionFilter(v);
+    if (typeof window !== 'undefined') localStorage.setItem('a2sniper_filter_session', v);
   };
+  const sessionFilterResolved = sessionFilter === 'CURRENT'
+    ? (currentSession?.id || 'ALL')
+    : sessionFilter;
+  const sessionSignals = useMemo(() => {
+    if (sessionFilterResolved === 'ALL') return signals;
+    return signals.filter(s => (s.session_id || 'LEGACY') === sessionFilterResolved);
+  }, [signals, sessionFilterResolved]);
+  const sessionStats = useMemo(() => {
+    const active = sessionSignals.filter(s => s.status === 'ACTIVE').length;
+    const won = sessionSignals.filter(s => s.status === 'WON').length;
+    const lost = sessionSignals.filter(s => s.status === 'LOST').length;
+    const settled = won + lost;
+    const winrate = settled > 0 ? Math.round((won / settled) * 100) : 0;
+    return { total: sessionSignals.length, active, won, lost, settled, winrate };
+  }, [sessionSignals]);
 
   useEffect(() => {
     const store = useAppStore.getState();
@@ -465,32 +552,194 @@ export default function SignalsPage() {
           {liveStatus === 'LIVE' && (
             <>
               {/* Stats Bar */}
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-8">
                 {[
-                  { label: 'Total Signals', value: stats.total, color: 'text-gray-400 bg-white/[0.02]', icon: TrendingUp },
-                  { label: 'Active', value: stats.active, color: 'text-[#D4AF37] bg-[#D4AF37]/10', icon: Clock },
-                  { label: 'Won', value: stats.won, color: 'text-green-500 bg-green-500/10', icon: Target },
-                  { label: 'Lost', value: stats.lost, color: 'text-red-500 bg-red-500/10', icon: TrendingUp }
+                  { label: 'Total Signals', value: stats.total, sub: `${stats.settled} settled`, color: 'text-gray-400 bg-white/[0.02]', icon: TrendingUp },
+                  { label: 'Active', value: stats.active, sub: 'in progress', color: 'text-[#D4AF37] bg-[#D4AF37]/10', icon: Clock },
+                  { label: 'Won', value: stats.won, sub: 'closed wins', color: 'text-green-500 bg-green-500/10', icon: Target },
+                  { label: 'Lost', value: stats.lost, sub: 'closed losses', color: 'text-red-500 bg-red-500/10', icon: TrendingDown },
+                  {
+                    label: 'Winrate',
+                    value: `${stats.winrate}%`,
+                    sub: stats.winrate >= 70 ? 'on target' : stats.winrate >= 60 ? 'below target' : 'needs review',
+                    color:
+                      stats.winrate >= 70
+                        ? 'text-green-500 bg-green-500/10'
+                        : stats.winrate >= 60
+                        ? 'text-yellow-500 bg-yellow-500/10'
+                        : 'text-red-500 bg-red-500/10',
+                    icon: Award,
+                  },
                 ].map((card, index) => (
                   <motion.div
                     key={index}
                     initial={{ opacity: 0, y: 20 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ duration: 0.5, delay: index * 0.1 }}
-                    className="bg-[#0a0a0c]/80 border border-white/5 p-6 rounded-2xl backdrop-blur-md"
+                    className="bg-[#0a0a0c]/80 border border-white/5 p-5 rounded-2xl backdrop-blur-md"
                   >
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="text-[10px] text-gray-500 font-bold uppercase tracking-wider mb-1">{card.label}</p>
-                        <p className="text-2xl font-black text-white tracking-tight">{card.value}</p>
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="text-[10px] text-gray-500 font-bold uppercase tracking-wider mb-1 truncate">{card.label}</p>
+                        <p className="text-2xl font-black text-white tracking-tight leading-none">{card.value}</p>
+                        <p className="text-[9px] text-gray-600 font-bold uppercase tracking-wider mt-1.5 truncate">{card.sub}</p>
                       </div>
-                      <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${card.color}`}>
-                        <card.icon className="w-5 h-5" />
+                      <div className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 ${card.color}`}>
+                        <card.icon className="w-4 h-4" />
                       </div>
                     </div>
                   </motion.div>
                 ))}
               </div>
+
+              {/* Per-Session Panel — 10 trades per session, target winrate 70-80% */}
+              {sessions.length > 0 && (
+                <motion.div
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.5, delay: 0.5 }}
+                  className="bg-[#0a0a0c]/80 border border-white/5 p-6 rounded-2xl backdrop-blur-md mb-8"
+                >
+                  <div className="flex flex-col lg:flex-row gap-6 items-start lg:items-center justify-between">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-2">
+                        <Award className="w-4 h-4 text-[#D4AF37]" />
+                        <h3 className="text-xs font-black text-white uppercase tracking-wider">Trading Session</h3>
+                        <span className="text-[10px] text-gray-600 font-bold uppercase tracking-wider">10 trades per session · target 70-80%</span>
+                      </div>
+                      {currentSession ? (
+                        <>
+                          <p className="text-[10px] text-gray-500 font-mono mb-3 truncate">
+                            {currentSession.id} · {currentSession.total}/10 trades ·{' '}
+                            {currentSession.firstTimestamp.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
+                            {' → '}
+                            {currentSession.lastTimestamp.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
+                          </p>
+                          <div className="flex flex-wrap items-center gap-4 text-xs">
+                            <div className="flex items-center gap-2">
+                              <span className="text-gray-500 font-bold uppercase text-[10px]">Won</span>
+                              <span className="text-green-500 font-black">{currentSession.won}</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className="text-gray-500 font-bold uppercase text-[10px]">Lost</span>
+                              <span className="text-red-500 font-black">{currentSession.lost}</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className="text-gray-500 font-bold uppercase text-[10px]">Active</span>
+                              <span className="text-[#D4AF37] font-black">{currentSession.active}</span>
+                            </div>
+                            <div className="flex items-center gap-2 pl-3 border-l border-white/10">
+                              <span className="text-gray-500 font-bold uppercase text-[10px]">Winrate</span>
+                              <span className={`font-black text-lg ${
+                                currentSession.winrate >= 70 ? 'text-green-500'
+                                : currentSession.winrate >= 60 ? 'text-yellow-500'
+                                : 'text-red-500'
+                              }`}>
+                                {currentSession.winrate}%
+                              </span>
+                              {currentSession.settled > 0 && (
+                                <span className="text-[10px] text-gray-600 font-bold">
+                                  ({currentSession.won}/{currentSession.settled} settled)
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                          {/* Session progress bar */}
+                          <div className="mt-3 h-1.5 bg-white/[0.03] rounded-full overflow-hidden">
+                            <div
+                              className={`h-full transition-all ${
+                                currentSession.winrate >= 70 ? 'bg-green-500'
+                                : currentSession.winrate >= 60 ? 'bg-yellow-500'
+                                : 'bg-red-500'
+                              }`}
+                              style={{ width: `${Math.min(currentSession.winrate, 100)}%` }}
+                            />
+                          </div>
+                          {/* Trade dots — 10 circles, one per trade slot, filled by outcome */}
+                          <div className="flex gap-1.5 mt-3">
+                            {(() => {
+                              // Compute session signals ONCE, then index into the array
+                              const sessionSigs = signals
+                                .filter(s => (s.session_id || 'LEGACY') === currentSession.id)
+                                .sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+                              return Array.from({ length: 10 }).map((_, i) => {
+                                const sig = sessionSigs[i];
+                                const color = !sig
+                                  ? 'bg-white/[0.04] border-white/5'
+                                  : sig.status === 'WON' ? 'bg-green-500/20 border-green-500/40'
+                                  : sig.status === 'LOST' ? 'bg-red-500/20 border-red-500/40'
+                                  : sig.status === 'ACTIVE' ? 'bg-[#D4AF37]/20 border-[#D4AF37]/40'
+                                  : 'bg-white/[0.04] border-white/5';
+                                return (
+                                  <div
+                                    key={i}
+                                    title={sig ? `Trade ${i + 1}: ${sig.pair} ${sig.direction} — ${sig.status}` : `Trade ${i + 1}: pending`}
+                                    className={`w-6 h-6 rounded-md border ${color} flex items-center justify-center text-[9px] font-bold text-gray-600`}
+                                  >
+                                    {i + 1}
+                                  </div>
+                                );
+                              });
+                            })()}
+                          </div>
+                        </>
+                      ) : (
+                        <p className="text-xs text-gray-500 font-bold">No sessions yet. Sessions start when the first signal is emitted.</p>
+                      )}
+                    </div>
+
+                    {/* Session picker */}
+                    <div className="w-full lg:w-72 flex-shrink-0">
+                      <label className="block text-[10px] font-black text-gray-500 mb-2 uppercase tracking-widest">View Session</label>
+                      <select
+                        value={sessionFilter}
+                        onChange={(e) => handleSessionChange(e.target.value)}
+                        className="w-full px-4 py-2.5 bg-[#050507] border border-white/5 rounded-xl focus:outline-none focus:border-[#D4AF37] text-xs font-bold text-white"
+                      >
+                        <option value="CURRENT">
+                          {currentSession ? `Current (${currentSession.id.slice(-6)})` : 'Current'}
+                        </option>
+                        <option value="ALL">All Sessions (overview)</option>
+                        {sessions.map((s) => (
+                          <option key={s.id} value={s.id}>
+                            {s.id === 'LEGACY' ? 'Legacy (pre-session)' : s.id.slice(-12)} — {s.winrate}% ({s.total}/10)
+                          </option>
+                        ))}
+                      </select>
+                      <p className="text-[10px] text-gray-600 font-bold mt-2 leading-relaxed">
+                        {sessionFilter === 'ALL'
+                          ? 'Showing aggregate stats across all sessions.'
+                          : sessionFilter === 'CURRENT'
+                          ? 'Auto-follows the active session. Stats below reflect this session only.'
+                          : 'Stats below reflect the selected session only.'}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Per-session mini-stats (filtered) */}
+                  {sessionFilter !== 'ALL' && (
+                    <div className="grid grid-cols-4 gap-3 mt-5 pt-5 border-t border-white/5">
+                      {[
+                        { label: 'Trades', value: sessionStats.total, color: 'text-white' },
+                        { label: 'Won', value: sessionStats.won, color: 'text-green-500' },
+                        { label: 'Lost', value: sessionStats.lost, color: 'text-red-500' },
+                        {
+                          label: 'Winrate',
+                          value: `${sessionStats.winrate}%`,
+                          color: sessionStats.winrate >= 70 ? 'text-green-500'
+                            : sessionStats.winrate >= 60 ? 'text-yellow-500'
+                            : 'text-red-500',
+                        },
+                      ].map((m, i) => (
+                        <div key={i} className="text-center">
+                          <p className="text-[9px] text-gray-600 font-black uppercase tracking-widest mb-1">{m.label}</p>
+                          <p className={`text-xl font-black ${m.color}`}>{m.value}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </motion.div>
+              )}
 
               {/* Filters Panel */}
               <motion.div

@@ -17,6 +17,7 @@ export interface Signal {
   fibonacci: string;
   rsi_status: string;
   is_win?: boolean | null;
+  session_id?: string;  // Trading session (10 trades per session). Group signals by this to see per-session winrate.
 }
 
 export interface PerformanceData {
