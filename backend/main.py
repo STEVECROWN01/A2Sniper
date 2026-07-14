@@ -120,6 +120,30 @@ def get_current_session_id() -> str:
 def increment_session_trade_count():
     """Call after a signal is successfully emitted."""
     _session_state["trade_count"] += 1
+
+# ─── Emission Gate (30s stagger between background signals) ───────────────────
+# Prevents signal floods: when multiple pairs qualify in the same scan cycle,
+# only the highest-scoring one is emitted. The next emission can't happen until
+# 30s have passed. Force mode (user request) bypasses this gate entirely.
+#
+# Flow:
+#   trading_loop scans all pairs every 5s → collects candidates (no emission)
+#   at each 5s tick, if 30s have passed since last emission AND candidates exist
+#   → emit ONLY the best-scoring candidate → register emission → wait next 30s
+_emission_gate = {
+    "last_emission_ts": 0.0,  # unix timestamp of last background emission
+}
+MIN_EMISSION_GAP_SECONDS = 30
+
+def can_emit_background_signal() -> bool:
+    """True if enough time has passed since the last background emission."""
+    now_ts = datetime.now(timezone.utc).timestamp()
+    return (now_ts - _emission_gate["last_emission_ts"]) >= MIN_EMISSION_GAP_SECONDS
+
+def register_background_emission():
+    """Call after a background signal is emitted."""
+    _emission_gate["last_emission_ts"] = datetime.now(timezone.utc).timestamp()
+
 monitor = MonitoringEngine()
 voting_model = VotingClassifierModel()
 po_scanner = PocketOptionScanner()
@@ -418,9 +442,9 @@ async def require_admin(credentials: HTTPAuthorizationCredentials = Security(sec
 generated_signals = deque(maxlen=1000)
 
 
-async def analyze_pair(pair: str) -> dict:
+async def analyze_pair(pair: str, return_candidate: bool = False) -> dict:
     """Pipeline d'analyse complet pour une paire."""
-    return await analyze_pair_internal(pair, force=False)
+    return await analyze_pair_internal(pair, force=False, return_candidate=return_candidate)
 
 
 async def force_analyze_pair(pair: str) -> dict:
@@ -445,10 +469,12 @@ async def force_analyze_pair(pair: str) -> dict:
 #   - Only 1m or 3m expiration (never 5m or anything else)
 # ══════════════════════════════════════════════════════════════════════
 
-async def analyze_pair_internal(pair: str, force: bool = False) -> dict:
-    """Sniper engine analysis pipeline. If force=True, bypasses risk/circuit-breaker checks."""
+async def analyze_pair_internal(pair: str, force: bool = False, return_candidate: bool = False) -> dict:
+    """Sniper engine analysis pipeline. If force=True, bypasses risk/circuit-breaker checks.
+    If return_candidate=True (background mode), returns a candidate dict instead of
+    emitting — the trading_loop collects candidates and emits only the best every 30s."""
     try:
-        return await _analyze_pair_internal_impl(pair, force)
+        return await _analyze_pair_internal_impl(pair, force, return_candidate=return_candidate)
     except Exception as e:
         import traceback
         logger.error(
@@ -458,7 +484,7 @@ async def analyze_pair_internal(pair: str, force: bool = False) -> dict:
         return None
 
 
-async def _analyze_pair_internal_impl(pair: str, force: bool = False) -> dict:
+async def _analyze_pair_internal_impl(pair: str, force: bool = False, return_candidate: bool = False) -> dict:
     """
     A2Sniper 3.0 — SNIPER ENGINE ONLY
     ==================================
@@ -600,6 +626,62 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False) -> dict:
             logger.debug(f"[{pair}] Background signal skipped — duplicate within 60s window")
             return None
 
+    # ─── CANDIDATE MODE (background scanning) ───────────────────────────────
+    # When return_candidate=True, the trading_loop is collecting candidates
+    # to pick the best one every 30s. We return all the analysis data as a
+    # dict WITHOUT building/saving/emitting the signal. The trading_loop will
+    # call _emit_candidate() on the winner.
+    if return_candidate and not force:
+        now_ts = datetime.now(timezone.utc).timestamp()
+        engine_mode = sniper_result.get('mode', 'SNIPER_1M')
+        is_momentum = engine_mode == 'MOMENTUM_1M'
+        factors_hit = sniper_result['factors']['factors_hit']
+
+        if is_momentum:
+            strategy_label = f"Momentum Continuation ({sniper_result['score']}/7 factors)"
+            indicator_summary = f"RSI {sniper_result['factors']['rsi']:.0f} / ADX {sniper_result['factors']['adx']:.0f}"
+            rsi_status = 'Mid-range (momentum)'
+        elif engine_mode == 'SNIPER_1M':
+            strategy_label = f"Mean Reversion ({sniper_result['score']}/7 factors)"
+            indicator_summary = f"RSI {sniper_result['factors']['rsi']:.0f} / Stoch {sniper_result['factors']['stoch_k']:.0f} / CCI {sniper_result['factors']['cci']:.0f}"
+            rsi_status = 'Oversold' if sniper_result['direction'] == 'CALL' else 'Overbought'
+        else:
+            strategy_label = f"Trend Pullback ({sniper_result['score']}/7 factors)"
+            indicator_summary = f"RSI {sniper_result['factors']['rsi']:.0f} / Stoch {sniper_result['factors']['stoch_k']:.0f} / ADX {sniper_result['factors']['adx']:.0f}"
+            rsi_status = 'Mid-range (trend resume)'
+
+        return {
+            'pair': pair,
+            'direction': sniper_result['direction'],
+            'score': sniper_result['score'],
+            'winrate': sniper_result['winrate'],
+            'payout': payout,
+            'entry_price': sniper_result['entry_price'],
+            'expiration': sniper_result['expiration'],
+            'classification': sniper_result['classification'],
+            'smc_structure': strategy_label,
+            'smc_zone': ', '.join(factors_hit[:3]),
+            'chart_pattern': sniper_result['factors'].get('reversal_pattern', 'N/A') or 'N/A',
+            'fibonacci': indicator_summary,
+            'rsi_status': rsi_status,
+            'recommended_stake': 10,
+            'analysis_details': {
+                'mode': 'momentum_continuation' if is_momentum else ('sniper_1m_mean_reversion' if engine_mode == 'SNIPER_1M' else 'sniper_3m_trend_pullback'),
+                'engine_mode': engine_mode,
+                'expiration_minutes': sniper_result['expiration'],
+                'factors_hit': factors_hit,
+                'factors_description': sniper_result['factors']['factors_description'],
+                'call_score': sniper_result['factors']['call_score'],
+                'put_score': sniper_result['factors']['put_score'],
+                'rsi': sniper_result['factors'].get('rsi'),
+                'stoch_k': sniper_result['factors'].get('stoch_k'),
+                'cci': sniper_result['factors'].get('cci'),
+                'adx': sniper_result['factors'].get('adx'),
+                'atr': sniper_result['factors'].get('atr'),
+            },
+            '_evaluated_at': now_ts,
+        }
+
     # 9. Build the signal dict from engine result
     logger.info(f"[SIGNAL-BUILD] Building signal for {pair} — engine_mode={sniper_result.get('mode')}, score={sniper_result.get('score')}, direction={sniper_result.get('direction')}")
     now = datetime.now(timezone.utc)
@@ -697,6 +779,109 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False) -> dict:
     return signal
 
 
+# ═══════════ CANDIDATE EMITTER ═════════════════════════════════════════
+# Takes a candidate dict (from return_candidate mode) and builds + saves +
+# emits the signal. Called by trading_loop when the 30s gate opens and the
+# best candidate has been selected.
+
+async def _emit_candidate(candidate: dict, force: bool = False) -> dict:
+    """Build, save, and emit a signal from a candidate dict.
+
+    Used by:
+    - trading_loop (force=False) — emits the best candidate every 30s
+    - Not used for force mode (that path uses the inline emission in
+      _analyze_pair_internal_impl, which has access to the full df_m1 data)
+    """
+    pair = candidate['pair']
+    now = datetime.now(timezone.utc)
+    now_ts = now.timestamp()
+
+    signal = {
+        'id': f'SIG-{now.strftime("%Y%m%d")}-{uuid.uuid4().hex[:6].upper()}',
+        'pair': pair,
+        'direction': candidate['direction'],
+        'time': now.strftime('%H:%M:%S'),
+        'timestamp': now.isoformat(),
+        'entry_price': candidate['entry_price'],
+        'expiration': candidate['expiration'],
+        'winrate': candidate['winrate'],
+        'score': candidate['score'],
+        'raw_points': candidate['score'],
+        'payout': candidate['payout'],
+        'classification': candidate['classification'],
+        'session_id': get_current_session_id(),
+        'smc_structure': candidate.get('smc_structure', 'Price Action'),
+        'smc_zone': candidate.get('smc_zone', 'N/A'),
+        'chart_pattern': candidate.get('chart_pattern', 'Momentum'),
+        'fibonacci': candidate.get('fibonacci', 'N/A'),
+        'rsi_status': candidate.get('rsi_status', 'Neutral'),
+        'recommended_stake': candidate.get('recommended_stake', 10),
+        'analysis_details': candidate.get('analysis_details', {}),
+    }
+
+    # Compliance hash
+    try:
+        signal['hash_signature'] = compliance.generate_immutable_log(signal)
+    except Exception as hash_err:
+        logger.warning(f"[{pair}] Hash error: {hash_err}")
+        signal['hash_signature'] = 'ERROR'
+
+    # Save to database
+    try:
+        async with AsyncSessionLocal() as session:
+            db_signal = SignalRecord(
+                id=signal['id'], pair=signal['pair'], direction=signal['direction'],
+                entry_price=signal['entry_price'], expiration=signal['expiration'],
+                winrate=signal['winrate'], score=signal['score'], payout=signal['payout'],
+                classification=signal['classification'], timestamp=now,
+                analysis_details=signal['analysis_details'],
+                hash_signature=signal['hash_signature'],
+                session_id=signal['session_id']
+            )
+            session.add(db_signal)
+            await session.commit()
+    except Exception as db_err:
+        logger.warning(f"[{pair}] DB save error: {db_err}")
+
+    # Emit signal
+    generated_signals.append(signal)
+    if not hasattr(analyze_pair_internal, '_last_signal_time'):
+        analyze_pair_internal._last_signal_time = {}
+    analyze_pair_internal._last_signal_time[pair] = now_ts
+    monitor.record_signal(signal['id'], pair, signal['direction'], signal['winrate'])
+    increment_session_trade_count()
+    if not force:
+        register_background_emission()
+
+    logger.info(
+        f"[SNIPER-EMITTED] id={signal['id']} pair={signal['pair']} "
+        f"direction={signal['direction']} score={signal['score']}/7 "
+        f"winrate={signal['winrate']}% expiration={signal['expiration']}m "
+        f"payout={signal['payout']}% session={signal['session_id']} "
+        f"trade={_session_state['trade_count']}/{TRADES_PER_SESSION}"
+    )
+
+    # Telegram notification
+    try:
+        signal_msg = f"""🎯 <b>A2SNIPER SIGNAL {"LIVE" if not force else "SUR DEMANDE"}</b>
+━━━━━━━━━━━━━━━━━━━━━
+📊 Paire : <b>{signal['pair']}</b>
+🟢 Direction : <b>{signal['direction']}</b>
+⌛ Expiration : <b>{signal['expiration']}m</b>
+💰 Payout : <b>{signal['payout']}%</b>
+🎯 Winrate : <b>{signal['winrate']}%</b>
+
+🏗️ Structure : <i>{signal['smc_structure']}</i>
+⚡ Confluence : <i>{signal['fibonacci']}</i>
+
+Zéro Simulation. 100% Real-Market."""
+        await telegram_bot.send_signal(signal_msg)
+    except Exception as tg_err:
+        logger.warning(f"[SIGNAL-TELEGRAM-ERROR] pair={pair} err={tg_err}")
+
+    return signal
+
+
 # ═══════════ MAIN TRADING LOOP ═══════════
 async def trading_loop():
     """Boucle d'analyse réelle sur les paires OTC disponibles.
@@ -720,8 +905,9 @@ async def trading_loop():
 
     # ═══ SNIPER KICKSTART ═════════════════════════════════════════════
     # Fire sniper analysis on all forex pairs within 2 seconds of connecting.
-    # The sniper engine requires 4/7 factors + ADX ≤ 30 + strict thresholds.
-    # Pairs with insufficient candles or no confluence are silently skipped.
+    # Collects candidates and emits the best one (respecting the 30s gate).
+    # The gate's last_emission_ts starts at 0, so the first emission is
+    # always allowed immediately on startup.
     try:
         kickoff_pairs = po_scanner.find_pairs_above_payout(
             min_payout=70.0, pair_filter="OTC", active_only=True, forex_only=True
@@ -729,14 +915,24 @@ async def trading_loop():
         if kickoff_pairs:
             kickoff_list = list(kickoff_pairs.keys())
             logger.info(f"[SNIPER-KICKSTART] Firing sniper analysis on {len(kickoff_list)} pairs...")
+            kickoff_candidates = []
             for pair in kickoff_list:
                 try:
-                    sig = await analyze_pair(pair)
-                    if sig:
-                        logger.info(f"[SNIPER-KICKSTART] ✅ Signal generated: {sig['pair']} {sig['direction']} ({sig['winrate']}%)")
+                    candidate = await analyze_pair(pair, return_candidate=True)
+                    if candidate:
+                        kickoff_candidates.append(candidate)
+                        logger.info(f"[SNIPER-KICKSTART] ✅ Candidate: {candidate['pair']} {candidate['direction']} score={candidate['score']}/7 ({candidate['winrate']}%)")
                 except Exception:
                     pass
                 await asyncio.sleep(0.05)  # 50ms between pairs — fast kickoff
+
+            # Emit the best candidate from kickstart (gate is open on first run)
+            if kickoff_candidates:
+                best = max(kickoff_candidates, key=lambda c: c.get('score', 0))
+                logger.info(f"[SNIPER-KICKSTART] Emitting best candidate: {best['pair']} score={best['score']}/7")
+                await _emit_candidate(best, force=False)
+            else:
+                logger.info("[SNIPER-KICKSTART] No candidates qualified — waiting for main loop")
     except Exception as e:
         logger.warning(f"[SNIPER-KICKSTART] Error: {e}")
 
@@ -777,38 +973,68 @@ async def trading_loop():
                 logger.info("[LOOP] No live FOREX pairs meet criteria (active + payout>=70%) — waiting for PO update")
                 pairs_to_scan = []
 
-            # Analyse séquentielle des paires
+            # ═══ COLLECT CANDIDATES (no emission) ═══════════════════════════
+            # Scan all pairs using return_candidate=True — this runs the full
+            # analysis (candles, indicators, momentum scoring, risk check,
+            # circuit breaker) but returns a candidate dict instead of emitting.
+            # At the end of the scan, we pick the highest-scoring candidate
+            # and emit ONLY that one — if the 30s gate allows.
+            candidates = []
             for pair in pairs_to_scan:
                 if not po_scanner.is_connected: break
 
                 payout = po_scanner.get_payout(pair)
                 if payout is None or payout < 70:
-                    # Skip pairs that don't currently meet the threshold (active + ≥ 70%)
                     continue
 
-                # ═══ SNIPER ENGINE + CANDLE PERSISTENCE ════════════════
+                # ═══ SNIPER ENGINE (candidate mode) + CANDLE PERSISTENCE ══
                 try:
-                    await analyze_pair(pair)
+                    candidate = await analyze_pair(pair, return_candidate=True)
+                    if candidate:
+                        candidates.append(candidate)
+                        logger.info(
+                            f"[CANDIDATE] pair={pair} score={candidate['score']}/7 "
+                            f"direction={candidate['direction']} winrate={candidate['winrate']}% "
+                            f"— added to pool ({len(candidates)} candidates this cycle)"
+                        )
                 except Exception as e:
                     logger.debug(f"[SNIPER-ERROR] pair={pair} err={e}")
-                
+
                 # Save completed candles to database (for persistence across redeploys)
-                # save_candles_to_db automatically excludes the last (incomplete) candle
                 try:
                     asset = po_scanner.get_asset_symbol(pair)
                     cached_df = po_scanner._candles_cache.get(f"{asset}_1m")
                     if cached_df is not None and not cached_df.empty and len(cached_df) > 1:
-                        # Only save if there are completed candles (exclude the forming one)
                         await save_candles_to_db(asset, cached_df.tail(10))
                 except Exception:
                     pass
-                
-                await asyncio.sleep(0.3)
 
-            # 5s cycle interval (was 15s) — user requirement: "every 5s so
-            # it doesn't miss". This means we re-evaluate the eligible pair
-            # list and run analysis 3x more often, catching pair state
-            # changes (active↔inactive, payout fluctuations) much faster.
+                await asyncio.sleep(0.1)  # small delay between pairs
+
+            # ═══ EMIT BEST CANDIDATE (if gate allows) ═══════════════════════
+            # The 30s gate ensures signals come one by one, 30s apart — never
+            # a flood. If multiple pairs qualified, only the highest-scoring
+            # one is emitted. The rest are discarded; next 5s scan starts fresh.
+            if candidates:
+                best = max(candidates, key=lambda c: c.get('score', 0))
+                if can_emit_background_signal():
+                    logger.info(
+                        f"[GATE-OPEN] Emitting best candidate: {best['pair']} "
+                        f"score={best['score']}/7 ({len(candidates)} candidates were available)"
+                    )
+                    await _emit_candidate(best, force=False)
+                else:
+                    remaining = MIN_EMISSION_GAP_SECONDS - (datetime.now(timezone.utc).timestamp() - _emission_gate["last_emission_ts"])
+                    logger.info(
+                        f"[GATE-BLOCKED] {len(candidates)} candidates ready, best={best['pair']} "
+                        f"score={best['score']}/7 — {remaining:.0f}s until next emission"
+                    )
+            # If no candidates, silently continue — next scan in 5s
+
+            # 5s cycle interval — re-evaluate all pairs every 5s.
+            # The 30s gate inside _emit_candidate ensures we only EMIT every 30s,
+            # but we keep SCANNING every 5s so we always have fresh candidates
+            # ready when the gate opens.
             await asyncio.sleep(5)
 
         except Exception as e:
