@@ -685,6 +685,7 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False, return_can
     # 9. Build the signal dict from engine result
     logger.info(f"[SIGNAL-BUILD] Building signal for {pair} — engine_mode={sniper_result.get('mode')}, score={sniper_result.get('score')}, direction={sniper_result.get('direction')}")
     now = datetime.now(timezone.utc)
+    now_ts = now.timestamp()  # Always define now_ts — force mode skips the dedup block where it was previously set
     engine_mode = sniper_result.get('mode', 'SNIPER_1M')
     is_momentum = engine_mode == 'MOMENTUM_1M'
     factors_hit = sniper_result['factors']['factors_hit']
