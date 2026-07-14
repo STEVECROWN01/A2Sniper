@@ -187,13 +187,18 @@ async def auto_reconnect_scanner():
                 live_pairs = list(po_scanner.find_pairs_above_payout(
                     min_payout=70.0, pair_filter="OTC", active_only=True, forex_only=True
                 ).keys())
+                # Collect candidates from first 3 pairs, emit best one via gate
+                auto_candidates = []
                 for pair in live_pairs[:3]:
                     payout = po_scanner.get_payout(pair)
                     if payout and payout >= 70:
-                        sig = await force_analyze_pair(pair)
-                        if sig:
-                            logger.info(f"[AUTO-RECONNECT] Initial signal generated for {pair}")
-                            break
+                        candidate = await analyze_pair(pair, return_candidate=True)
+                        if candidate:
+                            auto_candidates.append(candidate)
+                if auto_candidates:
+                    best = max(auto_candidates, key=lambda c: c.get('score', 0))
+                    logger.info(f"[AUTO-RECONNECT] Emitting best candidate: {best['pair']} score={best['score']}/7")
+                    await _emit_candidate(best, force=False)
             asyncio.create_task(_kick())
         else:
             logger.warning("[AUTO-RECONNECT] ❌ Auto-reconnect failed — SSID may be expired. User needs to reconnect manually.")
@@ -3555,6 +3560,14 @@ async def connect_market(request: Request, credentials: HTTPAuthorizationCredent
         # start appearing in the UI within 5-10 seconds (not waiting for the
         # next trading_loop cycle or for 3+ minutes of candle building).
         # Fire-and-forget.
+        #
+        # ═══ GATE-RESPECTING VERSION ═══════════════════════════════════
+        # Previously this called force_analyze_pair(pair) for EVERY live pair,
+        # which bypassed the 30s emission gate and flooded the page with
+        # 9+ signals at once. Now it uses return_candidate=True (like the
+        # trading_loop) and emits ONLY the best candidate via _emit_candidate.
+        # The gate's last_emission_ts starts at 0, so the first emission
+        # after connecting is allowed immediately.
         async def _initial_analysis_kick():
             try:
                 # Wait 5 seconds for:
@@ -3571,56 +3584,31 @@ async def connect_market(request: Request, credentials: HTTPAuthorizationCredent
                     logger.info("[KICK] No live FOREX pairs meet criteria yet — skipping initial kick")
                     return
 
-                # ═══ CANDLE-BASED SIGNAL KICK ═══════════════════════════
-                # With REST-prefetched historical candles (100 bars per pair),
-                # we can run full CDC analysis (RSI, EMA, MACD, Bollinger)
-                # within 5 seconds of connecting.
-                # This produces REAL signals with genuine predictive power.
-                signals_generated = 0
+                # ═══ COLLECT CANDIDATES + EMIT BEST (gate-respecting) ══════
+                # Scan all pairs in candidate mode (no emission), then emit
+                # ONLY the highest-scoring one. The 30s gate in _emit_candidate
+                # ensures we don't flood the page.
+                kick_candidates = []
                 for pair in live_pairs:
                     payout = po_scanner.get_payout(pair)
                     if payout and payout >= 70:
                         try:
-                            # Sniper engine — the ONLY signal generator
-                            sig = await force_analyze_pair(pair)
-                            if sig:
-                                signals_generated += 1
-                                logger.info(f"[KICK-SNIPER] ✅ Signal generated for {pair} ({sig.get('winrate', 70)}% winrate)")
+                            candidate = await analyze_pair(pair, return_candidate=True)
+                            if candidate:
+                                kick_candidates.append(candidate)
+                                logger.info(f"[KICK-CANDIDATE] ✅ {pair} {candidate['direction']} score={candidate['score']}/7 ({candidate['winrate']}%)")
                         except Exception:
                             pass
-                        await asyncio.sleep(0.05)
+                    # Yield to event loop so HTTP requests can be processed
+                    await asyncio.sleep(0)
 
-                logger.info(f"[KICK] Pass complete — {signals_generated} signals generated from {len(live_pairs)} pairs")
-
-                # If sniper didn't produce any signals (insufficient confluence),
-                # retry after 3 more seconds — by then more candles may have arrived
-                # and market conditions may have changed.
-                if signals_generated == 0:
-                    logger.info("[KICK-SNIPER] No signals on first pass — retrying in 3s (waiting for candle accumulation)")
-                    await asyncio.sleep(3)
-                    for pair in live_pairs:
-                        payout = po_scanner.get_payout(pair)
-                        if payout and payout >= 70:
-                            try:
-                                sig = await force_analyze_pair(pair)
-                                if sig:
-                                    signals_generated += 1
-                                    logger.info(f"[KICK-SNIPER-RETRY] ✅ Signal generated for {pair} ({sig['winrate']}% winrate)")
-                            except Exception:
-                                pass
-                            await asyncio.sleep(0.05)
-                    logger.info(f"[KICK-SNIPER-RETRY] Pass complete — {signals_generated} signals total")
-
-                # Final retry: sniper engine on first 3 pairs (one more attempt)
-                if signals_generated == 0:
-                    logger.info("[KICK] No sniper signals yet — final retry on first 3 pairs")
-                    for pair in live_pairs[:3]:
-                        payout = po_scanner.get_payout(pair)
-                        if payout and payout >= 70:
-                            sig = await force_analyze_pair(pair)
-                            if sig:
-                                logger.info(f"[KICK-FINAL] Sniper signal generated for {pair}")
-                                break
+                # Emit the best candidate from the kick (gate is open on first run)
+                if kick_candidates:
+                    best = max(kick_candidates, key=lambda c: c.get('score', 0))
+                    logger.info(f"[KICK-EMIT] Emitting best candidate: {best['pair']} score={best['score']}/7 ({len(kick_candidates)} candidates were available)")
+                    await _emit_candidate(best, force=False)
+                else:
+                    logger.info(f"[KICK] No candidates qualified from {len(live_pairs)} pairs — waiting for main loop")
             except Exception as e:
                 logger.warning(f"[KICK] Initial analysis failed: {e}")
 
