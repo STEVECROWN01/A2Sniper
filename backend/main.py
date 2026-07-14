@@ -1874,6 +1874,33 @@ async def delete_signal(signal_id: str, admin_payload = Depends(require_admin)):
     return {"status": "success"}
 
 
+@app.delete("/api/admin/signals")
+async def delete_all_signals(admin_payload = Depends(require_admin)):
+    """Bulk delete ALL signals from the database.
+
+    Used to clear old test/flood data so stats start fresh.
+    Candles table is NOT touched — momentum engine keeps full history.
+    Also clears the in-memory generated_signals deque.
+    """
+    async with AsyncSessionLocal() as session:
+        from sqlalchemy import delete, func as sql_func
+        # Count first
+        count_result = await session.execute(select(sql_func.count(SignalRecord.id)))
+        count = count_result.scalar() or 0
+        # Delete all
+        await session.execute(delete(SignalRecord))
+        await session.commit()
+    # Clear in-memory deque too
+    generated_signals.clear()
+    # Reset session trade counter so new emissions start at session 1
+    _session_state["trade_count"] = 0
+    _session_state["current_id"] = f"SES-{datetime.now(timezone.utc).strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
+    # Reset emission gate so next signal emits immediately
+    _emission_gate["last_emission_ts"] = 0.0
+    logger.info(f"[ADMIN] Deleted {count} signals from database (candles preserved)")
+    return {"status": "success", "deleted": count}
+
+
 @app.get("/api/admin/logs")
 async def admin_get_logs(limit: int = 100, level: str = None, admin_payload = Depends(require_admin)):
     """Retourne les entrées de log système récentes (CDC Section 11.4)."""
