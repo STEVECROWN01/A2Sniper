@@ -269,7 +269,7 @@ async function proxyRequest(request: NextRequest, path?: string[]) {
 
     const response = await fetch(fullUrl, {
       ...fetchOptions,
-      signal: AbortSignal.timeout(30000), // 30s timeout
+      signal: AbortSignal.timeout(120000), // 120s timeout (was 30s — too short for signal requests)
     });
 
     // Forward response headers
