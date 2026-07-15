@@ -255,9 +255,10 @@ def score_momentum_continuation(df: pd.DataFrame, min_factors: int = 4) -> Optio
 
     # ═══ DERIVE WINRATE ═══
     # Momentum continuation with strict factors:
+    # 3/7 → 60% (relaxed — only used when adaptive threshold kicks in)
     # 4/7 → 70%, 5/7 → 75%, 6/7 → 82%, 7/7 → 88%
-    winrate_map = {4: 70, 5: 75, 6: 82, 7: 88}
-    winrate = winrate_map.get(score, 70 if score >= 4 else 0)
+    winrate_map = {3: 60, 4: 70, 5: 75, 6: 82, 7: 88}
+    winrate = winrate_map.get(score, 60 if score >= 3 else 0)
 
     # Classification
     if score == 7:
@@ -266,8 +267,10 @@ def score_momentum_continuation(df: pd.DataFrame, min_factors: int = 4) -> Optio
         classification = 'Premium Momentum (6/7 confluence)'
     elif score == 5:
         classification = 'Strong Momentum (5/7 confluence)'
-    else:
+    elif score == 4:
         classification = 'Confirmed Momentum (4/7 confluence)'
+    else:
+        classification = 'Relaxed Momentum (3/7 confluence)'
 
     # Build factor details
     factor_names = [f[0] for f in factors]

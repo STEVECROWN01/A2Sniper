@@ -1099,6 +1099,17 @@ async def trading_loop():
                         f"[GATE-BLOCKED] {len(candidates)} candidates ready, best={best['pair']} "
                         f"score={best['score']}/7 — {remaining:.0f}s until next emission"
                     )
+            else:
+                # HEARTBEAT: log every cycle so we can verify the trading loop
+                # is alive. Without this, a crashed loop is invisible — the
+                # backend stays up (serving API requests) but no signals emit.
+                time_since_last = datetime.now(timezone.utc).timestamp() - _last_successful_emission_ts()
+                logger.info(
+                    f"[LOOP-HEARTBEAT] No candidates this cycle. "
+                    f"Scanned {len(pairs_to_scan)} pairs, 0 qualified. "
+                    f"Time since last signal: {time_since_last:.0f}s. "
+                    f"Adaptive threshold: {'3/7 (relaxed)' if time_since_last >= ADAPTIVE_RELAX_AFTER_SECONDS else '4/7 (strict)'}"
+                )
             # If no candidates, silently continue — next scan in 5s
 
             # 5s cycle interval — re-evaluate all pairs every 5s.
