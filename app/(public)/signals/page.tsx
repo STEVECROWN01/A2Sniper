@@ -706,33 +706,6 @@ export default function SignalsPage() {
                         <p className="text-xs text-gray-500 font-bold">No sessions yet. Sessions start when the first signal is emitted.</p>
                       )}
                     </div>
-
-                    {/* Session picker */}
-                    <div className="w-full lg:w-72 flex-shrink-0">
-                      <label className="block text-[10px] font-black text-gray-500 mb-2 uppercase tracking-widest">View Session</label>
-                      <select
-                        value={sessionFilter}
-                        onChange={(e) => handleSessionChange(e.target.value)}
-                        className="w-full px-4 py-2.5 bg-[#050507] border border-white/5 rounded-xl focus:outline-none focus:border-[#D4AF37] text-xs font-bold text-white"
-                      >
-                        <option value="CURRENT">
-                          {currentSession ? `Current (${currentSession.id.slice(-6)})` : 'Current'}
-                        </option>
-                        <option value="ALL">All Sessions (overview)</option>
-                        {sessions.map((s) => (
-                          <option key={s.id} value={s.id}>
-                            {s.id === 'LEGACY' ? 'Legacy (pre-session)' : s.id.slice(-12)} — {s.winrate}% ({s.total}/10)
-                          </option>
-                        ))}
-                      </select>
-                      <p className="text-[10px] text-gray-600 font-bold mt-2 leading-relaxed">
-                        {sessionFilter === 'ALL'
-                          ? 'Showing aggregate stats across all sessions.'
-                          : sessionFilter === 'CURRENT'
-                          ? 'Auto-follows the active session. Stats below reflect this session only.'
-                          : 'Stats below reflect the selected session only.'}
-                      </p>
-                    </div>
                   </div>
 
                   {/* Per-session mini-stats (filtered) */}
