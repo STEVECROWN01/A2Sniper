@@ -182,34 +182,37 @@ def score_mean_reversion(df: pd.DataFrame, min_factors: int = 4) -> Optional[Dic
     call_factors = []  # factors supporting CALL (oversold reversal)
     put_factors = []   # factors supporting PUT (overbought reversal)
 
-    # ═══ FACTOR 1: Bollinger Band touch (STRICT — must actually touch) ═══
-    # Price must be AT or BEYOND the band — not just 'near' it.
-    # This is a genuine extreme, not a weak proximity signal.
-    if not np.isnan(bbu) and not np.isnan(bbl):
+    # ═══ FACTOR 1: Bollinger Band proximity (RELAXED — touch OR near) ═══
+    # Price AT or BEYOND band = strong signal.
+    # Price within 0.2 ATR of band = moderate signal (catches more setups).
+    if not np.isnan(bbu) and not np.isnan(bbl) and atr > 0:
         if close <= bbl:
             call_factors.append(('bb_touch_lower', f'Close {close:.5f} ≤ BB Lower {bbl:.5f}'))
         elif close >= bbu:
             put_factors.append(('bb_touch_upper', f'Close {close:.5f} ≥ BB Upper {bbu:.5f}'))
+        elif close <= bbl + 0.2 * atr:
+            call_factors.append(('bb_near_lower', f'Close near BB Lower (within 0.2 ATR)'))
+        elif close >= bbu - 0.2 * atr:
+            put_factors.append(('bb_near_upper', f'Close near BB Upper (within 0.2 ATR)'))
 
-    # ═══ FACTOR 2: RSI extreme (STRICT — genuine oversold/overbought) ═══
-    # RSI ≤30 = genuinely oversold, ≥70 = genuinely overbought.
-    # These are REAL extremes that predict reversal, not neutral readings.
-    if rsi <= 30:
-        call_factors.append(('rsi_oversold', f'RSI {rsi:.1f} ≤ 30'))
-    elif rsi >= 70:
-        put_factors.append(('rsi_overbought', f'RSI {rsi:.1f} ≥ 70'))
+    # ═══ FACTOR 2: RSI extreme (RELAXED) ═══
+    # ≤35 = oversold, ≥65 = overbought (was 30/70 — too strict, rarely hit).
+    # 35/65 catches genuine extremes without waiting for rare 30/70 readings.
+    if rsi <= 35:
+        call_factors.append(('rsi_oversold', f'RSI {rsi:.1f} ≤ 35'))
+    elif rsi >= 65:
+        put_factors.append(('rsi_overbought', f'RSI {rsi:.1f} ≥ 65'))
 
-    # ═══ FACTOR 3: Stochastic extreme (STRICT) ═══
-    # ≤20 = genuinely oversold, ≥80 = genuinely overbought.
-    # Plus reversal crossover for extra confirmation.
-    if stoch_k <= 20 and stoch_k > prev_stoch_k:
-        call_factors.append(('stoch_bull_cross', f'K {stoch_k:.1f} ≤20 and rising'))
-    elif stoch_k >= 80 and stoch_k < prev_stoch_k:
-        put_factors.append(('stoch_bear_cross', f'K {stoch_k:.1f} ≥80 and falling'))
-    elif stoch_k <= 20:
-        call_factors.append(('stoch_oversold', f'K {stoch_k:.1f} ≤ 20'))
-    elif stoch_k >= 80:
-        put_factors.append(('stoch_overbought', f'K {stoch_k:.1f} ≥ 80'))
+    # ═══ FACTOR 3: Stochastic extreme (RELAXED) ═══
+    # ≤25 = oversold, ≥75 = overbought (was 20/80 — relaxed to catch more).
+    if stoch_k <= 25 and stoch_k > prev_stoch_k:
+        call_factors.append(('stoch_bull_cross', f'K {stoch_k:.1f} ≤25 and rising'))
+    elif stoch_k >= 75 and stoch_k < prev_stoch_k:
+        put_factors.append(('stoch_bear_cross', f'K {stoch_k:.1f} ≥75 and falling'))
+    elif stoch_k <= 25:
+        call_factors.append(('stoch_oversold', f'K {stoch_k:.1f} ≤ 25'))
+    elif stoch_k >= 75:
+        put_factors.append(('stoch_overbought', f'K {stoch_k:.1f} ≥ 75'))
 
     # ═══ FACTOR 4: Candlestick rejection pattern ═══
     pattern = detect_reversal_candle(last, prev)
@@ -218,21 +221,21 @@ def score_mean_reversion(df: pd.DataFrame, min_factors: int = 4) -> Optional[Dic
     elif pattern in ('shooting_star', 'pin_bar_bear', 'bearish_engulfing'):
         put_factors.append(('reversal_candle', pattern))
 
-    # ═══ FACTOR 5: CCI extreme (STRICT) ═══
-    # ≤-100 = genuinely oversold, ≥100 = genuinely overbought.
-    if cci <= -100:
-        call_factors.append(('cci_oversold', f'CCI {cci:.0f} ≤ -100'))
-    elif cci >= 100:
-        put_factors.append(('cci_overbought', f'CCI {cci:.0f} ≥ 100'))
+    # ═══ FACTOR 5: CCI extreme (RELAXED) ═══
+    # ≤-80 = oversold, ≥80 = overbought (was -100/100 — relaxed).
+    if cci <= -80:
+        call_factors.append(('cci_oversold', f'CCI {cci:.0f} ≤ -80'))
+    elif cci >= 80:
+        put_factors.append(('cci_overbought', f'CCI {cci:.0f} ≥ 80'))
 
-    # ═══ FACTOR 6: Price deviation from EMA21 (STRICT) ═══
-    # ≥1.5 ATR deviation = genuinely stretched (not just normal fluctuation).
+    # ═══ FACTOR 6: Price deviation from EMA21 (RELAXED) ═══
+    # ≥1.0 ATR deviation = stretched (was 1.5 — too strict for normal markets).
     if atr > 0 and not np.isnan(ema21):
         deviation = close - ema21
         atr_multiple = abs(deviation) / atr
-        if deviation <= -1.5 * atr:
+        if deviation <= -1.0 * atr:
             call_factors.append(('deviation_below_ema', f'{atr_multiple:.2f} ATR below EMA21'))
-        elif deviation >= 1.5 * atr:
+        elif deviation >= 1.0 * atr:
             put_factors.append(('deviation_above_ema', f'{atr_multiple:.2f} ATR above EMA21'))
 
     # ═══ FACTOR 7: Momentum exhaustion (last 3 candles decelerating) ═══
@@ -276,7 +279,7 @@ def score_mean_reversion(df: pd.DataFrame, min_factors: int = 4) -> Optional[Dic
     # value. The strong factors are the ones that measure genuine extremes.
     STRONG_FACTORS = {'rsi_oversold', 'rsi_overbought', 'stoch_bull_cross',
                       'stoch_bear_cross', 'stoch_oversold', 'stoch_overbought',
-                      'bb_touch_lower', 'bb_touch_upper',
+                      'bb_touch_lower', 'bb_touch_upper', 'bb_near_lower', 'bb_near_upper',
                       'cci_oversold', 'cci_overbought'}
 
     chosen_factors = call_factors if call_score > put_score else put_factors
