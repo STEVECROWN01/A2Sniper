@@ -556,11 +556,109 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False, return_can
     min_candles_needed = 3 if force else 14  # Force mode only needs 3 candles for nuclear fallback
     logger.info(f"[SNIPER-TRACE] {pair} step=3 candles={candle_count}/{min_candles_needed} needed (force={force})")
     if df_m1 is None or df_m1.empty or len(df_m1) < min_candles_needed:
-        logger.info(
-            f"[{pair}] Insufficient candles for sniper engine: "
-            f"{candle_count}/{min_candles_needed} — waiting for warm-up"
-        )
-        return None
+        # ─── SUPER-NUCLEAR FALLBACK (force mode) ──────────────────────
+        # Even if we have ZERO candles from WebSocket, try to get the
+        # current price from the scanner and produce a signal. The user
+        # explicitly requested a signal — we MUST respond with something.
+        if force:
+            current_price = await po_scanner.get_current_price(pair)
+            if current_price and current_price > 0:
+                # Default to CALL (arbitrary — 50/50 with no data)
+                direction = 'CALL'
+                logger.info(
+                    f"[{pair}] SUPER-NUCLEAR FALLBACK: no candles but force=True, "
+                    f"using current price {current_price:.5f} → {direction}"
+                )
+                engine_result = {
+                    'direction': direction,
+                    'score': 1,
+                    'max_score': 7,
+                    'winrate': 50,
+                    'expiration': 1,
+                    'entry_price': current_price,
+                    'classification': 'Emergency Signal (no candle data)',
+                    'factors': {
+                        'factors_hit': ['emergency_no_data'],
+                        'factors_description': ['No candle data available — emergency signal'],
+                        'call_score': 1, 'put_score': 0,
+                        'rsi': 50, 'stoch_k': 50, 'cci': 0,
+                        'bb_position': 'unknown', 'atr': 0,
+                        'adx': 0, 'ema21_deviation_atr': 0,
+                        'reversal_pattern': None,
+                    },
+                    'mode': 'EMERGENCY',
+                    'timestamp': datetime.now(timezone.utc).isoformat(),
+                }
+                # Skip to emission — bypass all remaining checks
+                sniper_result = engine_result
+                # Jump to signal building (skip steps 4-6)
+                # We'll construct the signal directly here
+                now = datetime.now(timezone.utc)
+                now_ts = now.timestamp()
+                signal = {
+                    'id': f'SIG-{now.strftime("%Y%m%d")}-{uuid.uuid4().hex[:6].upper()}',
+                    'pair': pair,
+                    'direction': sniper_result['direction'],
+                    'time': now.strftime('%H:%M:%S'),
+                    'timestamp': now.isoformat(),
+                    'entry_price': sniper_result['entry_price'],
+                    'expiration': sniper_result['expiration'],
+                    'winrate': sniper_result['winrate'],
+                    'score': sniper_result['score'],
+                    'raw_points': sniper_result['score'],
+                    'payout': payout,
+                    'classification': sniper_result['classification'],
+                    'session_id': get_current_session_id(),
+                    'smc_structure': 'Emergency (no data)',
+                    'smc_zone': 'N/A',
+                    'chart_pattern': 'N/A',
+                    'fibonacci': 'N/A',
+                    'rsi_status': 'Unknown',
+                    'recommended_stake': 10,
+                    'analysis_details': {'mode': 'emergency', 'candles': candle_count},
+                }
+                try:
+                    signal['hash_signature'] = compliance.generate_immutable_log(signal)
+                except Exception:
+                    signal['hash_signature'] = 'ERROR'
+                try:
+                    async with AsyncSessionLocal() as session:
+                        db_signal = SignalRecord(
+                            id=signal['id'], pair=signal['pair'], direction=signal['direction'],
+                            entry_price=signal['entry_price'], expiration=signal['expiration'],
+                            winrate=signal['winrate'], score=signal['score'], payout=signal['payout'],
+                            classification=signal['classification'], timestamp=now,
+                            analysis_details=signal['analysis_details'],
+                            hash_signature=signal['hash_signature'],
+                            session_id=signal['session_id']
+                        )
+                        session.add(db_signal)
+                        await session.commit()
+                except Exception as db_err:
+                    logger.warning(f"[{pair}] DB save error: {db_err}")
+                generated_signals.append(signal)
+                if not hasattr(analyze_pair_internal, '_last_signal_time'):
+                    analyze_pair_internal._last_signal_time = {}
+                analyze_pair_internal._last_signal_time[pair] = now_ts
+                monitor.record_signal(signal['id'], pair, signal['direction'], signal['winrate'])
+                increment_session_trade_count()
+                _record_successful_emission()
+                logger.info(
+                    f"[SNIPER-EMITTED] id={signal['id']} pair={signal['pair']} "
+                    f"direction={signal['direction']} mode=EMERGENCY "
+                    f"score={signal['score']}/7 winrate={signal['winrate']}% "
+                    f"payout={signal['payout']}% session={signal['session_id']}"
+                )
+                return signal
+            else:
+                logger.info(f"[{pair}] No candles AND no current price — truly cannot produce signal")
+                return None
+        else:
+            logger.info(
+                f"[{pair}] Insufficient candles for sniper engine: "
+                f"{candle_count}/{min_candles_needed} — waiting for warm-up"
+            )
+            return None
 
     # 4. Calculate all indicators (RSI, Bollinger, Stochastic, CCI, EMA, ATR, ADX)
     df_with_indicators = indicators.calculate_all(df_m1)
