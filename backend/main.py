@@ -553,11 +553,12 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False, return_can
     # CPU-bound indicator calculation that follows.
     await asyncio.sleep(0)
     candle_count = len(df_m1) if df_m1 is not None and not df_m1.empty else 0
-    logger.info(f"[SNIPER-TRACE] {pair} step=3 candles={candle_count}/14 needed")
-    if df_m1 is None or df_m1.empty or len(df_m1) < 14:
+    min_candles_needed = 3 if force else 14  # Force mode only needs 3 candles for nuclear fallback
+    logger.info(f"[SNIPER-TRACE] {pair} step=3 candles={candle_count}/{min_candles_needed} needed (force={force})")
+    if df_m1 is None or df_m1.empty or len(df_m1) < min_candles_needed:
         logger.info(
             f"[{pair}] Insufficient candles for sniper engine: "
-            f"{candle_count}/14 — waiting for warm-up"
+            f"{candle_count}/{min_candles_needed} — waiting for warm-up"
         )
         return None
 
@@ -568,11 +569,15 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False, return_can
     logger.info(f"[SNIPER-TRACE] {pair} step=4 indicators_calculated columns={list(df_with_indicators.columns)[:10]}")
 
     # 5. Validate data quality (rejects identical candles, suspicious jumps, zero volume)
+    # Skip validation in force mode — user explicitly requested a signal, so
+    # we'll use the nuclear fallback if data is marginal rather than rejecting.
     is_valid, validation_reason = validate_candle_data(df_with_indicators, min_bars=14)
     logger.info(f"[SNIPER-TRACE] {pair} step=5 data_valid={is_valid} reason={validation_reason}")
-    if not is_valid:
+    if not is_valid and not force:
         logger.info(f"[{pair}] Sniper data rejected: {validation_reason}")
         return None
+    elif not is_valid and force:
+        logger.info(f"[{pair}] Data marginal but force=True — proceeding (nuclear fallback will catch if engine fails)")
 
     # 6. Run the engine — STRICT 4/7 THRESHOLD
     # ─────────────────────────────────────────────────────────────────────
