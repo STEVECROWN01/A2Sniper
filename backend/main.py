@@ -144,6 +144,22 @@ def register_background_emission():
     """Call after a background signal is emitted."""
     _emission_gate["last_emission_ts"] = datetime.now(timezone.utc).timestamp()
 
+# ─── Adaptive Threshold ───────────────────────────────────────────────────────
+# If no signal has been emitted for this many seconds, relax the momentum
+# engine's factor threshold from 4/7 (70%+ winrate) to 3/7 (55-65% winrate)
+# so the user isn't staring at an empty page during quiet market conditions.
+ADAPTIVE_RELAX_AFTER_SECONDS = 120  # 2 minutes
+_last_signal_emitted_ts = 0.0  # tracks the timestamp of the last successful emission
+
+def _last_successful_emission_ts() -> float:
+    """Returns the unix timestamp of the last successfully emitted signal."""
+    return _last_signal_emitted_ts
+
+def _record_successful_emission():
+    """Call after ANY signal is successfully emitted (force or background)."""
+    global _last_signal_emitted_ts
+    _last_signal_emitted_ts = datetime.now(timezone.utc).timestamp()
+
 monitor = MonitoringEngine()
 voting_model = VotingClassifierModel()
 po_scanner = PocketOptionScanner()
@@ -558,10 +574,26 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False, return_can
         logger.info(f"[{pair}] Sniper data rejected: {validation_reason}")
         return None
 
-    # 6. Run the engine
-    # BOTH force mode and background mode use 4/7 factors (strict confluence).
-    # 4/7 factors = genuine momentum with 70%+ winrate.
-    min_factors = 4
+    # 6. Run the engine — ADAPTIVE THRESHOLD
+    # ─────────────────────────────────────────────────────────────────────
+    # Normally requires 4/7 factors (70%+ winrate). But if no signal has
+    # been emitted for 2+ minutes, relax to 3/7 factors so the user isn't
+    # staring at an empty page. This gives the "every 30s" rhythm when
+    # market conditions are good, and graceful degradation when they're not.
+    #
+    # Force mode (user request) always uses 4/7 — user asked for the best.
+    if force:
+        min_factors = 4
+    else:
+        time_since_last = datetime.now(timezone.utc).timestamp() - _last_successful_emission_ts()
+        if time_since_last >= ADAPTIVE_RELAX_AFTER_SECONDS:
+            min_factors = 3
+            logger.info(
+                f"[{pair}] ADAPTIVE: relaxing to 3/7 factors "
+                f"({time_since_last:.0f}s since last signal — market is quiet)"
+            )
+        else:
+            min_factors = 4
 
     # ═══ ENGINE TOGGLE ═════════════════════════════════════════════
     # Uses SIGNAL_ENGINE global to select which engine to run.
@@ -779,6 +811,7 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False, return_can
     analyze_pair_internal._last_signal_time[pair] = now_ts
     monitor.record_signal(signal['id'], pair, signal['direction'], signal['winrate'])
     increment_session_trade_count()
+    _record_successful_emission()
 
     logger.info(
         f"[SNIPER-EMITTED] id={signal['id']} pair={signal['pair']} "
@@ -805,6 +838,24 @@ async def _emit_candidate(candidate: dict, force: bool = False) -> dict:
       _analyze_pair_internal_impl, which has access to the full df_m1 data)
     """
     pair = candidate['pair']
+
+    # ─── RACE CONDITION GUARD ─────────────────────────────────────────────
+    # The kickstart and the first trading_loop scan can both collect the same
+    # pair as a candidate. Without this check, both would emit a signal for
+    # the same pair within seconds of each other (the duplicate AED/CNY bug).
+    # Skip emission if this pair already had a signal in the last 60s.
+    if not force:
+        if not hasattr(analyze_pair_internal, '_last_signal_time'):
+            analyze_pair_internal._last_signal_time = {}
+        last_time = analyze_pair_internal._last_signal_time.get(pair, 0)
+        now_ts_check = datetime.now(timezone.utc).timestamp()
+        if (now_ts_check - last_time) < 60:
+            logger.info(
+                f"[EMIT-SKIP] {pair} — duplicate within 60s window "
+                f"(last={last_time:.0f}, now={now_ts_check:.0f}, "
+                f"gap={now_ts_check - last_time:.0f}s). Skipping to prevent duplicate."
+            )
+            return None
     now = datetime.now(timezone.utc)
     now_ts = now.timestamp()
 
@@ -862,6 +913,7 @@ async def _emit_candidate(candidate: dict, force: bool = False) -> dict:
     analyze_pair_internal._last_signal_time[pair] = now_ts
     monitor.record_signal(signal['id'], pair, signal['direction'], signal['winrate'])
     increment_session_trade_count()
+    _record_successful_emission()
     if not force:
         register_background_emission()
 
