@@ -19,7 +19,8 @@ import {
   DollarSign,
   Loader2,
   AlertTriangle,
-  Check
+  Check,
+  Trash2
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAppStore } from '@/lib/store';
@@ -209,6 +210,73 @@ export default function RiskManagerPage() {
   const riskLevel = calculateRiskLevel(displayWinRate, results.wins + results.losses, results.accountGain);
   const riskStyle = getRiskLevelStyle(riskLevel);
 
+  // ─── RECOMMENDED STAKE CALCULATION ────────────────────────────────────────
+  // Computes the suggested stake for a given trade index based on:
+  //   1. The balance BEFORE that trade (sum of all prior WIN/LOSS results)
+  //   2. The current winrate (higher WR = higher stake %, lower WR = defensive)
+  //
+  // Stake percentage tiers:
+  //   WR >= 70%  → 5% of balance (aggressive — proven edge)
+  //   WR >= 60%  → 4% of balance (moderate)
+  //   WR >= 50%  → 3% of balance (conservative)
+  //   WR <  50%  → 2% of balance (defensive — protect capital)
+  //
+  // Minimum stake: $1 (PO minimum trade size)
+  const getBalanceBeforeTrade = (idx: number): number => {
+    if (idx === 0) return initialCapital;
+    let balance = initialCapital;
+    for (let i = 0; i < idx; i++) {
+      const t = trades[i];
+      if (t.result === 'WIN' && t.amount > 0) {
+        balance += t.amount * (payout / 100);
+      } else if (t.result === 'LOSS' && t.amount > 0) {
+        balance -= t.amount;
+      }
+    }
+    return balance;
+  };
+
+  const getRecommendedStake = (idx: number): number => {
+    const balance = getBalanceBeforeTrade(idx);
+    if (balance <= 0) return 0;
+    const wr = displayWinRate || 0;
+    let percentage = 0.05; // default 5%
+    if (wr >= 70) percentage = 0.05;
+    else if (wr >= 60) percentage = 0.04;
+    else if (wr >= 50) percentage = 0.03;
+    else percentage = 0.02;
+    const stake = balance * percentage;
+    return Math.max(1, parseFloat(stake.toFixed(2))); // min $1, 2 decimal places
+  };
+
+  // ─── AUTO-FILL FIRST EMPTY ROW WITH RECOMMENDED STAKE ────────────────────
+  // When the balance or winrate changes (e.g., PO balance syncs), auto-fill
+  // the first empty trade row's stake with the recommended amount.
+  // Only fills rows that have NO result AND NO amount — never overwrites
+  // manual entries.
+  useEffect(() => {
+    if (initialCapital <= 0) return;
+    const rec = getRecommendedStake(0);
+    if (rec <= 0) return;
+    const newTrades = [...trades];
+    let changed = false;
+    for (let i = 0; i < newTrades.length; i++) {
+      const t = newTrades[i];
+      // Only auto-fill rows with no result AND no amount
+      if (!t.result && (!t.amount || t.amount === 0)) {
+        const recForThisRow = getRecommendedStake(i);
+        if (recForThisRow > 0) {
+          newTrades[i] = { ...t, amount: recForThisRow };
+          changed = true;
+        }
+      }
+    }
+    if (changed) {
+      setTrades(newTrades);
+      localStorage.setItem('a2sniper_risk_trades', JSON.stringify(newTrades));
+    }
+  }, [initialCapital, displayWinRate]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Live validation status for the session counter (shown in UI)
   const counterValidation = validateSessionCounter(sessionCounter, currentEditingIdx, allSessions);
 
@@ -219,8 +287,55 @@ export default function RiskManagerPage() {
       return;
     }
     newTrades[idx] = { ...newTrades[idx], [field]: val };
+
+    // ─── AUTO-FILL NEXT ROW STAKE ON WIN/LOSS ──────────────────────────────
+    // When the user clicks WIN or LOSS on trade N, auto-fill the recommended
+    // stake for trade N+1 (based on the updated balance after trade N).
+    // Only fills if the next row is empty (no result, no amount) — doesn't
+    // overwrite manual entries.
+    if (field === 'result' && (val === 'WIN' || val === 'LOSS') && idx + 1 < newTrades.length) {
+      const nextTrade = newTrades[idx + 1];
+      if (nextTrade && !nextTrade.result && (!nextTrade.amount || nextTrade.amount === 0)) {
+        // Recalculate balance after this trade using the updated trades array
+        let balanceAfter = initialCapital;
+        for (let i = 0; i <= idx; i++) {
+          const t = newTrades[i];
+          if (t.result === 'WIN' && t.amount > 0) {
+            balanceAfter += t.amount * (payout / 100);
+          } else if (t.result === 'LOSS' && t.amount > 0) {
+            balanceAfter -= t.amount;
+          }
+        }
+        if (balanceAfter > 0) {
+          const wr = displayWinRate || 0;
+          let pct = 0.05;
+          if (wr >= 70) pct = 0.05;
+          else if (wr >= 60) pct = 0.04;
+          else if (wr >= 50) pct = 0.03;
+          else pct = 0.02;
+          const recStake = Math.max(1, parseFloat((balanceAfter * pct).toFixed(2)));
+          newTrades[idx + 1] = { ...nextTrade, amount: recStake };
+        }
+      }
+    }
+
     setTrades(newTrades);
     localStorage.setItem('a2sniper_risk_trades', JSON.stringify(newTrades));
+  };
+
+  // ─── DELETE TRADE ROW ─────────────────────────────────────────────────────
+  // Removes a trade from the array. If the user accidentally added a trade
+  // they didn't actually take, they can delete it. Subsequent trades shift up.
+  // Ensures at least 10 rows remain (the default table size).
+  const deleteTrade = (idx: number) => {
+    const newTrades = trades.filter((_, i) => i !== idx);
+    // Ensure at least 10 rows
+    while (newTrades.length < 10) {
+      newTrades.push({ result: '', amount: 0, return: 0 });
+    }
+    setTrades(newTrades);
+    localStorage.setItem('a2sniper_risk_trades', JSON.stringify(newTrades));
+    toast.success(`Trade #${idx + 1} deleted`);
   };
 
   const addTradeRow = () => {
@@ -733,6 +848,7 @@ export default function RiskManagerPage() {
                     <th className="px-6 py-4">Stake ($)</th>
                     <th className="px-6 py-4 text-right">Return ($)</th>
                     <th className="px-6 py-4 text-right">Balance ($)</th>
+                    <th className="px-4 py-4 text-center">Del</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-800/30">
@@ -760,7 +876,7 @@ export default function RiskManagerPage() {
                           type="number"
                           value={trade.amount || ''}
                           onChange={(e) => handleUpdateTrade(i, 'amount', Number(e.target.value))}
-                          placeholder="0.00"
+                          placeholder={getRecommendedStake(i).toFixed(2)}
                           className="w-24 bg-black/40 border border-gray-800 rounded-lg px-3 py-1.5 text-xs font-black text-white focus:border-[#D4AF37] outline-none"
                         />
                       </td>
@@ -773,6 +889,15 @@ export default function RiskManagerPage() {
                       </td>
                       <td className="px-6 py-4 text-right font-black text-xs text-[#D4AF37]">
                         {trade.balance === '-' ? '-' : `$${trade.balance}`}
+                      </td>
+                      <td className="px-4 py-4 text-center">
+                        <button
+                          onClick={() => deleteTrade(i)}
+                          className="p-1.5 text-gray-700 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all opacity-0 group-hover:opacity-100"
+                          title="Delete this trade"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
                       </td>
                     </tr>
                   ))}
