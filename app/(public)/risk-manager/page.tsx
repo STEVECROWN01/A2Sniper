@@ -249,9 +249,11 @@ export default function RiskManagerPage() {
     return Math.max(1, parseFloat(stake.toFixed(2))); // min $1, 2 decimal places
   };
 
-  // ─── AUTO-FILL FIRST EMPTY ROW WITH RECOMMENDED STAKE ────────────────────
-  // When the balance or winrate changes (e.g., PO balance syncs), auto-fill
-  // the first empty trade row's stake with the recommended amount.
+  // ─── AUTO-FILL EMPTY ROWS WITH RECOMMENDED STAKE ─────────────────────────
+  // Fires when:
+  //   - initialCapital changes (user edits balance, PO syncs, new session)
+  //   - displayWinRate changes (backend reports new winrate)
+  //   - trades array changes length (new row added)
   // Only fills rows that have NO result AND NO amount — never overwrites
   // manual entries.
   useEffect(() => {
@@ -275,7 +277,8 @@ export default function RiskManagerPage() {
       setTrades(newTrades);
       localStorage.setItem('a2sniper_risk_trades', JSON.stringify(newTrades));
     }
-  }, [initialCapital, displayWinRate]); // eslint-disable-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialCapital, displayWinRate, trades.length]);
 
   // Live validation status for the session counter (shown in UI)
   const counterValidation = validateSessionCounter(sessionCounter, currentEditingIdx, allSessions);
@@ -291,11 +294,11 @@ export default function RiskManagerPage() {
     // ─── AUTO-FILL NEXT ROW STAKE ON WIN/LOSS ──────────────────────────────
     // When the user clicks WIN or LOSS on trade N, auto-fill the recommended
     // stake for trade N+1 (based on the updated balance after trade N).
-    // Only fills if the next row is empty (no result, no amount) — doesn't
-    // overwrite manual entries.
+    // ALWAYS fills the next row if it has no result yet — the user clicking
+    // WIN/LOSS means they've moved on, so recalculating is correct.
     if (field === 'result' && (val === 'WIN' || val === 'LOSS') && idx + 1 < newTrades.length) {
       const nextTrade = newTrades[idx + 1];
-      if (nextTrade && !nextTrade.result && (!nextTrade.amount || nextTrade.amount === 0)) {
+      if (nextTrade && !nextTrade.result) {
         // Recalculate balance after this trade using the updated trades array
         let balanceAfter = initialCapital;
         for (let i = 0; i <= idx; i++) {
@@ -510,6 +513,11 @@ export default function RiskManagerPage() {
       ?? (savedCapital > 0 ? savedCapital : null)
       ?? 1000;
 
+    // Reset apiWinRate to null so a new session starts with N/A winrate
+    // (don't carry over the previous session's winrate). It will be
+    // re-fetched from the backend on the next fetchPerformance() call.
+    setApiWinRate(null);
+
     setInitialCapital(poBalance);
     setPayout(92);
     setTrades(Array(10).fill({ result: '', amount: 0, return: 0 }));
@@ -523,6 +531,18 @@ export default function RiskManagerPage() {
     setShowNewSessionModal(false);
 
     localStorage.setItem('a2sniper_risk_capital', String(poBalance));
+
+    // ─── AUTO-FILL FIRST TRADE STAKE IMMEDIATELY ──────────────────────────
+    // Don't wait for the useEffect — fill the first trade's stake right now
+    // based on the new balance. This ensures the user sees the recommended
+    // stake the moment they start a new session.
+    const recStake = Math.max(1, parseFloat((poBalance * 0.05).toFixed(2))); // 5% default for new session
+    const initialTrades = Array(10).fill({ result: '', amount: 0, return: 0 }).map((t, i) => {
+      if (i === 0) return { ...t, amount: recStake };
+      return t;
+    });
+    setTrades(initialTrades);
+    localStorage.setItem('a2sniper_risk_trades', JSON.stringify(initialTrades));
 
     const accountTypeLabel = liveBalance
       ? (latestMarketInfo?.is_demo ? 'DEMO account balance' : 'REAL account balance')
@@ -943,6 +963,14 @@ export default function RiskManagerPage() {
                       const val = Number(e.target.value);
                       setInitialCapital(val);
                       localStorage.setItem('a2sniper_risk_capital', String(val));
+                      // Reset all empty-row stakes so they get recalculated
+                      // by the auto-fill useEffect with the new balance.
+                      const resetTrades = trades.map(t => {
+                        if (!t.result) return { ...t, amount: 0 };
+                        return t;
+                      });
+                      setTrades(resetTrades);
+                      localStorage.setItem('a2sniper_risk_trades', JSON.stringify(resetTrades));
                     }}
                     className="w-full bg-black border border-gray-800 rounded-xl pl-10 pr-4 py-3 text-sm font-black text-white outline-none focus:border-[#D4AF37] transition-colors"
                   />
