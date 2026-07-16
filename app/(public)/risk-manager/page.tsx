@@ -505,34 +505,26 @@ export default function RiskManagerPage() {
     doNewSession();
   };
 
-  const doNewSession = async () => {
-    // Try to fetch fresh market status for the latest PO balance.
-    // This is OPTIONAL — if it fails (backend down, PO disconnected),
-    // the Risk Manager still works with the saved/manual balance.
-    try { await fetchMarketStatus(); } catch {}
-
-    // Read LATEST marketInfo from the store (bypasses stale closures).
-    // If PO is not connected, marketInfo may be null — that's fine.
+  const doNewSession = () => {
+    // Use the EXISTING marketInfo from the store — don't await a fresh fetch.
+    // The store is already polled every 10s, so marketInfo is fresh enough.
+    // This makes the New Session button INSTANT (no API call delay).
+    // The background poll will update the balance later if PO reconnects.
     const latestMarketInfo = useAppStore.getState().marketInfo;
     const liveBalance = latestMarketInfo?.account_balance && latestMarketInfo.account_balance > 0
       ? latestMarketInfo.account_balance : null;
 
     // Fallback chain: live PO balance → localStorage saved balance → $1000
-    // If PO is disconnected, liveBalance is null, so we use the saved
-    // balance (which the user entered manually last time) or $1000 default.
     const savedCapital = parseFloat(localStorage.getItem('a2sniper_risk_capital') || '0');
     const poBalance = liveBalance
       ?? (savedCapital > 0 ? savedCapital : null)
       ?? 1000;
 
     // Reset apiWinRate to null so a new session starts with N/A winrate
-    // (don't carry over the previous session's winrate). It will be
-    // re-fetched from the backend on the next fetchPerformance() call.
     setApiWinRate(null);
 
     setInitialCapital(poBalance);
     setPayout(92);
-    setTrades(Array(10).fill({ result: '', amount: 0, return: 0 }));
     // Next session counter = max saved + 1 (or 1 if no saved sessions)
     const savedCounters = allSessions.map(s => s.sessionCounter || 0).filter(c => c > 0);
     const nextCounter = savedCounters.length > 0 ? Math.max(...savedCounters) + 1 : (sessionCounter + 1);
@@ -549,7 +541,7 @@ export default function RiskManagerPage() {
     // the new balance. This works whether PO is connected or not — the stake
     // is calculated from whatever balance we have (live, saved, or $1000).
     const emptyTrades = Array(10).fill({ result: '', amount: 0, return: 0 });
-    const filledTrades = fillFirstEmptyTradeStake(emptyTrades, poBalance, 0, 92); // WR=0 → 2% defensive for new session
+    const filledTrades = fillFirstEmptyTradeStake(emptyTrades, poBalance, 0, 92);
     setTrades(filledTrades);
     localStorage.setItem('a2sniper_risk_trades', JSON.stringify(filledTrades));
 
@@ -557,6 +549,10 @@ export default function RiskManagerPage() {
       ? (latestMarketInfo?.is_demo ? 'DEMO account balance' : 'REAL account balance')
       : (savedCapital > 0 ? 'last saved balance (PO not connected)' : 'default balance (PO not connected)');
     toast.info(`New session — ${accountTypeLabel}: $${poBalance.toFixed(2)}`, { duration: 4000 });
+
+    // Fire-and-forget: refresh market status in the background so the next
+    // new session has the freshest balance. Don't await — UI is already updated.
+    fetchMarketStatus().catch(() => {});
   };
 
   const saveAndNewSession = async () => {
@@ -587,7 +583,8 @@ export default function RiskManagerPage() {
     setSavedSnapshot(JSON.stringify({ trades, initialCapital, payout, sessionCounter }));
     syncSessionToJournal();
     toast.success("Session saved! Opening new session...", { duration: 2000 });
-    setTimeout(async () => { await doNewSession(); }, 500);
+    // No delay — doNewSession is now instant (no API call)
+    doNewSession();
   };
 
   const handleLoadSession = (idx: number) => {
