@@ -687,6 +687,29 @@ export default function RiskManagerPage() {
     await performSave(counterModalInfo.expected);
   };
 
+  // ─── Enter key support for all modals ────────────────────────────────────
+  // When any modal is open, pressing Enter triggers the primary action
+  // (Confirm/Save/Delete), and Escape closes the modal.
+  useEffect(() => {
+    const anyModalOpen = showResetConfirm || showNewSessionModal || showCounterModal;
+    if (!anyModalOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        if (showResetConfirm) confirmClearSession();
+        else if (showNewSessionModal) saveAndNewSession();
+        else if (showCounterModal) confirmCounterCorrection();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        setShowResetConfirm(false);
+        setShowNewSessionModal(false);
+        setShowCounterModal(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [showResetConfirm, showNewSessionModal, showCounterModal]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const handleExportPDF = async () => {
     if (user?.avatar) { await fetchAvatarBase64(user.avatar); }
     const pdfUser: PDFUserInfo = {
@@ -787,7 +810,7 @@ export default function RiskManagerPage() {
             onClick={clearSession}
             className="px-3 py-2 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 rounded-xl text-xs font-black text-red-400 flex items-center gap-1.5 transition-all"
           >
-            <RefreshCw className="w-3.5 h-3.5" /> RESET
+            <Trash2 className="w-3.5 h-3.5" /> DELETE
           </button>
         </div>
       </div>
@@ -1128,17 +1151,18 @@ export default function RiskManagerPage() {
             >
               <div className="flex items-center gap-3 mb-4">
                 <AlertTriangle className="w-6 h-6 text-red-500" />
-                <h3 className="text-lg font-bold text-white">Reset Session</h3>
+                <h3 className="text-lg font-bold text-white">Delete Session</h3>
               </div>
               <p className="text-sm text-gray-400 mb-6">
-                Are you sure you want to reset the current session? All trading data will be cleared and the session will be removed from the Trading Journal.
+                Are you sure you want to delete the current session? All trading data will be cleared and the session will be removed from the Trading Journal.
               </p>
               <div className="flex gap-3">
                 <button
                   onClick={confirmClearSession}
+                  autoFocus
                   className="flex-1 bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg font-bold transition-colors"
                 >
-                  Confirm Reset
+                  Delete
                 </button>
                 <button
                   onClick={() => setShowResetConfirm(false)}
@@ -1183,6 +1207,7 @@ export default function RiskManagerPage() {
                 </button>
                 <button
                   onClick={saveAndNewSession}
+                  autoFocus
                   className="py-3 bg-[#D4AF37] border border-[#D4AF37] rounded-xl text-[10px] font-black text-black hover:bg-[#c5a059] transition-all flex items-center justify-center gap-1.5"
                 >
                   <Plus className="w-3.5 h-3.5" /> Save & New
@@ -1239,6 +1264,7 @@ export default function RiskManagerPage() {
                 </button>
                 <button
                   onClick={confirmCounterCorrection}
+                  autoFocus
                   className="flex-1 py-3 rounded-xl text-xs font-black uppercase tracking-wider bg-gradient-to-r from-[#D4AF37] to-[#C5A059] text-black hover:from-[#c5a059] hover:to-[#D4AF37] transition-all"
                 >
                   Save as #{counterModalInfo.expected}

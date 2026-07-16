@@ -164,6 +164,23 @@ export default function TradingJournalPage() {
     setShowResetConfirm(true);
   };
 
+  // Enter key support: when the Delete confirmation modal is open, pressing
+  // Enter triggers the Delete action (same as clicking the Delete button).
+  useEffect(() => {
+    if (!showResetConfirm) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Enter' && !isResetting) {
+        e.preventDefault();
+        confirmResetJournal();
+      } else if (e.key === 'Escape' && !isResetting) {
+        e.preventDefault();
+        setShowResetConfirm(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [showResetConfirm, isResetting]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const confirmResetJournal = () => {
     setIsResetting(true);
     setTimeout(() => {
@@ -326,7 +343,7 @@ export default function TradingJournalPage() {
               className="flex items-center gap-2 px-4 py-2.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 hover:text-red-300 rounded-xl text-xs font-black uppercase tracking-wider transition-all border border-red-500/20 active:scale-95"
             >
               <Trash2 className="w-4 h-4" />
-              Reset
+              Delete
             </button>
           </div>
         </div>
@@ -463,7 +480,7 @@ export default function TradingJournalPage() {
           </div>
         </div>
       )}
-      {/* Reset Confirmation Dialog */}
+      {/* Delete Confirmation Dialog */}
       <AnimatePresence>
         {showResetConfirm && (
           <motion.div
@@ -472,6 +489,13 @@ export default function TradingJournalPage() {
             exit={{ opacity: 0 }}
             className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4"
             onClick={() => !isResetting && setShowResetConfirm(false)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !isResetting) {
+                e.preventDefault();
+                confirmResetJournal();
+              }
+            }}
+            tabIndex={-1}
           >
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
@@ -482,21 +506,22 @@ export default function TradingJournalPage() {
             >
               <div className="flex items-center gap-3 mb-4">
                 <AlertTriangle className="w-6 h-6 text-red-500" />
-                <h3 className="text-lg font-bold text-white">Reset Trading Journal</h3>
+                <h3 className="text-lg font-bold text-white">Delete Trading Journal Session</h3>
               </div>
               <p className="text-sm text-gray-400 mb-6 leading-relaxed">
-                This will remove the current session from the Trading Journal. Other saved sessions will be kept. Are you sure?
+                This will permanently delete the current session from the Trading Journal. Other saved sessions will be kept. Are you sure?
               </p>
               <div className="flex gap-3">
                 <button
                   onClick={confirmResetJournal}
                   disabled={isResetting}
+                  autoFocus
                   className="flex-1 bg-red-600 hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-4 py-2.5 rounded-lg font-bold transition-colors flex items-center justify-center gap-2"
                 >
                   {isResetting ? <>
                     <Loader2 className="w-4 h-4 animate-spin" />
-                    Resetting...
-                  </> : 'Confirm'}
+                    Deleting...
+                  </> : 'Delete'}
                 </button>
                 <button
                   onClick={() => setShowResetConfirm(false)}
