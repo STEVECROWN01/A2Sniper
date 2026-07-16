@@ -249,36 +249,50 @@ export default function RiskManagerPage() {
     return Math.max(1, parseFloat(stake.toFixed(2))); // min $1, 2 decimal places
   };
 
-  // ─── AUTO-FILL EMPTY ROWS WITH RECOMMENDED STAKE ─────────────────────────
+  // ─── AUTO-FILL ONLY THE FIRST EMPTY ROW (the next trade to be placed) ────
   // Fires when:
   //   - initialCapital changes (user edits balance, PO syncs, new session)
   //   - displayWinRate changes (backend reports new winrate)
-  //   - trades array changes length (new row added)
-  // Only fills rows that have NO result AND NO amount — never overwrites
-  // manual entries.
+  //   - trades array changes (WIN/LOSS clicked, row added/deleted)
+  //
+  // ONLY fills the FIRST empty row (the one right after the last recorded
+  // trade). All other empty rows remain at $0 and show $1 grayed as a
+  // placeholder in the UI. This matches the user's expectation: only the
+  // NEXT trade to be placed gets the recommended stake.
   useEffect(() => {
     if (initialCapital <= 0) return;
-    const rec = getRecommendedStake(0);
-    if (rec <= 0) return;
     const newTrades = [...trades];
     let changed = false;
-    for (let i = 0; i < newTrades.length; i++) {
+
+    // Find the first empty row (no result)
+    const firstEmptyIdx = newTrades.findIndex(t => !t.result);
+    if (firstEmptyIdx === -1) return; // no empty rows
+
+    const rec = getRecommendedStake(firstEmptyIdx);
+    if (rec <= 0) return;
+
+    // Only fill if the first empty row has no amount (or amount === 0)
+    const currentAmount = newTrades[firstEmptyIdx].amount;
+    if (!currentAmount || currentAmount === 0) {
+      newTrades[firstEmptyIdx] = { ...newTrades[firstEmptyIdx], amount: rec };
+      changed = true;
+    }
+
+    // Clear ALL other empty rows (set amount to 0) so they show $1 grayed
+    for (let i = firstEmptyIdx + 1; i < newTrades.length; i++) {
       const t = newTrades[i];
-      // Only auto-fill rows with no result AND no amount
-      if (!t.result && (!t.amount || t.amount === 0)) {
-        const recForThisRow = getRecommendedStake(i);
-        if (recForThisRow > 0) {
-          newTrades[i] = { ...t, amount: recForThisRow };
-          changed = true;
-        }
+      if (!t.result && t.amount !== 0) {
+        newTrades[i] = { ...t, amount: 0 };
+        changed = true;
       }
     }
+
     if (changed) {
       setTrades(newTrades);
       localStorage.setItem('a2sniper_risk_trades', JSON.stringify(newTrades));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialCapital, displayWinRate, trades.length]);
+  }, [initialCapital, displayWinRate, trades.length, trades.filter(t => t.result).length]);
 
   // Live validation status for the session counter (shown in UI)
   const counterValidation = validateSessionCounter(sessionCounter, currentEditingIdx, allSessions);
@@ -294,8 +308,8 @@ export default function RiskManagerPage() {
     // ─── AUTO-FILL NEXT ROW STAKE ON WIN/LOSS ──────────────────────────────
     // When the user clicks WIN or LOSS on trade N, auto-fill the recommended
     // stake for trade N+1 (based on the updated balance after trade N).
-    // ALWAYS fills the next row if it has no result yet — the user clicking
-    // WIN/LOSS means they've moved on, so recalculating is correct.
+    // ALWAYS overwrites the next row's stake (even if it was previously
+    // auto-filled) because the balance changed — the old stake is now stale.
     if (field === 'result' && (val === 'WIN' || val === 'LOSS') && idx + 1 < newTrades.length) {
       const nextTrade = newTrades[idx + 1];
       if (nextTrade && !nextTrade.result) {
@@ -896,8 +910,10 @@ export default function RiskManagerPage() {
                           type="number"
                           value={trade.amount || ''}
                           onChange={(e) => handleUpdateTrade(i, 'amount', Number(e.target.value))}
-                          placeholder={getRecommendedStake(i).toFixed(2)}
-                          className="w-24 bg-black/40 border border-gray-800 rounded-lg px-3 py-1.5 text-xs font-black text-white focus:border-[#D4AF37] outline-none"
+                          placeholder="1.00"
+                          className={`w-24 bg-black/40 border border-gray-800 rounded-lg px-3 py-1.5 text-xs font-black focus:border-[#D4AF37] outline-none ${
+                            trade.amount > 0 ? 'text-white' : 'text-gray-600'
+                          }`}
                         />
                       </td>
                       <td className="px-6 py-4 text-right font-black text-xs">
