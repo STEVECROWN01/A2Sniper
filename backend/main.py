@@ -553,112 +553,14 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False, return_can
     # CPU-bound indicator calculation that follows.
     await asyncio.sleep(0)
     candle_count = len(df_m1) if df_m1 is not None and not df_m1.empty else 0
-    min_candles_needed = 3 if force else 14  # Force mode only needs 3 candles for nuclear fallback
+    min_candles_needed = 14  # Both force and background need full indicator set
     logger.info(f"[SNIPER-TRACE] {pair} step=3 candles={candle_count}/{min_candles_needed} needed (force={force})")
     if df_m1 is None or df_m1.empty or len(df_m1) < min_candles_needed:
-        # ─── SUPER-NUCLEAR FALLBACK (force mode) ──────────────────────
-        # Even if we have ZERO candles from WebSocket, try to get the
-        # current price from the scanner and produce a signal. The user
-        # explicitly requested a signal — we MUST respond with something.
-        if force:
-            current_price = await po_scanner.get_current_price(pair)
-            if current_price and current_price > 0:
-                # Default to CALL (arbitrary — 50/50 with no data)
-                direction = 'CALL'
-                logger.info(
-                    f"[{pair}] SUPER-NUCLEAR FALLBACK: no candles but force=True, "
-                    f"using current price {current_price:.5f} → {direction}"
-                )
-                engine_result = {
-                    'direction': direction,
-                    'score': 1,
-                    'max_score': 7,
-                    'winrate': 50,
-                    'expiration': 1,
-                    'entry_price': current_price,
-                    'classification': 'Emergency Signal (no candle data)',
-                    'factors': {
-                        'factors_hit': ['emergency_no_data'],
-                        'factors_description': ['No candle data available — emergency signal'],
-                        'call_score': 1, 'put_score': 0,
-                        'rsi': 50, 'stoch_k': 50, 'cci': 0,
-                        'bb_position': 'unknown', 'atr': 0,
-                        'adx': 0, 'ema21_deviation_atr': 0,
-                        'reversal_pattern': None,
-                    },
-                    'mode': 'EMERGENCY',
-                    'timestamp': datetime.now(timezone.utc).isoformat(),
-                }
-                # Skip to emission — bypass all remaining checks
-                sniper_result = engine_result
-                # Jump to signal building (skip steps 4-6)
-                # We'll construct the signal directly here
-                now = datetime.now(timezone.utc)
-                now_ts = now.timestamp()
-                signal = {
-                    'id': f'SIG-{now.strftime("%Y%m%d")}-{uuid.uuid4().hex[:6].upper()}',
-                    'pair': pair,
-                    'direction': sniper_result['direction'],
-                    'time': now.strftime('%H:%M:%S'),
-                    'timestamp': now.isoformat(),
-                    'entry_price': sniper_result['entry_price'],
-                    'expiration': sniper_result['expiration'],
-                    'winrate': sniper_result['winrate'],
-                    'score': sniper_result['score'],
-                    'raw_points': sniper_result['score'],
-                    'payout': payout,
-                    'classification': sniper_result['classification'],
-                    'session_id': get_current_session_id(),
-                    'smc_structure': 'Emergency (no data)',
-                    'smc_zone': 'N/A',
-                    'chart_pattern': 'N/A',
-                    'fibonacci': 'N/A',
-                    'rsi_status': 'Unknown',
-                    'recommended_stake': 10,
-                    'analysis_details': {'mode': 'emergency', 'candles': candle_count},
-                }
-                try:
-                    signal['hash_signature'] = compliance.generate_immutable_log(signal)
-                except Exception:
-                    signal['hash_signature'] = 'ERROR'
-                try:
-                    async with AsyncSessionLocal() as session:
-                        db_signal = SignalRecord(
-                            id=signal['id'], pair=signal['pair'], direction=signal['direction'],
-                            entry_price=signal['entry_price'], expiration=signal['expiration'],
-                            winrate=signal['winrate'], score=signal['score'], payout=signal['payout'],
-                            classification=signal['classification'], timestamp=now,
-                            analysis_details=signal['analysis_details'],
-                            hash_signature=signal['hash_signature'],
-                            session_id=signal['session_id']
-                        )
-                        session.add(db_signal)
-                        await session.commit()
-                except Exception as db_err:
-                    logger.warning(f"[{pair}] DB save error: {db_err}")
-                generated_signals.append(signal)
-                if not hasattr(analyze_pair_internal, '_last_signal_time'):
-                    analyze_pair_internal._last_signal_time = {}
-                analyze_pair_internal._last_signal_time[pair] = now_ts
-                monitor.record_signal(signal['id'], pair, signal['direction'], signal['winrate'])
-                increment_session_trade_count()
-                _record_successful_emission()
-                logger.info(
-                    f"[SNIPER-EMITTED] id={signal['id']} pair={signal['pair']} "
-                    f"direction={signal['direction']} mode=EMERGENCY "
-                    f"score={signal['score']}/7 winrate={signal['winrate']}% "
-                    f"payout={signal['payout']}% session={signal['session_id']}"
-                )
-                return signal
-            else:
-                logger.info(f"[{pair}] No candles AND no current price — truly cannot produce signal")
-                return None
-        else:
-            logger.info(
-                f"[{pair}] Insufficient candles for sniper engine: "
-                f"{candle_count}/{min_candles_needed} — waiting for warm-up"
-            )
-            return None
+        logger.info(
+            f"[{pair}] Insufficient candles for sniper engine: "
+            f"{candle_count}/{min_candles_needed} — waiting for warm-up"
+        )
+        return None
 
     # 4. Calculate all indicators (RSI, Bollinger, Stochastic, CCI, EMA, ATR, ADX)
     df_with_indicators = indicators.calculate_all(df_m1)
@@ -667,15 +569,11 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False, return_can
     logger.info(f"[SNIPER-TRACE] {pair} step=4 indicators_calculated columns={list(df_with_indicators.columns)[:10]}")
 
     # 5. Validate data quality (rejects identical candles, suspicious jumps, zero volume)
-    # Skip validation in force mode — user explicitly requested a signal, so
-    # we'll use the nuclear fallback if data is marginal rather than rejecting.
     is_valid, validation_reason = validate_candle_data(df_with_indicators, min_bars=14)
     logger.info(f"[SNIPER-TRACE] {pair} step=5 data_valid={is_valid} reason={validation_reason}")
-    if not is_valid and not force:
+    if not is_valid:
         logger.info(f"[{pair}] Sniper data rejected: {validation_reason}")
         return None
-    elif not is_valid and force:
-        logger.info(f"[{pair}] Data marginal but force=True — proceeding (nuclear fallback will catch if engine fails)")
 
     # 6. Run the engine — STRICT 4/7 THRESHOLD
     # ─────────────────────────────────────────────────────────────────────
@@ -706,55 +604,16 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False, return_can
     else:
         engine_result = generate_sniper_signal(df_with_indicators, payout, min_factors=min_factors)
         if engine_result is None:
-            # ─── NUCLEAR FALLBACK (force mode only) ───────────────────────
-            # If the sniper engine found no setup AND the user explicitly
-            # requested a signal, generate a simple price-action signal:
-            # last candle bullish → CALL, bearish → PUT.
-            # This CANNOT fail as long as there's 1 candle.
-            # Winrate is honestly set to 55% (barely better than coin-flip).
-            if force and len(df_with_indicators) >= 2:
-                last_close = float(df_with_indicators.iloc[-1]['close'])
-                prev_close = float(df_with_indicators.iloc[-2]['close'])
-                direction = 'CALL' if last_close >= prev_close else 'PUT'
-                current_price = last_close
-                logger.info(
-                    f"[{pair}] NUCLEAR FALLBACK: engine found no setup, "
-                    f"using price action (last={last_close:.5f} prev={prev_close:.5f}) → {direction}"
-                )
-                engine_result = {
-                    'direction': direction,
-                    'score': 2,
-                    'max_score': 7,
-                    'winrate': 55,
-                    'expiration': 1,
-                    'entry_price': current_price,
-                    'classification': 'Price Action (nuclear fallback)',
-                    'factors': {
-                        'factors_hit': ['price_action'],
-                        'factors_description': [f'Last candle {"bullish" if direction == "CALL" else "bearish"}'],
-                        'call_score': 1 if direction == 'CALL' else 0,
-                        'put_score': 1 if direction == 'PUT' else 0,
-                        'rsi': float(df_with_indicators.iloc[-1].get('RSI_14', 50)) if 'RSI_14' in df_with_indicators.columns else 50,
-                        'stoch_k': 50, 'cci': 0,
-                        'bb_position': 'middle', 'atr': 0,
-                        'adx': float(df_with_indicators.iloc[-1].get('ADX_14', 0)) if 'ADX_14' in df_with_indicators.columns else 0,
-                        'ema21_deviation_atr': 0,
-                        'reversal_pattern': None,
-                    },
-                    'mode': 'PRICE_ACTION',
-                    'timestamp': datetime.now(timezone.utc).isoformat(),
-                }
-            else:
-                last_row = df_with_indicators.iloc[-1]
-                rsi_val = float(last_row.get('RSI_14', 50)) if 'RSI_14' in df_with_indicators.columns else 50
-                stoch_val = float(last_row.get('STOCH_K', 50)) if 'STOCH_K' in df_with_indicators.columns else 50
-                cci_val = float(last_row.get('CCI_20', 0)) if 'CCI_20' in df_with_indicators.columns else 0
-                logger.info(
-                    f"[{pair}] No sniper signal — insufficient confluence (<{min_factors} factors, force={force}). "
-                    f"RSI={rsi_val:.1f}, Stoch={stoch_val:.1f}, CCI={cci_val:.0f}, "
-                    f"candles={len(df_with_indicators)}"
-                )
-                return None
+            last_row = df_with_indicators.iloc[-1]
+            rsi_val = float(last_row.get('RSI_14', 50)) if 'RSI_14' in df_with_indicators.columns else 50
+            stoch_val = float(last_row.get('STOCH_K', 50)) if 'STOCH_K' in df_with_indicators.columns else 50
+            cci_val = float(last_row.get('CCI_20', 0)) if 'CCI_20' in df_with_indicators.columns else 0
+            logger.info(
+                f"[{pair}] No sniper signal — insufficient confluence (<{min_factors} factors, force={force}). "
+                f"RSI={rsi_val:.1f}, Stoch={stoch_val:.1f}, CCI={cci_val:.0f}, "
+                f"candles={len(df_with_indicators)}"
+            )
+            return None
 
     # Use the result from whichever engine ran
     sniper_result = engine_result
@@ -1836,77 +1695,12 @@ async def request_live_signal(request: Request, credentials: HTTPAuthorizationCr
         logger.info(f"[SIGNAL-REQUEST] ✅ Signal generated for {pair} (score={signal.get('score', '?')}/7, winrate={signal.get('winrate', '?')}%)")
         return {"status": "success", "signal": signal, "mode": "sniper"}
 
-    # ═══ ENDPOINT-LEVEL LAST RESORT FALLBACK ═══════════════════════════
-    # If force_analyze_pair returned None OR threw an exception, produce a
-    # signal directly here. This is the FINAL safety net — the user will
-    # ALWAYS get a signal response, no matter what.
-    logger.warning(f"[SIGNAL-REQUEST] All engine fallbacks failed for {pair} — producing endpoint-level emergency signal")
-    try:
-        current_price = await po_scanner.get_current_price(pair)
-        if not current_price or current_price <= 0:
-            # Last resort: use a dummy price (1.0) — the signal is symbolic
-            current_price = 1.0
-    except Exception:
-        current_price = 1.0
-
-    now = datetime.now(timezone.utc)
-    emergency_signal = {
-        'id': f'SIG-{now.strftime("%Y%m%d")}-{uuid.uuid4().hex[:6].upper()}',
-        'pair': pair,
-        'direction': 'CALL',  # Arbitrary — no data to determine direction
-        'time': now.strftime('%H:%M:%S'),
-        'timestamp': now.isoformat(),
-        'entry_price': float(current_price),
-        'expiration': 1,
-        'winrate': 50,
-        'score': 1,
-        'raw_points': 1,
-        'payout': real_payout,
-        'classification': 'Emergency Signal (engine unavailable)',
-        'session_id': get_current_session_id(),
-        'smc_structure': 'Emergency',
-        'smc_zone': 'N/A',
-        'chart_pattern': 'N/A',
-        'fibonacci': 'N/A',
-        'rsi_status': 'Unknown',
-        'recommended_stake': 10,
-        'analysis_details': {'mode': 'endpoint_emergency', 'reason': 'all_engine_fallbacks_failed'},
-        'mode': 'EMERGENCY',
-    }
-    try:
-        emergency_signal['hash_signature'] = compliance.generate_immutable_log(emergency_signal)
-    except Exception:
-        emergency_signal['hash_signature'] = 'ERROR'
-
-    # Save to DB
-    try:
-        async with AsyncSessionLocal() as session:
-            db_signal = SignalRecord(
-                id=emergency_signal['id'], pair=emergency_signal['pair'], direction=emergency_signal['direction'],
-                entry_price=emergency_signal['entry_price'], expiration=emergency_signal['expiration'],
-                winrate=emergency_signal['winrate'], score=emergency_signal['score'], payout=emergency_signal['payout'],
-                classification=emergency_signal['classification'], timestamp=now,
-                analysis_details=emergency_signal['analysis_details'],
-                hash_signature=emergency_signal['hash_signature'],
-                session_id=emergency_signal['session_id']
-            )
-            session.add(db_signal)
-            await session.commit()
-    except Exception as db_err:
-        logger.warning(f"[SIGNAL-REQUEST] DB save error for emergency signal: {db_err}")
-
-    generated_signals.append(emergency_signal)
-    increment_session_trade_count()
-    _record_successful_emission()
-
-    logger.info(
-        f"[SIGNAL-REQUEST] ✅ Emergency signal generated for {pair} "
-        f"(score=1/7, winrate=50%, mode=EMERGENCY) — returning to user"
-    )
-    return {"status": "success", "signal": emergency_signal, "mode": "emergency"}
-
     # ═══ NO SIGNAL AVAILABLE ════════════════════════════════════════
-    logger.info(f"[SIGNAL-REQUEST] No signal for {pair} — insufficient confluence (needs 3/7 factors). Try another pair or wait 1-2 minutes.")
+    # The engine returned None — no high-quality setup found. Rather than
+    # emit a garbage 50% winrate signal (which dragged winrate to 66% in
+    # session #24), honestly tell the user "no signal" so they wait for a
+    # quality setup. This is what produces 70%+ winrate.
+    logger.info(f"[SIGNAL-REQUEST] No signal for {pair} — no high-quality setup (needs 4/7 confluence). Try another pair or wait 1-2 minutes.")
     raise HTTPException(
         status_code=404,
         detail=(
