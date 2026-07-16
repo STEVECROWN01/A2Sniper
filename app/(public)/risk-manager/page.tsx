@@ -147,25 +147,33 @@ export default function RiskManagerPage() {
     }
   }, [sessionCounter]);
 
-  // Fetch performance + market status (for PO balance), and poll every 2s
+  // Fetch performance + market status (for PO balance).
+  // Poll every 10s (was 2s — too aggressive, caused unnecessary load).
+  // These calls are SAFE when PO is disconnected — the backend returns
+  // is_connected: false and the frontend handles it gracefully.
+  // The Risk Manager works fully offline (manual balance entry) —
+  // PO connection is ONLY used to auto-detect the balance.
   useEffect(() => {
     const loadData = async () => {
       try {
         await fetchPerformance();
-        if (userStats?.winRate && userStats.winRate > 0) {
-          setApiWinRate(userStats.winRate);
-        }
+      } catch {}
+      try {
         await fetchMarketStatus();
       } catch {}
     };
     loadData();
-    const pollInterval = setInterval(() => {
-      fetchMarketStatus();
-    }, 2000);
+    const pollInterval = setInterval(async () => {
+      try { await fetchMarketStatus(); } catch {}
+    }, 10000); // 10s — less aggressive
     return () => clearInterval(pollInterval);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Auto-fill initial capital from PO balance (only if current is default/empty)
+  // Auto-fill initial capital from PO balance (ONLY when PO is connected).
+  // If PO is NOT connected, the user sets the balance manually — the Risk
+  // Manager still works perfectly, just without auto-detected balance.
+  // Only auto-fills if the current balance is the default ($1000) or empty —
+  // never overwrites a user-entered balance.
   useEffect(() => {
     if (marketInfo?.account_balance && marketInfo.account_balance > 0) {
       const currentCap = localStorage.getItem('a2sniper_risk_capital');
@@ -174,6 +182,9 @@ export default function RiskManagerPage() {
         localStorage.setItem('a2sniper_risk_capital', String(marketInfo.account_balance));
       }
     }
+    // If PO is not connected, do nothing — user enters balance manually.
+    // The Risk Manager still works: stake auto-fill, WIN/LOSS tracking,
+    // delete trade, etc. all function without PO connection.
   }, [marketInfo?.account_balance]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const results = useMemo(() => {
@@ -513,15 +524,20 @@ export default function RiskManagerPage() {
   };
 
   const doNewSession = async () => {
-    // Fetch fresh market status to get the latest PO balance
+    // Try to fetch fresh market status for the latest PO balance.
+    // This is OPTIONAL — if it fails (backend down, PO disconnected),
+    // the Risk Manager still works with the saved/manual balance.
     try { await fetchMarketStatus(); } catch {}
 
-    // Read LATEST marketInfo from the store (bypasses stale closures)
+    // Read LATEST marketInfo from the store (bypasses stale closures).
+    // If PO is not connected, marketInfo may be null — that's fine.
     const latestMarketInfo = useAppStore.getState().marketInfo;
     const liveBalance = latestMarketInfo?.account_balance && latestMarketInfo.account_balance > 0
       ? latestMarketInfo.account_balance : null;
 
     // Fallback chain: live PO balance → localStorage saved balance → $1000
+    // If PO is disconnected, liveBalance is null, so we use the saved
+    // balance (which the user entered manually last time) or $1000 default.
     const savedCapital = parseFloat(localStorage.getItem('a2sniper_risk_capital') || '0');
     const poBalance = liveBalance
       ?? (savedCapital > 0 ? savedCapital : null)
@@ -548,8 +564,9 @@ export default function RiskManagerPage() {
 
     // ─── AUTO-FILL FIRST TRADE STAKE IMMEDIATELY ──────────────────────────
     // Don't wait for the useEffect — fill the first trade's stake right now
-    // based on the new balance. This ensures the user sees the recommended
-    // stake the moment they start a new session.
+    // based on the new balance. This works whether PO is connected or not —
+    // the stake is calculated from whatever balance we have (live, saved,
+    // or default $1000).
     const recStake = Math.max(1, parseFloat((poBalance * 0.05).toFixed(2))); // 5% default for new session
     const initialTrades = Array(10).fill({ result: '', amount: 0, return: 0 }).map((t, i) => {
       if (i === 0) return { ...t, amount: recStake };
