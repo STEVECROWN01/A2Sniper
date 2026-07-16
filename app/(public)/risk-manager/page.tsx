@@ -95,6 +95,11 @@ export default function RiskManagerPage() {
   const [apiWinRate, setApiWinRate] = useState<number | null>(null);
   const [showNewSessionModal, setShowNewSessionModal] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
+  // Modal for session counter correction — appears when user tries to save
+  // with a duplicate or wrong session counter. Shows the correct number and
+  // lets them confirm to auto-correct and save.
+  const [showCounterModal, setShowCounterModal] = useState(false);
+  const [counterModalInfo, setCounterModalInfo] = useState<{ entered: number; expected: number; error: string }>({ entered: 0, expected: 0, error: '' });
 
   // Multi-session support
   const [allSessions, setAllSessions] = useState<any[]>([]);
@@ -368,31 +373,6 @@ export default function RiskManagerPage() {
     window.dispatchEvent(new StorageEvent('storage', { key: 'a2sniper_risk_session' }));
   };
 
-  // Load all sessions on mount — but DON'T overwrite if user already has data
-  useEffect(() => {
-    const savedAll = localStorage.getItem('a2sniper_risk_sessions');
-    if (savedAll) {
-      try {
-        const parsed = JSON.parse(savedAll);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          setAllSessions(parsed);
-          setCurrentEditingIdx(parsed.length - 1);
-          // Only load session data if the current trades are empty
-          // (don't overwrite trades the user already loaded from individual keys)
-          const currentTrades = localStorage.getItem('a2sniper_risk_trades');
-          const hasCurrentTrades = currentTrades && JSON.parse(currentTrades).some((t: any) => t.result && t.amount > 0);
-          if (!hasCurrentTrades) {
-            const last = parsed[parsed.length - 1];
-            setInitialCapital(last.initialCapital || 1000);
-            setPayout(last.payout || 92);
-            setTrades(last.trades || Array(10).fill({ result: '', amount: 0, return: 0 }));
-            setSessionCounter(last.sessionCounter || 0);
-          }
-        }
-      } catch {}
-    }
-  }, []);
-
   // Auto-sync whenever trades, capital, payout, or sessionCounter change
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -400,7 +380,11 @@ export default function RiskManagerPage() {
     }
   }, [trades, initialCapital, payout, sessionCounter]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ─── Load all sessions on mount ───
+  // ─── Load all sessions on mount (SINGLE useEffect — was duplicated) ───
+  // Key fix: if the user is on a NEW (unsaved) session, DON'T overwrite it
+  // with the last saved session. We detect this by checking if the current
+  // session counter is HIGHER than the max saved counter (meaning the user
+  // clicked "New Session" but hasn't saved yet).
   useEffect(() => {
     const savedAll = localStorage.getItem('a2sniper_risk_sessions');
     if (savedAll) {
@@ -408,11 +392,28 @@ export default function RiskManagerPage() {
         const parsed = JSON.parse(savedAll);
         if (Array.isArray(parsed) && parsed.length > 0) {
           setAllSessions(parsed);
+
+          // Check if the user is on a NEW unsaved session.
+          // We detect this by checking if the current session counter
+          // (from localStorage) is higher than the max saved counter.
+          const currentCounterStr = localStorage.getItem('a2sniper_risk_session_counter');
+          const currentCounter = currentCounterStr ? parseInt(currentCounterStr, 10) : 0;
+          const maxSavedCounter = Math.max(...parsed.map((s: any) => s.sessionCounter || 0));
+
+          if (currentCounter > maxSavedCounter) {
+            // User is on a NEW unsaved session — DON'T overwrite it.
+            // Just set currentEditingIdx to -1 (new session) and keep
+            // the current trades/capital/counter as-is.
+            setCurrentEditingIdx(-1);
+            return;
+          }
+
+          // User is NOT on a new session — load the last saved session.
           setCurrentEditingIdx(parsed.length - 1);
+          const last = parsed[parsed.length - 1];
           const currentTrades = localStorage.getItem('a2sniper_risk_trades');
           const hasCurrentTrades = currentTrades && JSON.parse(currentTrades).some((t: any) => t.result && t.amount > 0);
           if (!hasCurrentTrades) {
-            const last = parsed[parsed.length - 1];
             setInitialCapital(last.initialCapital || 1000);
             setPayout(last.payout || 92);
             setTrades(last.trades || Array(10).fill({ result: '', amount: 0, return: 0 }));
@@ -452,6 +453,10 @@ export default function RiskManagerPage() {
   const clearSession = () => setShowResetConfirm(true);
 
   const confirmClearSession = () => {
+    // CRITICAL: Reset does NOT delete saved sessions. It only clears the
+    // current view and starts a fresh empty session. Saved sessions in
+    // allSessions are NEVER removed by Reset — only by an explicit Delete
+    // action (which doesn't exist yet — sessions are permanent).
     const emptyTrades = Array(10).fill({ result: '', amount: 0, return: 0 });
     setTrades(emptyTrades);
     // Use the LATEST marketInfo from the store (not stale closure)
@@ -469,12 +474,8 @@ export default function RiskManagerPage() {
     setJustSaved(false);
     setSavedSnapshot('');
 
-    // Remove current session from allSessions array if it was saved
-    if (currentEditingIdx >= 0 && currentEditingIdx < allSessions.length) {
-      const updated = allSessions.filter((_, i) => i !== currentEditingIdx);
-      setAllSessions(updated);
-      localStorage.setItem('a2sniper_risk_sessions', JSON.stringify(updated));
-    }
+    // DO NOT remove the current session from allSessions — that was causing
+    // saved sessions to disappear. Reset only clears the current view.
 
     localStorage.removeItem('a2sniper_risk_trades');
     localStorage.removeItem('a2sniper_risk_session');
@@ -563,25 +564,17 @@ export default function RiskManagerPage() {
     // Validate session counter BEFORE saving
     const validation = validateSessionCounter(sessionCounter, currentEditingIdx, allSessions);
     if (!validation.valid) {
-      toast.error(validation.error, { duration: 5000 });
+      // Show modal with the correct counter — user must confirm
+      setCounterModalInfo({
+        entered: sessionCounter,
+        expected: validation.expected,
+        error: validation.error || `Session #${sessionCounter} already exists.`,
+      });
+      setShowCounterModal(true);
       return;
     }
 
-    const dataToSave = { initialCapital, payout, trades, sessionCounter, savedAt: new Date().toISOString() };
-    const updated = [...allSessions];
-    if (currentEditingIdx >= 0 && currentEditingIdx < updated.length) {
-      updated[currentEditingIdx] = dataToSave;
-    } else {
-      updated.push(dataToSave);
-    }
-    setAllSessions(updated);
-    localStorage.setItem('a2sniper_risk_sessions', JSON.stringify(updated));
-    localStorage.setItem('a2sniper_risk_capital', String(initialCapital));
-    localStorage.setItem('a2sniper_risk_payout', String(payout));
-    localStorage.setItem('a2sniper_risk_trades', JSON.stringify(trades));
-    localStorage.setItem('a2sniper_risk_session_counter', String(sessionCounter));
-    setSavedSnapshot(JSON.stringify({ trades, initialCapital, payout, sessionCounter }));
-    syncSessionToJournal();
+    await performSave(sessionCounter);
     toast.success("Session saved! Opening new session...", { duration: 2000 });
     // No delay — doNewSession is now instant (no API call)
     doNewSession();
@@ -606,30 +599,17 @@ export default function RiskManagerPage() {
   };
 
   // ─── SAVE ───
-  const handleSave = async () => {
-    // Validation 1: can't save without at least 1 recorded trade
-    if (!hasRecordedTrades) {
-      toast.error("Please record at least 1 trade before saving.", { duration: 3000 });
-      return;
-    }
-
-    // Validation 2: session counter must be correct (no duplicates, no skips)
-    const validation = validateSessionCounter(sessionCounter, currentEditingIdx, allSessions);
-    if (!validation.valid) {
-      toast.error(validation.error, { duration: 5000 });
-      // Auto-correct the counter to the expected value
-      setSessionCounter(validation.expected);
-      return;
-    }
-
+  // ─── Perform the actual save (called after validation passes) ────────────
+  // Extracted so both handleSave and the counter-correction modal can call it.
+  const performSave = async (counterToUse: number) => {
     setIsSaving(true);
     localStorage.setItem('a2sniper_risk_capital', String(initialCapital));
     localStorage.setItem('a2sniper_risk_payout', String(payout));
     localStorage.setItem('a2sniper_risk_trades', JSON.stringify(trades));
-    localStorage.setItem('a2sniper_risk_session_counter', String(sessionCounter));
+    localStorage.setItem('a2sniper_risk_session_counter', String(counterToUse));
 
     // Save to sessions array (multi-session support)
-    const dataToSave = { initialCapital, payout, trades, sessionCounter, savedAt: new Date().toISOString() };
+    const dataToSave = { initialCapital, payout, trades, sessionCounter: counterToUse, savedAt: new Date().toISOString() };
     const updated = [...allSessions];
     if (currentEditingIdx >= 0 && currentEditingIdx < updated.length) {
       updated[currentEditingIdx] = dataToSave;
@@ -642,7 +622,7 @@ export default function RiskManagerPage() {
     syncSessionToJournal();
 
     // Capture the saved state as a snapshot so hasUnsavedChanges is FALSE
-    setSavedSnapshot(JSON.stringify({ trades, initialCapital, payout, sessionCounter }));
+    setSavedSnapshot(JSON.stringify({ trades, initialCapital, payout, sessionCounter: counterToUse }));
 
     try {
       const apiUrl = getApiUrl();
@@ -654,7 +634,7 @@ export default function RiskManagerPage() {
           initial_capital: initialCapital,
           payout,
           trades: trades.filter(t => t.result && t.amount > 0),
-          session_counter: sessionCounter,
+          session_counter: counterToUse,
         }),
       });
       if (res.ok) {
@@ -669,6 +649,42 @@ export default function RiskManagerPage() {
       setJustSaved(true);
       setTimeout(() => setJustSaved(false), 2000);
     }
+  };
+
+  // ─── SAVE (with modal for duplicate session counter) ─────────────────────
+  // If the user tries to save with a duplicate or wrong session counter,
+  // show a modal explaining the issue and offering to auto-correct.
+  // Only saves after the user confirms the correct counter.
+  const handleSave = async () => {
+    // Validation 1: can't save without at least 1 recorded trade
+    if (!hasRecordedTrades) {
+      toast.error("Please record at least 1 trade before saving.", { duration: 3000 });
+      return;
+    }
+
+    // Validation 2: session counter must be correct (no duplicates, no skips)
+    const validation = validateSessionCounter(sessionCounter, currentEditingIdx, allSessions);
+    if (!validation.valid) {
+      // Show modal with the correct counter — user must confirm
+      setCounterModalInfo({
+        entered: sessionCounter,
+        expected: validation.expected,
+        error: validation.error || `Session #${sessionCounter} already exists.`,
+      });
+      setShowCounterModal(true);
+      return;
+    }
+
+    // Validation passed — save directly
+    await performSave(sessionCounter);
+  };
+
+  // Called when user clicks "OK" in the counter-correction modal
+  const confirmCounterCorrection = async () => {
+    setSessionCounter(counterModalInfo.expected);
+    setShowCounterModal(false);
+    // Save with the corrected counter
+    await performSave(counterModalInfo.expected);
   };
 
   const handleExportPDF = async () => {
@@ -1178,6 +1194,56 @@ export default function RiskManagerPage() {
               >
                 Cancel
               </button>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Session Counter Correction Modal */}
+      <AnimatePresence>
+        {showCounterModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-6"
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-[#0a0a0c] border border-[#D4AF37]/30 rounded-2xl p-6 max-w-md w-full space-y-4"
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-[#D4AF37]/10 border border-[#D4AF37]/20 rounded-xl flex items-center justify-center">
+                  <AlertTriangle className="w-5 h-5 text-[#D4AF37]" />
+                </div>
+                <h3 className="text-sm font-black text-white uppercase tracking-wider">Session Number Conflict</h3>
+              </div>
+
+              <p className="text-xs text-gray-400 font-bold leading-relaxed">
+                {counterModalInfo.error}
+              </p>
+
+              <div className="bg-black/40 rounded-xl p-4 border border-white/5">
+                <p className="text-[10px] text-gray-500 font-black uppercase tracking-widest mb-2">Correct Session Number</p>
+                <p className="text-3xl font-black text-[#D4AF37]">#{counterModalInfo.expected}</p>
+              </div>
+
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setShowCounterModal(false)}
+                  className="flex-1 py-3 rounded-xl text-xs font-black uppercase tracking-wider bg-white/[0.03] text-gray-400 border border-white/5 hover:bg-white/[0.06] hover:text-white transition-all"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={confirmCounterCorrection}
+                  className="flex-1 py-3 rounded-xl text-xs font-black uppercase tracking-wider bg-gradient-to-r from-[#D4AF37] to-[#C5A059] text-black hover:from-[#c5a059] hover:to-[#D4AF37] transition-all"
+                >
+                  Save as #{counterModalInfo.expected}
+                </button>
+              </div>
             </motion.div>
           </motion.div>
         )}
