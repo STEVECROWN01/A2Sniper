@@ -497,11 +497,12 @@ export default function RiskManagerPage() {
 
   // ─── NEW SESSION ───
   const handleNewSession = () => {
-    // If the current session is already empty (no trades recorded), don't
-    // create another new session — the user is already on a fresh one.
-    // This prevents the toast notification from firing when clicking
-    // "New Session" on an already-empty session.
+    // If the current session is already empty (no trades recorded), inform
+    // the user that they're already on a new session — don't create another
+    // one. The toast tells them to fill the current session and save before
+    // creating a new one.
     if (!hasRecordedTrades) {
+      toast.info("You're already on a new session. Record some trades and save before creating another.", { duration: 4000 });
       return;
     }
     // Intelligent: only show modal if there are REAL unsaved changes.
