@@ -1067,22 +1067,6 @@ export default function RiskManagerPage() {
                   </button>
                 </div>
               </div>
-              {/* Live validation indicator */}
-              {counterValidation.valid ? (
-                <p className="text-[10px] text-green-400/70 font-bold flex items-center gap-1">
-                  <Check className="w-3 h-3" /> Valid session number
-                </p>
-              ) : (
-                <p className="text-[10px] text-red-400 font-bold flex items-start gap-1">
-                  <AlertTriangle className="w-3 h-3 mt-0.5 flex-shrink-0" />
-                  <span>{counterValidation.error}</span>
-                </p>
-              )}
-              {allSessions.length > 0 && (
-                <p className="text-[9px] text-gray-600 font-bold mt-1">
-                  Saved: {allSessions.map(s => `#${s.sessionCounter}`).join(', ')}
-                </p>
-              )}
             </div>
           </div>
 
