@@ -803,7 +803,7 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False, return_can
 
     logger.info(
         f"[SNIPER-EMITTED] id={signal['id']} pair={signal['pair']} "
-        f"mode={sniper_mode} direction={signal['direction']} "
+        f"mode={sniper_result.get('mode', 'UNKNOWN')} direction={signal['direction']} "
         f"score={signal['score']}/7 winrate={signal['winrate']}% "
         f"expiration={signal['expiration']}m payout={signal['payout']}% "
         f"session={signal['session_id']} trade={_session_state['trade_count']}/{TRADES_PER_SESSION}"
