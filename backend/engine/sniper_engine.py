@@ -690,25 +690,87 @@ def generate_sniper_signal(df: pd.DataFrame, payout: float, min_factors: int = 4
         other = None
 
     if chosen is None:
-        # ─── TREND_FOLLOW FALLBACK DISABLED ───────────────────────────────────
-        # The TREND_FOLLOW fallback was producing 60% winrate signals which
-        # dragged the overall winrate below the 70% target. It's now disabled
-        # for testing — only SNIPER 1M (mean reversion) and SNIPER 3M (trend
-        # pullback) signals will be emitted.
+        # ─── TREND_FOLLOW FALLBACK (RE-ENABLED) ───────────────────────────────
+        # TEST RESULT (Session #5): Disabling TREND_FOLLOW dropped winrate from
+        # 60% to 43.3% and turned a +$4.82 profit into a -$5.52 loss.
+        # TREND_FOLLOW was HELPING, not hurting. Re-enabled immediately.
         #
-        # If this test shows 70%+ winrate, the TREND_FOLLOW was the problem.
-        # If not, the issue is elsewhere (thresholds, validation, etc.).
-        #
-        # The fallback code is preserved below (commented out) for easy
-        # re-enabling if needed:
-        #
-        # if len(df) >= 21 and 'EMA_9' in df.columns and 'EMA_21' in df.columns:
-        #     ema9_fallback = float(df.iloc[-1].get('EMA_9', 0))
-        #     ema21_fallback = float(df.iloc[-1].get('EMA_21', 0))
-        #     ... (TREND_FOLLOW logic) ...
-        #
-        logger.info("[SNIPER-ENGINE] No signal — TREND_FOLLOW fallback disabled, only sniper signals emitted")
-        return None
+        # The pure sniper (mean reversion) engine performs at ~35-43% on its
+        # own — worse than random. TREND_FOLLOW adds higher-quality signals.
+        if len(df) >= 21 and 'EMA_9' in df.columns and 'EMA_21' in df.columns:
+            ema9_fallback = float(df.iloc[-1].get('EMA_9', 0))
+            ema21_fallback = float(df.iloc[-1].get('EMA_21', 0))
+            rsi_fallback = float(df.iloc[-1].get('RSI_14', 50))
+            adx_fallback = float(df.iloc[-1].get('ADX_14', 0))
+            close_fallback = float(df.iloc[-1]['close'])
+
+            if (not np.isnan(ema9_fallback) and not np.isnan(ema21_fallback)
+                and ema9_fallback != ema21_fallback):
+
+                if ema9_fallback > ema21_fallback:
+                    fallback_factors = [
+                        ('ema9_above_ema21', f'EMA9 {ema9_fallback:.5f} > EMA21 {ema21_fallback:.5f}'),
+                        ('rsi_status', f'RSI {rsi_fallback:.1f}'),
+                        ('adx_status', f'ADX {adx_fallback:.1f}'),
+                    ]
+                    chosen = {
+                        'direction': 'CALL',
+                        'score': 3,
+                        'max_score': 7,
+                        'winrate': 60,
+                        'expiration': 3,
+                        'entry_price': close_fallback,
+                        'classification': 'Trend Follow (EMA+RSI fallback)',
+                        'factors': {
+                            'factors_hit': [f[0] for f in fallback_factors],
+                            'factors_description': [f[1] for f in fallback_factors],
+                            'call_score': 3, 'put_score': 0,
+                            'rsi': rsi_fallback, 'stoch_k': 50, 'cci': 0,
+                            'bb_position': 'middle', 'atr': 0,
+                            'adx': adx_fallback, 'ema21_deviation_atr': 0,
+                            'reversal_pattern': None,
+                        },
+                        'mode': 'TREND_FOLLOW',
+                        'timestamp': datetime.now(timezone.utc).isoformat(),
+                    }
+                    logger.info(
+                        f"[SNIPER-FALLBACK] TREND_FOLLOW CALL — "
+                        f"EMA9>EMA21, RSI={rsi_fallback:.1f}, ADX={adx_fallback:.1f}"
+                    )
+                elif ema9_fallback < ema21_fallback:
+                    fallback_factors = [
+                        ('ema9_below_ema21', f'EMA9 {ema9_fallback:.5f} < EMA21 {ema21_fallback:.5f}'),
+                        ('rsi_status', f'RSI {rsi_fallback:.1f}'),
+                        ('adx_status', f'ADX {adx_fallback:.1f}'),
+                    ]
+                    chosen = {
+                        'direction': 'PUT',
+                        'score': 3,
+                        'max_score': 7,
+                        'winrate': 60,
+                        'expiration': 3,
+                        'entry_price': close_fallback,
+                        'classification': 'Trend Follow (EMA+RSI fallback)',
+                        'factors': {
+                            'factors_hit': [f[0] for f in fallback_factors],
+                            'factors_description': [f[1] for f in fallback_factors],
+                            'call_score': 0, 'put_score': 3,
+                            'rsi': rsi_fallback, 'stoch_k': 50, 'cci': 0,
+                            'bb_position': 'middle', 'atr': 0,
+                            'adx': adx_fallback, 'ema21_deviation_atr': 0,
+                            'reversal_pattern': None,
+                        },
+                        'mode': 'TREND_FOLLOW',
+                        'timestamp': datetime.now(timezone.utc).isoformat(),
+                    }
+                    logger.info(
+                        f"[SNIPER-FALLBACK] TREND_FOLLOW PUT — "
+                        f"EMA9<EMA21, RSI={rsi_fallback:.1f}, ADX={adx_fallback:.1f}"
+                    )
+
+        if chosen is None:
+            logger.info("[SNIPER-ENGINE] No signal — no sniper setup and EMA9 == EMA21")
+            return None
 
     # ─── Add payout + log ───
     chosen['payout'] = payout
