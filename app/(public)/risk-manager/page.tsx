@@ -641,7 +641,7 @@ export default function RiskManagerPage() {
         body: JSON.stringify({
           initial_capital: initialCapital,
           payout,
-          trades: trades.filter(t => t.result && t.amount > 0),
+          trades: trades.filter(t => t.result === 'WIN' || t.result === 'LOSS'),
           session_counter: counterToUse,
         }),
       });
@@ -741,7 +741,10 @@ export default function RiskManagerPage() {
     y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Risk Level', '');
     drawRiskBadge(doc, PAGE.marginL + 50, y - 1, riskLevel);
     y += 6;
-    const validTrades = results.computedTrades.filter(t => t.result);
+    // Include ALL trades with a result (WIN or LOSS), even if amount is 0.
+    // Previous filter (t.result) was too loose — included empty strings.
+    // The t.result && t.amount > 0 filter was too strict — excluded empty-stake trades.
+    const validTrades = results.computedTrades.filter(t => t.result === 'WIN' || t.result === 'LOSS');
     if (validTrades.length > 0) {
       y = checkPageBreak(doc, y, 30);
       y = drawSectionTitle(doc, 'Trading Journal', y);
@@ -757,8 +760,8 @@ export default function RiskManagerPage() {
         return [
           `#${origIdx + 1}`,
           t.result || '-',
-          t.amount ? t.amount.toFixed(2) : '-',
-          t.result === 'WIN' ? `+${t.return?.toFixed(2) || '0.00'}` : t.result === 'LOSS' ? `-${t.amount?.toFixed(2) || '0.00'}` : '-',
+          t.amount && t.amount > 0 ? t.amount.toFixed(2) : '-',
+          t.result === 'WIN' ? `+${(t.return?.toFixed(2) || '0.00')}` : t.result === 'LOSS' ? `-${(t.amount?.toFixed(2) || '0.00')}` : '-',
           t.balance === '-' ? '-' : `$${t.balance}`,
         ];
       });
