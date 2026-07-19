@@ -37,9 +37,10 @@ export function SignalCard({ signal }: SignalCardProps) {
 
     if (signal.status === 'ACTIVE') {
       const calculateRemaining = () => {
-        // Use synchronized now time
-        const clockOffset = useAppStore.getState().clockOffset || 0;
-        const now = Date.now() + clockOffset;
+        // Use raw Date.now() — NOT clockOffset.
+        // clockOffset is recalculated every 5s from HTTP Date headers with
+        // varying RTT (50-200ms), causing the countdown to jump up and down.
+        const now = Date.now();
 
         // Expiry = signal timestamp + expiration minutes
         // Each signal expires at its OWN time — different countdown per signal
@@ -75,8 +76,7 @@ export function SignalCard({ signal }: SignalCardProps) {
     // (TypeScript already narrowed away 'ACTIVE' — this branch handles WON/LOST/EXPIRED)
     {
       const computeElapsed = () => {
-        const clockOffset = useAppStore.getState().clockOffset || 0;
-        const now = Date.now() + clockOffset;
+        const now = Date.now();
         // Expiry = signal timestamp + expiration minutes (MUST match the ACTIVE
         // countdown above and the backend resolution_loop). Previously this used
         // candle-boundary alignment which was wrong — the backend resolves at

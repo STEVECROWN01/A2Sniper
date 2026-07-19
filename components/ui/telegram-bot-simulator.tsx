@@ -74,11 +74,11 @@ function SignalCountdown({ timestamp, expiration, onExpire }: { timestamp?: stri
         return 0;
       }
 
-      // Use server-synced time so the countdown matches what signal-card.tsx shows.
-      // If the user's browser clock is off by even a few seconds, raw `new Date()`
-      // would make the simulator disagree with the signals page.
-      const clockOffset = useAppStore.getState().clockOffset || 0;
-      const now = new Date(Date.now() + clockOffset);
+      // Use raw Date.now() — NOT clockOffset.
+      // clockOffset is recalculated every 5s from HTTP Date headers with
+      // varying RTT (50-200ms), causing the countdown to jump up and down.
+      // The signal timestamp is UTC, Date.now() is UTC — same clock already.
+      const now = new Date();
       const expMinutes = Number(expiration) || 1;
 
       // Expiry = signal timestamp + expiration minutes (NOT candle boundary).
