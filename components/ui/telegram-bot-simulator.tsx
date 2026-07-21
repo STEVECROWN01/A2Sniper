@@ -976,16 +976,10 @@ Zero Simulation. 100% Real-Market.`;
 
 Scanned all active pairs — this is the best opportunity found.
 Zero Simulation. 100% Real-Market.`;
-              addMessage(msg, 'bot', 'signal', { 
-                pair_data: { 
-                  pair: sig.pair, 
-                  direction: sig.direction, 
-                  payout: sig.payout, 
-                  expiration: sig.expiration, 
-                  timestamp: sig.timestamp,
-                  winrate: sig.winrate,
-                } 
-              });
+              // Pass the FULL signal object as pair_data so the card has
+              // all fields: pair, direction, payout, expiration, timestamp,
+              // winrate, entry_price, smc_structure, chart_pattern, etc.
+              addMessage(msg, 'bot', 'signal', sig as unknown as SignalPairData);
             } else {
               addMessage(`❌ ${res.message || 'No signal opportunity found right now. Try again in 1-2 minutes.'}`, 'bot');
             }
