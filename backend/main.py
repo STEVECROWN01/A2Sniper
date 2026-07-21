@@ -553,112 +553,14 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False, return_can
     # CPU-bound indicator calculation that follows.
     await asyncio.sleep(0)
     candle_count = len(df_m1) if df_m1 is not None and not df_m1.empty else 0
-    min_candles_needed = 3 if force else 14  # Force mode only needs 3 candles for nuclear fallback
+    min_candles_needed = 25  # Price action engine needs 25 candles for M5 resampling
     logger.info(f"[SNIPER-TRACE] {pair} step=3 candles={candle_count}/{min_candles_needed} needed (force={force})")
     if df_m1 is None or df_m1.empty or len(df_m1) < min_candles_needed:
-        # ─── SUPER-NUCLEAR FALLBACK (force mode) ──────────────────────
-        # Even if we have ZERO candles from WebSocket, try to get the
-        # current price from the scanner and produce a signal. The user
-        # explicitly requested a signal — we MUST respond with something.
-        if force:
-            current_price = await po_scanner.get_current_price(pair)
-            if current_price and current_price > 0:
-                # Default to CALL (arbitrary — 50/50 with no data)
-                direction = 'CALL'
-                logger.info(
-                    f"[{pair}] SUPER-NUCLEAR FALLBACK: no candles but force=True, "
-                    f"using current price {current_price:.5f} → {direction}"
-                )
-                engine_result = {
-                    'direction': direction,
-                    'score': 1,
-                    'max_score': 7,
-                    'winrate': 50,
-                    'expiration': 1,
-                    'entry_price': current_price,
-                    'classification': 'Emergency Signal (no candle data)',
-                    'factors': {
-                        'factors_hit': ['emergency_no_data'],
-                        'factors_description': ['No candle data available — emergency signal'],
-                        'call_score': 1, 'put_score': 0,
-                        'rsi': 50, 'stoch_k': 50, 'cci': 0,
-                        'bb_position': 'unknown', 'atr': 0,
-                        'adx': 0, 'ema21_deviation_atr': 0,
-                        'reversal_pattern': None,
-                    },
-                    'mode': 'EMERGENCY',
-                    'timestamp': datetime.now(timezone.utc).isoformat(),
-                }
-                # Skip to emission — bypass all remaining checks
-                sniper_result = engine_result
-                # Jump to signal building (skip steps 4-6)
-                # We'll construct the signal directly here
-                now = datetime.now(timezone.utc)
-                now_ts = now.timestamp()
-                signal = {
-                    'id': f'SIG-{now.strftime("%Y%m%d")}-{uuid.uuid4().hex[:6].upper()}',
-                    'pair': pair,
-                    'direction': sniper_result['direction'],
-                    'time': now.strftime('%H:%M:%S'),
-                    'timestamp': now.isoformat(),
-                    'entry_price': sniper_result['entry_price'],
-                    'expiration': sniper_result['expiration'],
-                    'winrate': sniper_result['winrate'],
-                    'score': sniper_result['score'],
-                    'raw_points': sniper_result['score'],
-                    'payout': payout,
-                    'classification': sniper_result['classification'],
-                    'session_id': get_current_session_id(),
-                    'smc_structure': 'Emergency (no data)',
-                    'smc_zone': 'N/A',
-                    'chart_pattern': 'N/A',
-                    'fibonacci': 'N/A',
-                    'rsi_status': 'Unknown',
-                    'recommended_stake': 10,
-                    'analysis_details': {'mode': 'emergency', 'candles': candle_count},
-                }
-                try:
-                    signal['hash_signature'] = compliance.generate_immutable_log(signal)
-                except Exception:
-                    signal['hash_signature'] = 'ERROR'
-                try:
-                    async with AsyncSessionLocal() as session:
-                        db_signal = SignalRecord(
-                            id=signal['id'], pair=signal['pair'], direction=signal['direction'],
-                            entry_price=signal['entry_price'], expiration=signal['expiration'],
-                            winrate=signal['winrate'], score=signal['score'], payout=signal['payout'],
-                            classification=signal['classification'], timestamp=now,
-                            analysis_details=signal['analysis_details'],
-                            hash_signature=signal['hash_signature'],
-                            session_id=signal['session_id']
-                        )
-                        session.add(db_signal)
-                        await session.commit()
-                except Exception as db_err:
-                    logger.warning(f"[{pair}] DB save error: {db_err}")
-                generated_signals.append(signal)
-                if not hasattr(analyze_pair_internal, '_last_signal_time'):
-                    analyze_pair_internal._last_signal_time = {}
-                analyze_pair_internal._last_signal_time[pair] = now_ts
-                monitor.record_signal(signal['id'], pair, signal['direction'], signal['winrate'])
-                increment_session_trade_count()
-                _record_successful_emission()
-                logger.info(
-                    f"[SNIPER-EMITTED] id={signal['id']} pair={signal['pair']} "
-                    f"direction={signal['direction']} mode=EMERGENCY "
-                    f"score={signal['score']}/7 winrate={signal['winrate']}% "
-                    f"payout={signal['payout']}% session={signal['session_id']}"
-                )
-                return signal
-            else:
-                logger.info(f"[{pair}] No candles AND no current price — truly cannot produce signal")
-                return None
-        else:
-            logger.info(
-                f"[{pair}] Insufficient candles for sniper engine: "
-                f"{candle_count}/{min_candles_needed} — waiting for warm-up"
-            )
-            return None
+        logger.info(
+            f"[{pair}] Insufficient candles for price action engine: "
+            f"{candle_count}/{min_candles_needed} — waiting for warm-up"
+        )
+        return None
 
     # 4. Calculate all indicators (RSI, Bollinger, Stochastic, CCI, EMA, ATR, ADX)
     df_with_indicators = indicators.calculate_all(df_m1)
@@ -667,94 +569,26 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False, return_can
     logger.info(f"[SNIPER-TRACE] {pair} step=4 indicators_calculated columns={list(df_with_indicators.columns)[:10]}")
 
     # 5. Validate data quality (rejects identical candles, suspicious jumps, zero volume)
-    # Skip validation in force mode — user explicitly requested a signal, so
-    # we'll use the nuclear fallback if data is marginal rather than rejecting.
-    is_valid, validation_reason = validate_candle_data(df_with_indicators, min_bars=14)
+    is_valid, validation_reason = validate_candle_data(df_with_indicators, min_bars=25)
     logger.info(f"[SNIPER-TRACE] {pair} step=5 data_valid={is_valid} reason={validation_reason}")
-    if not is_valid and not force:
-        logger.info(f"[{pair}] Sniper data rejected: {validation_reason}")
+    if not is_valid:
+        logger.info(f"[{pair}] Data rejected: {validation_reason}")
         return None
-    elif not is_valid and force:
-        logger.info(f"[{pair}] Data marginal but force=True — proceeding (nuclear fallback will catch if engine fails)")
 
-    # 6. Run the engine — STRICT 4/7 THRESHOLD
+    # 6. Run the PRICE ACTION engine
     # ─────────────────────────────────────────────────────────────────────
-    # Both force mode and background mode use 4/7 factors (strict confluence).
-    # The adaptive threshold (3/7 relaxation) was removed — it produced 41%
-    # winrate signals that dragged performance below coin-flip.
-    # Better to wait 5 minutes for a quality signal than emit garbage every 30s.
-    min_factors = 4
-
-    # ═══ ENGINE TOGGLE ═════════════════════════════════════════════
-    # Uses SIGNAL_ENGINE global to select which engine to run.
-    # "momentum" = Momentum Continuation (new — for testing)
-    # "sniper"   = 7-Factor Mean Reversion (original)
-    # Tag the DataFrame with pair name for logging
+    # NO FALLBACKS. The engine either finds a real price action setup
+    # (pattern at level + M5 confirmation) or returns None. If None,
+    # the bot honestly says "No signal right now."
     df_with_indicators.attrs['pair'] = pair
 
-    if SIGNAL_ENGINE == "momentum":
-        engine_result = generate_momentum_signal(df_with_indicators, payout, min_factors=min_factors)
-        if engine_result is None:
-            last_row = df_with_indicators.iloc[-1]
-            rsi_val = float(last_row.get('RSI_14', 50)) if 'RSI_14' in df_with_indicators.columns else 50
-            adx_val = float(last_row.get('ADX_14', 0)) if 'ADX_14' in df_with_indicators.columns else 0
-            logger.info(
-                f"[{pair}] No momentum signal — insufficient confluence (<{min_factors} factors, force={force}). "
-                f"RSI={rsi_val:.1f}, ADX={adx_val:.1f}, candles={len(df_with_indicators)}"
-            )
-            return None
-    else:
-        engine_result = generate_sniper_signal(df_with_indicators, payout, min_factors=min_factors)
-        if engine_result is None:
-            # ─── NUCLEAR FALLBACK (force mode only) ───────────────────────
-            # If the sniper engine found no setup AND the user explicitly
-            # requested a signal, generate a simple price-action signal:
-            # last candle bullish → CALL, bearish → PUT.
-            # This CANNOT fail as long as there's 1 candle.
-            # Winrate is honestly set to 55% (barely better than coin-flip).
-            if force and len(df_with_indicators) >= 2:
-                last_close = float(df_with_indicators.iloc[-1]['close'])
-                prev_close = float(df_with_indicators.iloc[-2]['close'])
-                direction = 'CALL' if last_close >= prev_close else 'PUT'
-                current_price = last_close
-                logger.info(
-                    f"[{pair}] NUCLEAR FALLBACK: engine found no setup, "
-                    f"using price action (last={last_close:.5f} prev={prev_close:.5f}) → {direction}"
-                )
-                engine_result = {
-                    'direction': direction,
-                    'score': 2,
-                    'max_score': 7,
-                    'winrate': 55,
-                    'expiration': 1,
-                    'entry_price': current_price,
-                    'classification': 'Price Action (nuclear fallback)',
-                    'factors': {
-                        'factors_hit': ['price_action'],
-                        'factors_description': [f'Last candle {"bullish" if direction == "CALL" else "bearish"}'],
-                        'call_score': 1 if direction == 'CALL' else 0,
-                        'put_score': 1 if direction == 'PUT' else 0,
-                        'rsi': float(df_with_indicators.iloc[-1].get('RSI_14', 50)) if 'RSI_14' in df_with_indicators.columns else 50,
-                        'stoch_k': 50, 'cci': 0,
-                        'bb_position': 'middle', 'atr': 0,
-                        'adx': float(df_with_indicators.iloc[-1].get('ADX_14', 0)) if 'ADX_14' in df_with_indicators.columns else 0,
-                        'ema21_deviation_atr': 0,
-                        'reversal_pattern': None,
-                    },
-                    'mode': 'PRICE_ACTION',
-                    'timestamp': datetime.now(timezone.utc).isoformat(),
-                }
-            else:
-                last_row = df_with_indicators.iloc[-1]
-                rsi_val = float(last_row.get('RSI_14', 50)) if 'RSI_14' in df_with_indicators.columns else 50
-                stoch_val = float(last_row.get('STOCH_K', 50)) if 'STOCH_K' in df_with_indicators.columns else 50
-                cci_val = float(last_row.get('CCI_20', 0)) if 'CCI_20' in df_with_indicators.columns else 0
-                logger.info(
-                    f"[{pair}] No sniper signal — insufficient confluence (<{min_factors} factors, force={force}). "
-                    f"RSI={rsi_val:.1f}, Stoch={stoch_val:.1f}, CCI={cci_val:.0f}, "
-                    f"candles={len(df_with_indicators)}"
-                )
-                return None
+    engine_result = generate_sniper_signal(df_with_indicators, payout)
+    if engine_result is None:
+        logger.info(
+            f"[{pair}] No price action signal — no pattern at key level with M5 confirmation. "
+            f"candles={len(df_with_indicators)}"
+        )
+        return None
 
     # Use the result from whichever engine ran
     sniper_result = engine_result
@@ -805,22 +639,13 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False, return_can
     # call _emit_candidate() on the winner.
     if return_candidate and not force:
         now_ts = datetime.now(timezone.utc).timestamp()
-        engine_mode = sniper_result.get('mode', 'SNIPER_1M')
-        is_momentum = engine_mode == 'MOMENTUM_1M'
+        engine_mode = sniper_result.get('mode', 'PRICE_ACTION')
         factors_hit = sniper_result['factors']['factors_hit']
 
-        if is_momentum:
-            strategy_label = f"Momentum Continuation ({sniper_result['score']}/7 factors)"
-            indicator_summary = f"RSI {sniper_result['factors']['rsi']:.0f} / ADX {sniper_result['factors']['adx']:.0f}"
-            rsi_status = 'Mid-range (momentum)'
-        elif engine_mode == 'SNIPER_1M':
-            strategy_label = f"Mean Reversion ({sniper_result['score']}/7 factors)"
-            indicator_summary = f"RSI {sniper_result['factors']['rsi']:.0f} / Stoch {sniper_result['factors']['stoch_k']:.0f} / CCI {sniper_result['factors']['cci']:.0f}"
-            rsi_status = 'Oversold' if sniper_result['direction'] == 'CALL' else 'Overbought'
-        else:
-            strategy_label = f"Trend Pullback ({sniper_result['score']}/7 factors)"
-            indicator_summary = f"RSI {sniper_result['factors']['rsi']:.0f} / Stoch {sniper_result['factors']['stoch_k']:.0f} / ADX {sniper_result['factors']['adx']:.0f}"
-            rsi_status = 'Mid-range (trend resume)'
+        # Price Action engine — use the classification from the engine directly
+        strategy_label = sniper_result.get('classification', f'Price Action ({sniper_result["score"]}/4)')
+        indicator_summary = f"RSI {sniper_result['factors'].get('rsi', 0):.0f} / ADX {sniper_result['factors'].get('adx', 0):.0f}"
+        rsi_status = 'Bullish' if sniper_result['direction'] == 'CALL' else 'Bearish'
 
         return {
             'pair': pair,
@@ -838,7 +663,7 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False, return_can
             'rsi_status': rsi_status,
             'recommended_stake': 10,
             'analysis_details': {
-                'mode': 'momentum_continuation' if is_momentum else ('sniper_1m_mean_reversion' if engine_mode == 'SNIPER_1M' else 'sniper_3m_trend_pullback'),
+                'mode': 'price_action',
                 'engine_mode': engine_mode,
                 'expiration_minutes': sniper_result['expiration'],
                 'factors_hit': factors_hit,
@@ -857,23 +682,14 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False, return_can
     # 9. Build the signal dict from engine result
     logger.info(f"[SIGNAL-BUILD] Building signal for {pair} — engine_mode={sniper_result.get('mode')}, score={sniper_result.get('score')}, direction={sniper_result.get('direction')}")
     now = datetime.now(timezone.utc)
-    now_ts = now.timestamp()  # Always define now_ts — force mode skips the dedup block where it was previously set
-    engine_mode = sniper_result.get('mode', 'SNIPER_1M')
-    is_momentum = engine_mode == 'MOMENTUM_1M'
+    now_ts = now.timestamp()
+    engine_mode = sniper_result.get('mode', 'PRICE_ACTION')
     factors_hit = sniper_result['factors']['factors_hit']
 
-    if is_momentum:
-        strategy_label = f"Momentum Continuation ({sniper_result['score']}/7 factors)"
-        indicator_summary = f"RSI {sniper_result['factors']['rsi']:.0f} / ADX {sniper_result['factors']['adx']:.0f}"
-        rsi_status = 'Mid-range (momentum)'
-    elif engine_mode == 'SNIPER_1M':
-        strategy_label = f"Mean Reversion ({sniper_result['score']}/7 factors)"
-        indicator_summary = f"RSI {sniper_result['factors']['rsi']:.0f} / Stoch {sniper_result['factors']['stoch_k']:.0f} / CCI {sniper_result['factors']['cci']:.0f}"
-        rsi_status = 'Oversold' if sniper_result['direction'] == 'CALL' else 'Overbought'
-    else:
-        strategy_label = f"Trend Pullback ({sniper_result['score']}/7 factors)"
-        indicator_summary = f"RSI {sniper_result['factors']['rsi']:.0f} / Stoch {sniper_result['factors']['stoch_k']:.0f} / ADX {sniper_result['factors']['adx']:.0f}"
-        rsi_status = 'Mid-range (trend resume)'
+    # Price Action engine — use classification from the engine directly
+    strategy_label = sniper_result.get('classification', f'Price Action ({sniper_result["score"]}/4)')
+    indicator_summary = f"RSI {sniper_result['factors'].get('rsi', 0):.0f} / ADX {sniper_result['factors'].get('adx', 0):.0f}"
+    rsi_status = 'Bullish' if sniper_result['direction'] == 'CALL' else 'Bearish'
 
     signal = {
         'id': f'SIG-{now.strftime("%Y%m%d")}-{uuid.uuid4().hex[:6].upper()}',
@@ -896,7 +712,7 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False, return_can
         'rsi_status': rsi_status,
         'recommended_stake': 10,
         'analysis_details': {
-            'mode': 'momentum_continuation' if is_momentum else ('sniper_1m_mean_reversion' if engine_mode == 'SNIPER_1M' else 'sniper_3m_trend_pullback'),
+            'mode': 'price_action',
             'engine_mode': engine_mode,
             'expiration_minutes': sniper_result['expiration'],
             'factors_hit': factors_hit,
@@ -1818,95 +1634,32 @@ async def request_live_signal(request: Request, credentials: HTTPAuthorizationCr
             )
         )
 
-    # ═══ SNIPER ENGINE — Single Pair (user selected this pair) ═══
+    # ═══ PRICE ACTION ENGINE — Single Pair (user selected this pair) ═══
     # The user explicitly selected this pair and clicked "Request Signal".
-    # We analyze THIS pair with the sniper engine.
-    # 5/7 factors required for 80%+ winrate.
-    logger.info(f"[SIGNAL-REQUEST] pair={pair} payout={real_payout}% — running sniper engine")
+    # We analyze THIS pair with the price action engine.
+    # NO FALLBACKS — if no setup found, honestly return "No signal".
+    logger.info(f"[SIGNAL-REQUEST] pair={pair} payout={real_payout}% — running price action engine")
     try:
         signal = await asyncio.wait_for(force_analyze_pair(pair), timeout=30.0)
     except asyncio.TimeoutError:
-        logger.warning(f"[SIGNAL-REQUEST] Sniper engine timed out (30s) for {pair}")
-        signal = None  # Fall through to endpoint-level fallback below
+        logger.warning(f"[SIGNAL-REQUEST] Engine timed out (30s) for {pair}")
+        raise HTTPException(
+            status_code=404,
+            detail=f"Signal analysis timed out for {pair}. Please try again in 5-10 seconds."
+        )
     except Exception as e:
         logger.error(f"[SIGNAL-REQUEST] Error analyzing {pair}: {e}", exc_info=True)
-        signal = None  # Fall through to endpoint-level fallback below
+        raise HTTPException(
+            status_code=404,
+            detail=f"Could not analyze {pair} right now. Please try another pair."
+        )
 
     if signal:
-        logger.info(f"[SIGNAL-REQUEST] ✅ Signal generated for {pair} (score={signal.get('score', '?')}/7, winrate={signal.get('winrate', '?')}%)")
-        return {"status": "success", "signal": signal, "mode": "sniper"}
+        logger.info(f"[SIGNAL-REQUEST] Signal generated for {pair} (mode={signal.get('mode','?')}, winrate={signal.get('winrate','?')}%)")
+        return {"status": "success", "signal": signal, "mode": signal.get('mode', 'price_action')}
 
-    # ═══ ENDPOINT-LEVEL LAST RESORT FALLBACK ═══════════════════════════
-    # If force_analyze_pair returned None OR threw an exception, produce a
-    # signal directly here. This is the FINAL safety net — the user will
-    # ALWAYS get a signal response, no matter what.
-    logger.warning(f"[SIGNAL-REQUEST] All engine fallbacks failed for {pair} — producing endpoint-level emergency signal")
-    try:
-        current_price = await po_scanner.get_current_price(pair)
-        if not current_price or current_price <= 0:
-            # Last resort: use a dummy price (1.0) — the signal is symbolic
-            current_price = 1.0
-    except Exception:
-        current_price = 1.0
-
-    now = datetime.now(timezone.utc)
-    emergency_signal = {
-        'id': f'SIG-{now.strftime("%Y%m%d")}-{uuid.uuid4().hex[:6].upper()}',
-        'pair': pair,
-        'direction': 'CALL',  # Arbitrary — no data to determine direction
-        'time': now.strftime('%H:%M:%S'),
-        'timestamp': now.isoformat(),
-        'entry_price': float(current_price),
-        'expiration': 1,
-        'winrate': 50,
-        'score': 1,
-        'raw_points': 1,
-        'payout': real_payout,
-        'classification': 'Emergency Signal (engine unavailable)',
-        'session_id': get_current_session_id(),
-        'smc_structure': 'Emergency',
-        'smc_zone': 'N/A',
-        'chart_pattern': 'N/A',
-        'fibonacci': 'N/A',
-        'rsi_status': 'Unknown',
-        'recommended_stake': 10,
-        'analysis_details': {'mode': 'endpoint_emergency', 'reason': 'all_engine_fallbacks_failed'},
-        'mode': 'EMERGENCY',
-    }
-    try:
-        emergency_signal['hash_signature'] = compliance.generate_immutable_log(emergency_signal)
-    except Exception:
-        emergency_signal['hash_signature'] = 'ERROR'
-
-    # Save to DB
-    try:
-        async with AsyncSessionLocal() as session:
-            db_signal = SignalRecord(
-                id=emergency_signal['id'], pair=emergency_signal['pair'], direction=emergency_signal['direction'],
-                entry_price=emergency_signal['entry_price'], expiration=emergency_signal['expiration'],
-                winrate=emergency_signal['winrate'], score=emergency_signal['score'], payout=emergency_signal['payout'],
-                classification=emergency_signal['classification'], timestamp=now,
-                analysis_details=emergency_signal['analysis_details'],
-                hash_signature=emergency_signal['hash_signature'],
-                session_id=emergency_signal['session_id']
-            )
-            session.add(db_signal)
-            await session.commit()
-    except Exception as db_err:
-        logger.warning(f"[SIGNAL-REQUEST] DB save error for emergency signal: {db_err}")
-
-    generated_signals.append(emergency_signal)
-    increment_session_trade_count()
-    _record_successful_emission()
-
-    logger.info(
-        f"[SIGNAL-REQUEST] ✅ Emergency signal generated for {pair} "
-        f"(score=1/7, winrate=50%, mode=EMERGENCY) — returning to user"
-    )
-    return {"status": "success", "signal": emergency_signal, "mode": "emergency"}
-
-    # ═══ NO SIGNAL AVAILABLE ════════════════════════════════════════
-    logger.info(f"[SIGNAL-REQUEST] No signal for {pair} — insufficient confluence (needs 3/7 factors). Try another pair or wait 1-2 minutes.")
+    # ═══ NO SIGNAL — honestly tell the user ═══════════════════════════
+    logger.info(f"[SIGNAL-REQUEST] No signal for {pair} — no price action setup found (pattern at level + M5 confirmation). Try another pair or wait 1-2 minutes.")
     raise HTTPException(
         status_code=404,
         detail=(

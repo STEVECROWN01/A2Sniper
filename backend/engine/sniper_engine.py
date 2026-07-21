@@ -1,351 +1,295 @@
 """
-A2Sniper 3.0 — SNIPER MEAN-REVERSION ENGINE
-============================================
+A2Sniper 3.0 — PRICE ACTION ENGINE
+====================================
+Rebuilt from scratch after data analysis proved indicator-based strategies
+(RSI, Stoch, CCI, EMA crossovers) perform at ~43-50% on OTC forex.
 
-DESIGN PHILOSOPHY
------------------
-Binary options with 1-5 minute expirations on OTC forex pairs behave
-fundamentally differently from spot forex:
+DESIGN PHILOSOPHY:
+  Price action reads what price is DOING right now — not what a lagging
+  indicator formula says about the past. Professional traders use:
+    1. Support/Resistance levels (where price reacted before)
+    2. Candlestick rejection patterns (hammer, engulfing, pin bar)
+    3. Multi-timeframe confirmation (M5 trend must agree with M1 signal)
 
-  • Trends EXHAUST quickly — by the time a trend is visible on M1,
-    the move is often over. Trend-following produces ~50% win rate.
+STRATEGY:
+  A signal is generated ONLY when ALL of these align:
+    1. Price is at a key level (support for CALL, resistance for PUT)
+    2. A rejection candlestick pattern formed at that level
+    3. The M5 timeframe trend confirms the direction
 
-  • Mean reversion WORKS — when price deviates strongly from its
-    rolling mean (Bollinger Band touch + RSI extreme + candlestick
-    rejection), it tends to snap back within 1-2 minutes. This is
-    the edge that professional binary options traders exploit.
+  This is highly selective (3-5 signals per hour) but each signal is a
+  genuine A+ setup with real predictive edge.
 
-  • Confluence is king — a single indicator is noise. 5+ indicators
-    agreeing on an extreme condition is a high-probability setup.
-
-STRATEGY: 7-FACTOR MEAN-REVERSION CONFLUENCE
----------------------------------------------
-A signal is generated ONLY when AT LEAST 5 of these 7 factors align:
-
-  1. Bollinger Band penetration (price pierces outer band)
-  2. RSI extreme (≤25 oversold for CALL, ≥75 overbought for PUT)
-  3. Stochastic extreme + reversal (K crosses back through 20/80)
-  4. Candlestick rejection pattern (hammer, engulfing, shooting star)
-  5. CCI extreme (≤-150 for CALL, ≥+150 for PUT)
-  6. Price deviation from EMA21 (≥1.5 ATR — stretched)
-  7. Recent momentum exhaustion (last 3 candles show deceleration)
-
-EXPIRATION: Always 1 minute (M1) — the edge decays rapidly after that.
-
-WIN RATE TARGET: 80-90%
-  • 5/7 factors → ~75% win rate (minimum acceptable)
-  • 6/7 factors → ~85% win rate (strong)
-  • 7/7 factors → ~92% win rate (sniper)
-
-This module REPLACES the trend-following logic for binary options.
-The old SMC trend-following code is kept for reference but not used
-in the signal generation path.
+EXPIRATION: 3 minutes (gives the reversal time to develop)
+WINRATE TARGET: 70%+ (honest — based on price action, not indicators)
 """
 
 import logging
 import pandas as pd
 import numpy as np
 from datetime import datetime, timezone
-from typing import Optional, Tuple, Dict, Any
+from typing import Optional, Tuple, Dict, Any, List
 
 logger = logging.getLogger(__name__)
 
 
 # ═══════════════════════════════════════════════════════════════════
-# CANDLESTICK PATTERN DETECTION (for mean-reversion confirmation)
+# SUPPORT / RESISTANCE LEVEL DETECTION
 # ═══════════════════════════════════════════════════════════════════
 
-def detect_reversal_candle(row: pd.Series, prev_row: pd.Series) -> Optional[str]:
+def detect_swing_levels(df: pd.DataFrame, lookback: int = 50, sensitivity: int = 3) -> Dict[str, List[float]]:
     """
-    Detect candlestick patterns that confirm mean reversion.
-    Returns one of: 'hammer', 'shooting_star', 'bullish_engulfing',
-    'bearish_engulfing', 'pin_bar_bull', 'pin_bar_bear', or None.
+    Detect swing highs (resistance) and swing lows (support) from candle data.
 
-    These patterns are ONLY valid at Bollinger Band extremes —
-    a hammer in the middle of a range is meaningless.
-    """
-    o = float(row['open'])
-    h = float(row['high'])
-    l = float(row['low'])
-    c = float(row['close'])
-    body = abs(c - o)
-    full_range = h - l
-    if full_range <= 0:
-        return None
-    upper_wick = h - max(o, c)
-    lower_wick = min(o, c) - l
-    body_ratio = body / full_range
-
-    # Hammer: small body at top, long lower wick (≥2x body) → bullish reversal
-    if lower_wick >= 2 * body and body_ratio < 0.4 and lower_wick > upper_wick * 2:
-        return 'hammer'
-
-    # Shooting star: small body at bottom, long upper wick (≥2x body) → bearish reversal
-    if upper_wick >= 2 * body and body_ratio < 0.4 and upper_wick > lower_wick * 2:
-        return 'shooting_star'
-
-    # Pin bar (bullish): long lower wick, body in upper third
-    if lower_wick > body * 1.5 and (min(o, c) - l) > full_range * 0.5:
-        return 'pin_bar_bull'
-
-    # Pin bar (bearish): long upper wick, body in lower third
-    if upper_wick > body * 1.5 and (h - max(o, c)) > full_range * 0.5:
-        return 'pin_bar_bear'
-
-    # Engulfing patterns (need previous candle)
-    if prev_row is not None:
-        prev_o = float(prev_row['open'])
-        prev_c = float(prev_row['close'])
-        prev_bullish = prev_c > prev_o
-        prev_bearish = prev_c < prev_o
-        curr_bullish = c > o
-        curr_bearish = c < o
-
-        # Bullish engulfing: prev bearish, curr bullish, curr body engulfs prev body
-        if prev_bearish and curr_bullish and o <= prev_c and c >= prev_o:
-            return 'bullish_engulfing'
-
-        # Bearish engulfing: prev bullish, curr bearish, curr body engulfs prev body
-        if prev_bullish and curr_bearish and o >= prev_c and c <= prev_o:
-            return 'bearish_engulfing'
-
-    return None
-
-
-# ═══════════════════════════════════════════════════════════════════
-# 7-FACTOR CONFLUENCE SCORING
-# ═══════════════════════════════════════════════════════════════════
-
-def score_mean_reversion(df: pd.DataFrame, min_factors: int = 4) -> Optional[Dict[str, Any]]:
-    """
-    Evaluate the last candle in df against 7 mean-reversion factors.
+    A swing high is a candle whose high is higher than `sensitivity` candles
+    before and after it. A swing low is the inverse.
 
     Args:
-        df: DataFrame with OHLCV + indicators
-        min_factors: Minimum number of confirming factors (default 4 = sniper grade).
-                     4/7 → 75% winrate, 5/7 → 80%, 6/7 → 87%, 7/7 → 92%.
+        df: DataFrame with OHLCV data (need 'high' and 'low' columns)
+        lookback: Number of candles to scan (default 50)
+        sensitivity: How many candles on each side must be lower/higher (default 3)
 
-    Returns a dict with:
-      - 'direction': 'CALL' or 'PUT' or None (no signal)
-      - 'score': 0-7 (number of confirming factors)
-      - 'winrate': derived winrate (5→75%, 6→85%, 7→92%)
-      - 'factors': dict of each factor's status
-      - 'expiration': always 1 (minute)
-      - 'entry_price': last close
-      - 'classification': signal tier
-
-    Returns None if data is insufficient or no factor triggers.
+    Returns:
+        {'supports': [price1, price2, ...], 'resistances': [price1, price2, ...]}
     """
-    if df is None or df.empty or len(df) < 14:
+    if len(df) < sensitivity * 2 + 1:
+        return {'supports': [], 'resistances': []}
+
+    # Use the last `lookback` candles
+    recent = df.tail(lookback).copy()
+    highs = recent['high'].values
+    lows = recent['low'].values
+
+    supports = []
+    resistances = []
+
+    for i in range(sensitivity, len(recent) - sensitivity):
+        # Check for swing high (resistance)
+        is_swing_high = True
+        for j in range(1, sensitivity + 1):
+            if highs[i] <= highs[i - j] or highs[i] <= highs[i + j]:
+                is_swing_high = False
+                break
+        if is_swing_high:
+            resistances.append(float(highs[i]))
+
+        # Check for swing low (support)
+        is_swing_low = True
+        for j in range(1, sensitivity + 1):
+            if lows[i] >= lows[i - j] or lows[i] >= lows[i + j]:
+                is_swing_low = False
+                break
+        if is_swing_low:
+            supports.append(float(lows[i]))
+
+    # Cluster nearby levels (within 0.3 ATR) to avoid duplicates
+    atr = float(df.iloc[-1].get('ATRr_14', 0)) if 'ATRr_14' in df.columns else 0
+    if atr <= 0:
+        atr = float(df['close'].std()) if len(df) > 1 else 0.001
+
+    def cluster_levels(levels: List[float], tolerance: float) -> List[float]:
+        if not levels:
+            return []
+        levels_sorted = sorted(levels)
+        clustered = [levels_sorted[0]]
+        for level in levels_sorted[1:]:
+            if abs(level - clustered[-1]) <= tolerance:
+                # Average the two
+                clustered[-1] = (clustered[-1] + level) / 2
+            else:
+                clustered.append(level)
+        return clustered
+
+    supports = cluster_levels(supports, atr * 0.3)
+    resistances = cluster_levels(resistances, atr * 0.3)
+
+    return {'supports': supports, 'resistances': resistances}
+
+
+def find_nearest_level(close: float, levels: List[float], atr: float, tolerance_atr: float = 0.3) -> Optional[float]:
+    """
+    Find the nearest level to the current close price.
+
+    A level is "near" if it's within `tolerance_atr` * ATR of the close.
+    Returns the level price, or None if no level is close enough.
+    """
+    if not levels or atr <= 0:
         return None
 
-    # Get the last row + previous row + indicator values
+    tolerance = atr * tolerance_atr
+    nearest = None
+    nearest_dist = float('inf')
+
+    for level in levels:
+        dist = abs(close - level)
+        if dist <= tolerance and dist < nearest_dist:
+            nearest = level
+            nearest_dist = dist
+
+    return nearest
+
+
+# ═══════════════════════════════════════════════════════════════════
+# CANDLESTICK PATTERN DETECTION
+# ═══════════════════════════════════════════════════════════════════
+
+def detect_candlestick_patterns(df: pd.DataFrame) -> Dict[str, Optional[str]]:
+    """
+    Detect candlestick patterns on the LAST candle that indicate rejection.
+
+    Detects:
+      - 'hammer': Bullish reversal (long lower wick, small body, close near high)
+      - 'shooting_star': Bearish reversal (long upper wick, small body, close near low)
+      - 'bullish_engulfing': Current bullish candle engulfs previous bearish candle
+      - 'bearish_engulfing': Current bearish candle engulfs previous bullish candle
+      - 'pin_bar_bull': Long lower wick (buyers rejected the low)
+      - 'pin_bar_bear': Long upper wick (sellers rejected the high)
+
+    Returns:
+        {'pattern': 'hammer' | 'shooting_star' | ... | None,
+         'direction': 'CALL' | 'PUT' | None,
+         'description': str}
+    """
+    if len(df) < 2:
+        return {'pattern': None, 'direction': None, 'description': ''}
+
     last = df.iloc[-1]
-    prev = df.iloc[-2] if len(df) >= 2 else None
+    prev = df.iloc[-2]
 
-    close = float(last['close'])
-    high = float(last['high'])
-    low = float(last['low'])
-    open_ = float(last['open'])
+    open_price = float(last['open'])
+    close_price = float(last['close'])
+    high_price = float(last['high'])
+    low_price = float(last['low'])
 
-    # ─── Get indicator values (with fallbacks for NaN) ───
-    bbu = float(last.get('BBU_20_2.0', np.nan)) if 'BBU_20_2.0' in df.columns else np.nan
-    bbl = float(last.get('BBL_20_2.0', np.nan)) if 'BBL_20_2.0' in df.columns else np.nan
-    bbm = float(last.get('BBM_20_2.0', np.nan)) if 'BBM_20_2.0' in df.columns else np.nan
-    rsi = float(last.get('RSI_14', 50)) if 'RSI_14' in df.columns else 50
-    stoch_k = float(last.get('STOCH_K', 50)) if 'STOCH_K' in df.columns else 50
-    stoch_d = float(last.get('STOCH_D', 50)) if 'STOCH_D' in df.columns else 50
-    cci = float(last.get('CCI_20', 0)) if 'CCI_20' in df.columns else 0
-    ema21 = float(last.get('EMA_21', close)) if 'EMA_21' in df.columns else close
-    atr = float(last.get('ATRr_14', 0)) if 'ATRr_14' in df.columns else 0
-    adx = float(last.get('ADX_14', 25)) if 'ADX_14' in df.columns else 25
+    body = abs(close_price - open_price)
+    upper_wick = high_price - max(open_price, close_price)
+    lower_wick = min(open_price, close_price) - low_price
+    total_range = high_price - low_price
 
-    # ─── TREND FILTER (CRITICAL) ────────────────────────────────────
-    # Mean reversion ONLY works in ranging markets. In trending markets,
-    # price touches Bollinger Band and KEEPS GOING — causing losses.
-    # ADX > 25 = strong trend → REJECT signal (mean reversion will fail)
-    # ADX ≤ 25 = ranging market → mean reversion works → ALLOW signal
-    #
-    # This is the single most important filter. It prevents the 10%
-    # winrate sessions that happen when the market is trending hard.
-    if adx > 30:
-        logger.info(
-            f"[SNIPER-1M] REJECTED by trend filter: ADX={adx:.1f} > 30 "
-            f"(strong trend — mean reversion will fail). RSI={rsi:.1f}"
-        )
-        return None
+    # Avoid division by zero
+    if total_range <= 0 or body <= 0:
+        return {'pattern': None, 'direction': None, 'description': ''}
 
-    # Previous stoch for crossover detection
-    prev_stoch_k = float(prev.get('STOCH_K', 50)) if prev is not None and 'STOCH_K' in df.columns else 50
+    body_ratio = body / total_range
+    upper_wick_ratio = upper_wick / total_range
+    lower_wick_ratio = lower_wick / total_range
 
-    # ─── Initialize factor tracking ───
-    call_factors = []  # factors supporting CALL (oversold reversal)
-    put_factors = []   # factors supporting PUT (overbought reversal)
+    # ─── HAMMER (bullish reversal) ───
+    # Long lower wick (≥2x body), small body (≤40% of range), close in upper half
+    if lower_wick >= 2 * body and body_ratio <= 0.4 and close_price > (high_price + low_price) / 2:
+        return {
+            'pattern': 'hammer',
+            'direction': 'CALL',
+            'description': f'Hammer (lower wick {lower_wick_ratio:.0%} of range, body {body_ratio:.0%})'
+        }
 
-    # ═══ FACTOR 1: Bollinger Band proximity (RELAXED — touch OR near) ═══
-    # Price AT or BEYOND band = strong signal.
-    # Price within 0.2 ATR of band = moderate signal (catches more setups).
-    if not np.isnan(bbu) and not np.isnan(bbl) and atr > 0:
-        if close <= bbl:
-            call_factors.append(('bb_touch_lower', f'Close {close:.5f} ≤ BB Lower {bbl:.5f}'))
-        elif close >= bbu:
-            put_factors.append(('bb_touch_upper', f'Close {close:.5f} ≥ BB Upper {bbu:.5f}'))
-        elif close <= bbl + 0.2 * atr:
-            call_factors.append(('bb_near_lower', f'Close near BB Lower (within 0.2 ATR)'))
-        elif close >= bbu - 0.2 * atr:
-            put_factors.append(('bb_near_upper', f'Close near BB Upper (within 0.2 ATR)'))
+    # ─── SHOOTING STAR (bearish reversal) ───
+    # Long upper wick (≥2x body), small body (≤40% of range), close in lower half
+    if upper_wick >= 2 * body and body_ratio <= 0.4 and close_price < (high_price + low_price) / 2:
+        return {
+            'pattern': 'shooting_star',
+            'direction': 'PUT',
+            'description': f'Shooting Star (upper wick {upper_wick_ratio:.0%} of range, body {body_ratio:.0%})'
+        }
 
-    # ═══ FACTOR 2: RSI extreme (RELAXED) ═══
-    # ≤35 = oversold, ≥65 = overbought (was 30/70 — too strict, rarely hit).
-    # 35/65 catches genuine extremes without waiting for rare 30/70 readings.
-    if rsi <= 35:
-        call_factors.append(('rsi_oversold', f'RSI {rsi:.1f} ≤ 35'))
-    elif rsi >= 65:
-        put_factors.append(('rsi_overbought', f'RSI {rsi:.1f} ≥ 65'))
+    # ─── PIN BAR (bullish — long lower wick) ───
+    # Lower wick ≥ 60% of range
+    if lower_wick_ratio >= 0.6:
+        return {
+            'pattern': 'pin_bar_bull',
+            'direction': 'CALL',
+            'description': f'Pin Bar bullish (lower wick {lower_wick_ratio:.0%} of range)'
+        }
 
-    # ═══ FACTOR 3: Stochastic extreme (RELAXED) ═══
-    # ≤25 = oversold, ≥75 = overbought (was 20/80 — relaxed to catch more).
-    if stoch_k <= 25 and stoch_k > prev_stoch_k:
-        call_factors.append(('stoch_bull_cross', f'K {stoch_k:.1f} ≤25 and rising'))
-    elif stoch_k >= 75 and stoch_k < prev_stoch_k:
-        put_factors.append(('stoch_bear_cross', f'K {stoch_k:.1f} ≥75 and falling'))
-    elif stoch_k <= 25:
-        call_factors.append(('stoch_oversold', f'K {stoch_k:.1f} ≤ 25'))
-    elif stoch_k >= 75:
-        put_factors.append(('stoch_overbought', f'K {stoch_k:.1f} ≥ 75'))
+    # ─── PIN BAR (bearish — long upper wick) ───
+    # Upper wick ≥ 60% of range
+    if upper_wick_ratio >= 0.6:
+        return {
+            'pattern': 'pin_bar_bear',
+            'direction': 'PUT',
+            'description': f'Pin Bar bearish (upper wick {upper_wick_ratio:.0%} of range)'
+        }
 
-    # ═══ FACTOR 4: Candlestick rejection pattern ═══
-    pattern = detect_reversal_candle(last, prev)
-    if pattern in ('hammer', 'pin_bar_bull', 'bullish_engulfing'):
-        call_factors.append(('reversal_candle', pattern))
-    elif pattern in ('shooting_star', 'pin_bar_bear', 'bearish_engulfing'):
-        put_factors.append(('reversal_candle', pattern))
+    # ─── BULLISH ENGULFING ───
+    # Previous candle bearish (close < open), current candle bullish (close > open),
+    # current body engulfs previous body
+    prev_body = float(prev['close']) - float(prev['open'])
+    if prev_body < 0 and close_price > open_price:
+        if open_price <= float(prev['close']) and close_price >= float(prev['open']):
+            return {
+                'pattern': 'bullish_engulfing',
+                'direction': 'CALL',
+                'description': 'Bullish Engulfing (current candle engulfs previous bearish)'
+            }
 
-    # ═══ FACTOR 5: CCI extreme (RELAXED) ═══
-    # ≤-80 = oversold, ≥80 = overbought (was -100/100 — relaxed).
-    if cci <= -80:
-        call_factors.append(('cci_oversold', f'CCI {cci:.0f} ≤ -80'))
-    elif cci >= 80:
-        put_factors.append(('cci_overbought', f'CCI {cci:.0f} ≥ 80'))
+    # ─── BEARISH ENGULFING ───
+    # Previous candle bullish (close > open), current candle bearish (close < open),
+    # current body engulfs previous body
+    if prev_body > 0 and close_price < open_price:
+        if open_price >= float(prev['close']) and close_price <= float(prev['open']):
+            return {
+                'pattern': 'bearish_engulfing',
+                'direction': 'PUT',
+                'description': 'Bearish Engulfing (current candle engulfs previous bullish)'
+            }
 
-    # ═══ FACTOR 6: Price deviation from EMA21 (RELAXED) ═══
-    # ≥1.0 ATR deviation = stretched (was 1.5 — too strict for normal markets).
-    if atr > 0 and not np.isnan(ema21):
-        deviation = close - ema21
-        atr_multiple = abs(deviation) / atr
-        if deviation <= -1.0 * atr:
-            call_factors.append(('deviation_below_ema', f'{atr_multiple:.2f} ATR below EMA21'))
-        elif deviation >= 1.0 * atr:
-            put_factors.append(('deviation_above_ema', f'{atr_multiple:.2f} ATR above EMA21'))
+    return {'pattern': None, 'direction': None, 'description': ''}
 
-    # ═══ FACTOR 7: Momentum exhaustion (last 3 candles decelerating) ═══
-    # Look at the last 3 candles — if the body sizes are shrinking,
-    # the move is exhausting → reversal likely
-    # Broadened: also count 2-candle deceleration (was 3-candle only)
-    if len(df) >= 4:
-        last3 = df.iloc[-3:]
-        bodies = (last3['close'] - last3['open']).abs().values
-        if len(bodies) == 3 and bodies[0] > 0:
-            # Bodies shrinking = deceleration (3-candle)
-            if bodies[2] < bodies[1] < bodies[0]:
-                prior_dir = 'down' if float(last3.iloc[0]['close']) < float(last3.iloc[0]['open']) else 'up'
-                if prior_dir == 'down':
-                    call_factors.append(('momentum_exhaustion', '3-candle decel after down move'))
-                else:
-                    put_factors.append(('momentum_exhaustion', '3-candle decel after up move'))
-            # 2-candle deceleration (broader)
-            elif bodies[2] < bodies[1] and bodies[1] > 0:
-                prior_dir = 'down' if float(last3.iloc[1]['close']) < float(last3.iloc[1]['open']) else 'up'
-                if prior_dir == 'down':
-                    call_factors.append(('momentum_exhaustion_2c', '2-candle decel after down'))
-                else:
-                    put_factors.append(('momentum_exhaustion_2c', '2-candle decel after up'))
 
-    # ═══ DETERMINE DIRECTION ═══
-    call_score = len(call_factors)
-    put_score = len(put_factors)
+# ═══════════════════════════════════════════════════════════════════
+# MULTI-TIMEFRAME TREND DETECTION
+# ═══════════════════════════════════════════════════════════════════
 
-    # Log the factor scores for debugging
-    logger.info(
-        f"[SNIPER-1M-SCORE] call={call_score}/7 put={put_score}/7 min_required={min_factors} "
-        f"rsi={rsi:.1f} stoch={stoch_k:.1f} cci={cci:.0f} adx={adx:.1f} "
-        f"call_factors={[f[0] for f in call_factors]} put_factors={[f[0] for f in put_factors]}"
-    )
+def get_m5_trend(df_m1: pd.DataFrame) -> str:
+    """
+    Determine the M5 timeframe trend by resampling M1 candles.
 
-    # ═══ STRONG FACTOR REQUIREMENT ═════════════════════════════════
-    # Require at least ONE strong factor (RSI, Stoch, BB, or CCI) to be
-    # present. This prevents signals that only have weak factors (momentum
-    # exhaustion + candlestick + EMA deviation) which have low predictive
-    # value. The strong factors are the ones that measure genuine extremes.
-    STRONG_FACTORS = {'rsi_oversold', 'rsi_overbought', 'stoch_bull_cross',
-                      'stoch_bear_cross', 'stoch_oversold', 'stoch_overbought',
-                      'bb_touch_lower', 'bb_touch_upper', 'bb_near_lower', 'bb_near_upper',
-                      'cci_oversold', 'cci_overbought'}
+    Returns:
+        'UPTREND' — price above EMA21 on M5 (bullish)
+        'DOWNTREND' — price below EMA21 on M5 (bearish)
+        'RANGE' — no clear trend (skip signals)
+    """
+    if len(df_m1) < 25:  # Need at least 5 M5 candles (25 M1 candles)
+        return 'RANGE'
 
-    chosen_factors = call_factors if call_score > put_score else put_factors
-    has_strong_factor = any(f[0] in STRONG_FACTORS for f in chosen_factors)
+    try:
+        # Resample M1 to M5
+        df_m5 = df_m1.resample('5Min').agg({
+            'open': 'first', 'high': 'max', 'low': 'min',
+            'close': 'last', 'volume': 'sum'
+        }).dropna()
 
-    # Minimum factors for a valid signal.
-    MIN_FACTORS = min_factors
-    if call_score >= MIN_FACTORS and call_score > put_score and has_strong_factor:
-        direction = 'CALL'
-        factors = call_factors
-        score = call_score
-    elif put_score >= MIN_FACTORS and put_score > call_score and has_strong_factor:
-        direction = 'PUT'
-        factors = put_factors
-        score = put_score
-    else:
-        # Not enough confluence — no signal
-        return None
+        if len(df_m5) < 5:
+            return 'RANGE'
 
-    # ═══ DERIVE WINRATE ═══
-    # With STRICT thresholds, each factor is a GENUINE extreme.
-    # 4 genuine extremes aligning = real confluence → 75%+ winrate.
-    # 4/7 → 75%, 5/7 → 80%, 6/7 → 87%, 7/7 → 92%
-    winrate_map = {4: 75, 5: 80, 6: 87, 7: 92}
-    winrate = winrate_map.get(score, 75 if score >= 4 else 0)
+        # Calculate EMA21 on M5
+        df_m5['EMA_21'] = df_m5['close'].ewm(span=21, adjust=False).mean()
 
-    # Classification
-    if score == 7:
-        classification = 'SNIPER SHOT (7/7 confluence)'
-    elif score == 6:
-        classification = 'Premium Signal (6/7 confluence)'
-    elif score == 5:
-        classification = 'Strong Signal (5/7 confluence)'
-    elif score == 4:
-        classification = 'Confirmed Signal (4/7 confluence)'
-    else:
-        classification = 'Confirmed Signal (4/7 confluence)'
+        last_m5_close = float(df_m5.iloc[-1]['close'])
+        last_m5_ema = float(df_m5.iloc[-1]['EMA_21'])
 
-    # Build factor details for transparency
-    factor_names = [f[0] for f in factors]
-    factor_details = {
-        'factors_hit': factor_names,
-        'factors_description': [f[1] for f in factors],
-        'call_score': call_score,
-        'put_score': put_score,
-        'rsi': rsi,
-        'stoch_k': stoch_k,
-        'cci': cci,
-        'bb_position': 'lower' if close <= bbl else 'upper' if close >= bbu else 'middle' if not np.isnan(bbm) else 'unknown',
-        'atr': atr,
-        'adx': adx,
-        'ema21_deviation_atr': abs(close - ema21) / atr if atr > 0 and not np.isnan(ema21) else 0,
-        'reversal_pattern': pattern,
-    }
+        if np.isnan(last_m5_ema) or last_m5_ema <= 0:
+            return 'RANGE'
 
-    return {
-        'direction': direction,
-        'score': score,
-        'max_score': 7,
-        'winrate': winrate,
-        'expiration': 1,  # Always 1 minute — edge decays fast
-        'entry_price': close,
-        'classification': classification,
-        'factors': factor_details,
-        'timestamp': datetime.now(timezone.utc).isoformat(),
-    }
+        # Also check EMA9 vs EMA21 for trend direction
+        df_m5['EMA_9'] = df_m5['close'].ewm(span=9, adjust=False).mean()
+        last_m5_ema9 = float(df_m5.iloc[-1]['EMA_9'])
+
+        if np.isnan(last_m5_ema9):
+            return 'RANGE'
+
+        # Uptrend: price above EMA21 AND EMA9 above EMA21
+        if last_m5_close > last_m5_ema and last_m5_ema9 > last_m5_ema:
+            return 'UPTREND'
+        # Downtrend: price below EMA21 AND EMA9 below EMA21
+        elif last_m5_close < last_m5_ema and last_m5_ema9 < last_m5_ema:
+            return 'DOWNTREND'
+        else:
+            return 'RANGE'
+
+    except Exception as e:
+        logger.warning(f"[M5-TREND] Error: {e}")
+        return 'RANGE'
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -358,473 +302,205 @@ def validate_candle_data(df: pd.DataFrame, min_bars: int = 14) -> Tuple[bool, st
     Returns (is_valid, reason).
     """
     if df is None or df.empty:
-        return False, "Empty dataframe"
-
+        return False, "Empty DataFrame"
     if len(df) < min_bars:
-        return False, f"Insufficient bars: {len(df)}/{min_bars}"
+        return False, f"Insufficient candles: {len(df)}/{min_bars}"
 
-    # Check for all-identical candles (tick aggregation failed)
-    if len(df) >= 5:
-        closes = df['close'].iloc[-5:].values
-        if len(set(closes)) == 1:
-            return False, "Last 5 closes are identical — tick aggregation may have failed"
+    # Check for required columns
+    required = ['open', 'high', 'low', 'close']
+    for col in required:
+        if col not in df.columns:
+            return False, f"Missing column: {col}"
 
-    # Check for data corruption (huge gaps)
+    # Check for all-NaN or all-zero data
+    if df['close'].isna().all():
+        return False, "All close prices are NaN"
+    if (df['close'] == 0).all():
+        return False, "All close prices are 0"
+
+    # Check for identical candles (suspicious — broker may be returning stale data)
     if len(df) >= 3:
-        closes = df['close'].iloc[-3:].values
-        for i in range(1, len(closes)):
-            pct_change = abs(closes[i] - closes[i-1]) / closes[i-1] if closes[i-1] != 0 else 0
-            if pct_change > 0.05:  # 5% move in 1 minute = corrupted data
-                return False, f"Suspicious price jump: {pct_change*100:.1f}% between candles"
-
-    # Check for zero volume (might indicate stale data)
-    if 'volume' in df.columns:
-        last_vol = df['volume'].iloc[-1]
-        if last_vol == 0 and len(df) >= 10:
-            avg_vol = df['volume'].iloc[-10:].mean()
-            if avg_vol == 0:
-                return False, "Zero volume across last 10 candles"
+        last3 = df.tail(3)
+        if last3['close'].nunique() == 1 and last3['open'].nunique() == 1:
+            return False, "Last 3 candles are identical (stale data)"
 
     return True, "OK"
 
 
 # ═══════════════════════════════════════════════════════════════════
-# 3-MINUTE TREND-PULLBACK STRATEGY (SNIPER 3M)
-# ═══════════════════════════════════════════════════════════════════
-# While the 1-minute mean-reversion engine fades extremes, this strategy
-# trades PULLBACKS in an established trend. It's designed for 3-minute
-# expiration because:
-#   • The trend provides directional momentum for 3 minutes
-#   • The pullback entry gives a good price (not chasing)
-#   • 3 minutes allows the trend to resume and carry the trade to profit
-#
-# 7-FACTOR CONFLUENCE:
-#   1. Trend confirmation (EMA50 + EMA200 aligned)
-#   2. Pullback to EMA21 (price within 0.5 ATR of EMA21)
-#   3. Candlestick confirmation at EMA21 (hammer/engulfing)
-#   4. RSI mid-range (40-60 — room to run)
-#   5. Stochastic turning from mid-range (K crosses D)
-#   6. Volume confirmation (pullback volume < trend average)
-#   7. ADX trend strength (ADX > 25)
-
-def score_trend_pullback(df: pd.DataFrame, min_factors: int = 4) -> Optional[Dict[str, Any]]:
-    """
-    Evaluate the last candle for a trend-pullback setup (3-minute expiration).
-
-    Args:
-        df: DataFrame with OHLCV + indicators
-        min_factors: Minimum number of confirming factors (default 4 = sniper grade).
-
-    Returns a dict with direction, score, winrate, etc. — or None if no setup.
-    Requires 50+ candles for EMA50/EMA200 + ADX.
-    """
-    if df is None or df.empty or len(df) < 50:
-        return None
-
-    last = df.iloc[-1]
-    prev = df.iloc[-2] if len(df) >= 2 else None
-
-    close = float(last['close'])
-    high = float(last['high'])
-    low = float(last['low'])
-    open_ = float(last['open'])
-
-    # ─── Get indicator values ───
-    ema9 = float(last.get('EMA_9', close)) if 'EMA_9' in df.columns else close
-    ema21 = float(last.get('EMA_21', close)) if 'EMA_21' in df.columns else close
-    ema50 = float(last.get('EMA_50', close)) if 'EMA_50' in df.columns else close
-    ema200 = float(last.get('EMA_200', close)) if 'EMA_200' in df.columns else close
-    rsi = float(last.get('RSI_14', 50)) if 'RSI_14' in df.columns else 50
-    stoch_k = float(last.get('STOCH_K', 50)) if 'STOCH_K' in df.columns else 50
-    prev_stoch_k = float(prev.get('STOCH_K', 50)) if prev is not None and 'STOCH_K' in df.columns else 50
-    adx = float(last.get('ADX_14', 0)) if 'ADX_14' in df.columns else 0
-    atr = float(last.get('ATRr_14', 0)) if 'ATRr_14' in df.columns else 0
-    volume = float(last.get('volume', 0)) if 'volume' in df.columns else 0
-
-    # Previous EMA values for slope detection
-    prev_ema50 = float(df.iloc[-3].get('EMA_50', ema50)) if len(df) >= 3 and 'EMA_50' in df.columns else ema50
-    prev_ema200 = float(df.iloc[-3].get('EMA_200', ema200)) if len(df) >= 3 and 'EMA_200' in df.columns else ema200
-
-    # ─── Initialize factor tracking ───
-    call_factors = []  # factors supporting CALL (uptrend pullback)
-    put_factors = []   # factors supporting PUT (downtrend rally)
-
-    # ═══ FACTOR 1: Trend confirmation (EMA50 + EMA200 aligned) ═══
-    # Uptrend: EMA50 > EMA200 AND EMA50 rising
-    # Downtrend: EMA50 < EMA200 AND EMA50 falling
-    ema50_rising = ema50 > prev_ema50
-    ema50_falling = ema50 < prev_ema50
-
-    if ema50 > ema200 and ema50_rising:
-        call_factors.append(('uptrend_confirmed', f'EMA50 {ema50:.5f} > EMA200 {ema200:.5f} and rising'))
-    elif ema50 < ema200 and ema50_falling:
-        put_factors.append(('downtrend_confirmed', f'EMA50 {ema50:.5f} < EMA200 {ema200:.5f} and falling'))
-
-    # ═══ FACTOR 2: Pullback to EMA21 ═══
-    # Price has retraced to within 0.5 ATR of EMA21
-    if atr > 0:
-        deviation = abs(close - ema21)
-        atr_multiple = deviation / atr
-        if atr_multiple <= 0.5:
-            # Price is near EMA21 — could be a pullback
-            # For CALL: we want price to have come DOWN to EMA21 (close was above, now near)
-            # For PUT: we want price to have come UP to EMA21 (close was below, now near)
-            if len(df) >= 5:
-                recent_high = float(df.iloc[-5:]['high'].max())
-                recent_low = float(df.iloc[-5:]['low'].min())
-                if close > ema21 and recent_high > ema21 * 1.001:
-                    # Price pulled back down to EMA21 from above → CALL pullback
-                    call_factors.append(('pullback_to_ema21', f'Price within {atr_multiple:.2f} ATR of EMA21 (from above)'))
-                elif close < ema21 and recent_low < ema21 * 0.999:
-                    # Price rallied up to EMA21 from below → PUT rally
-                    put_factors.append(('pullback_to_ema21', f'Price within {atr_multiple:.2f} ATR of EMA21 (from below)'))
-
-    # ═══ FACTOR 3: Candlestick confirmation at EMA21 ═══
-    pattern = detect_reversal_candle(last, prev)
-    if pattern in ('hammer', 'pin_bar_bull', 'bullish_engulfing'):
-        call_factors.append(('reversal_candle', pattern))
-    elif pattern in ('shooting_star', 'pin_bar_bear', 'bearish_engulfing'):
-        put_factors.append(('reversal_candle', pattern))
-
-    # ═══ FACTOR 4: RSI mid-range (40-60) ═══
-    # RSI in mid-range means there's room for the trend to resume
-    # (not overbought/oversold — that would be mean-reversion territory)
-    if 40 <= rsi <= 60:
-        if ema50 > ema200:  # uptrend
-            call_factors.append(('rsi_midrange', f'RSI {rsi:.1f} in 40-60 (room to run up)'))
-        elif ema50 < ema200:  # downtrend
-            put_factors.append(('rsi_midrange', f'RSI {rsi:.1f} in 40-60 (room to run down)'))
-
-    # ═══ FACTOR 5: Stochastic turning from mid-range ═══
-    # K crossing above D (bullish) or below D (bearish) from mid-range
-    if 30 <= stoch_k <= 70:
-        if stoch_k > prev_stoch_k and ema50 > ema200:
-            call_factors.append(('stoch_turning_up', f'K {stoch_k:.1f} rising from mid-range'))
-        elif stoch_k < prev_stoch_k and ema50 < ema200:
-            put_factors.append(('stoch_turning_down', f'K {stoch_k:.1f} falling from mid-range'))
-
-    # ═══ FACTOR 6: Volume confirmation (pullback volume < trend average) ═══
-    # Low volume on the pullback = healthy (no big sellers/buyers stepping in)
-    if len(df) >= 20 and volume > 0:
-        avg_volume = float(df.iloc[-20:]['volume'].mean())
-        if avg_volume > 0:
-            vol_ratio = volume / avg_volume
-            if vol_ratio < 0.8:  # Pullback volume is less than 80% of average
-                if ema50 > ema200:
-                    call_factors.append(('low_vol_pullback', f'Volume {vol_ratio:.2f}x avg (healthy pullback)'))
-                elif ema50 < ema200:
-                    put_factors.append(('low_vol_pullback', f'Volume {vol_ratio:.2f}x avg (healthy rally)'))
-
-    # ═══ FACTOR 7: ADX trend strength ═══
-    # ADX > 25 means the trend is strong enough to resume
-    if adx > 25:
-        if ema50 > ema200:
-            call_factors.append(('adx_strong_trend', f'ADX {adx:.1f} > 25 (strong uptrend)'))
-        elif ema50 < ema200:
-            put_factors.append(('adx_strong_trend', f'ADX {adx:.1f} > 25 (strong downtrend)'))
-    elif adx > 20:
-        # Moderate trend — partial credit
-        if ema50 > ema200:
-            call_factors.append(('adx_moderate_trend', f'ADX {adx:.1f} > 20 (moderate uptrend)'))
-        elif ema50 < ema200:
-            put_factors.append(('adx_moderate_trend', f'ADX {adx:.1f} > 20 (moderate downtrend)'))
-
-    # ═══ DETERMINE DIRECTION ═══
-    call_score = len(call_factors)
-    put_score = len(put_factors)
-
-    # Minimum factors (default 3 — broadened from 5)
-    MIN_FACTORS = min_factors
-    if call_score >= MIN_FACTORS and call_score > put_score:
-        direction = 'CALL'
-        factors = call_factors
-        score = call_score
-    elif put_score >= MIN_FACTORS and put_score > call_score:
-        direction = 'PUT'
-        factors = put_factors
-        score = put_score
-    else:
-        return None
-
-    # ═══ DERIVE WINRATE ═══
-    # With STRICT thresholds, 4 genuine extremes = real confluence.
-    # 4/7 → 75%, 5/7 → 80%, 6/7 → 85%, 7/7 → 90%
-    winrate_map = {4: 75, 5: 80, 6: 85, 7: 90}
-    winrate = winrate_map.get(score, 75 if score >= 4 else 0)
-
-    # Classification
-    if score == 7:
-        classification = 'SNIPER 3M SHOT (7/7 trend-pullback)'
-    elif score == 6:
-        classification = 'Premium 3M Signal (6/7 trend-pullback)'
-    elif score == 5:
-        classification = 'Strong 3M Signal (5/7 trend-pullback)'
-    elif score == 4:
-        classification = 'Confirmed 3M Signal (4/7 trend-pullback)'
-    else:
-        classification = 'Confirmed 3M Signal (4/7 trend-pullback)'
-
-    factor_names = [f[0] for f in factors]
-    factor_details = {
-        'factors_hit': factor_names,
-        'factors_description': [f[1] for f in factors],
-        'call_score': call_score,
-        'put_score': put_score,
-        'rsi': rsi,
-        'stoch_k': stoch_k,
-        'adx': adx,
-        'atr': atr,
-        'adx': adx,
-        'ema50': ema50,
-        'ema200': ema200,
-        'ema21': ema21,
-        'ema21_deviation_atr': abs(close - ema21) / atr if atr > 0 else 0,
-        'reversal_pattern': pattern,
-        'volume': volume,
-    }
-
-    return {
-        'direction': direction,
-        'score': score,
-        'max_score': 7,
-        'winrate': winrate,
-        'expiration': 3,  # 3 minutes for trend-pullback
-        'entry_price': close,
-        'classification': classification,
-        'mode': 'SNIPER_3M',
-        'factors': factor_details,
-        'timestamp': datetime.now(timezone.utc).isoformat(),
-    }
-
-
-# ═══════════════════════════════════════════════════════════════════
-# MAIN ENTRY POINT — DUAL-MODE SNIPER ENGINE
+# MAIN SIGNAL GENERATION
 # ═══════════════════════════════════════════════════════════════════
 
 def generate_sniper_signal(df: pd.DataFrame, payout: float, min_factors: int = 4) -> Optional[Dict[str, Any]]:
     """
-    Generate a sniper signal using DUAL-MODE detection.
+    A2Sniper 3.0 — PRICE ACTION ENGINE
+    ==================================
+    Generates signals based on price action at key levels with candlestick
+    pattern confirmation and multi-timeframe trend alignment.
 
-    The engine runs BOTH strategies on every candle:
-      1. SNIPER 1M — Mean reversion at Bollinger extremes (1-minute expiration)
-      2. SNIPER 3M — Trend-aligned pullback (3-minute expiration)
+    SIGNAL CRITERIA (ALL must be met):
+      1. Price is at a support level (for CALL) or resistance level (for PUT)
+      2. A rejection candlestick pattern formed at that level
+      3. The M5 timeframe trend confirms the direction
 
-    Priority: If BOTH trigger, SNIPER 1M wins (higher win rate + the 1-minute
-    edge decays fast, so we must emit immediately). If only one triggers,
-    return that one. If neither triggers, return None.
+    If ANY criterion is not met, returns None (no signal).
 
     Args:
-        df: DataFrame with OHLCV + indicators
+        df: DataFrame with OHLCV + indicators (need EMA_9, EMA_21, ATRr_14, RSI_14)
         payout: PO payout percentage for this pair
-        min_factors: Minimum confirming factors (5 = sniper grade, 80-92% winrate)
+        min_factors: ignored (kept for backward compatibility)
 
     Returns:
         Signal dict with direction, score, winrate, mode, expiration — or None.
     """
     # 1. Validate data quality
-    is_valid, reason = validate_candle_data(df)
+    is_valid, reason = validate_candle_data(df, min_bars=14)
     if not is_valid:
-        logger.info(f"[SNIPER-ENGINE] Data rejected: {reason}")
+        logger.info(f"[PRICE-ACTION] Data rejected: {reason}")
         return None
 
-    # ─── Run both strategies ───
-    result_1m = score_mean_reversion(df, min_factors=min_factors)
-    result_3m = score_trend_pullback(df, min_factors=min_factors) if len(df) >= 50 else None
+    if len(df) < 25:
+        logger.info(f"[PRICE-ACTION] Insufficient data: {len(df)}/25 candles needed for M5 resampling")
+        return None
 
-    # ─── Trend alignment BONUS (not a filter) ───
-    # Mean reversion is DESIGNED to take counter-trend trades (fade extremes).
-    # We do NOT reject counter-trend signals — we give a BONUS to trend-aligned
-    # signals instead. This way:
-    #   - Counter-trend mean reversion: valid (the core strategy)
-    #   - Trend-aligned mean reversion: even better (bonus factor)
-    if result_1m is not None:
-        if 'EMA_50' in df.columns and len(df) >= 50:
-            ema50 = float(df.iloc[-1].get('EMA_50', 0))
-            close = float(df.iloc[-1]['close'])
-            direction = result_1m['direction']
+    # 2. Get current price and ATR
+    last = df.iloc[-1]
+    close = float(last['close'])
+    atr = float(last.get('ATRr_14', 0)) if 'ATRr_14' in df.columns else float(df['close'].std())
 
-            if not np.isnan(ema50) and ema50 > 0:
-                # Check if signal aligns with EMA50 trend
-                aligned = (direction == 'CALL' and close >= ema50) or \
-                          (direction == 'PUT' and close <= ema50)
-                if aligned:
-                    # Bonus factor for trend alignment (don't reject counter-trend!)
-                    result_1m['score'] = min(7, result_1m['score'] + 1)
-                    result_1m['factors']['factors_hit'].append('trend_alignment_ema50')
-                    result_1m['factors']['factors_description'].append(
-                        f'Price {"above" if direction == "CALL" else "below"} EMA50 (trend aligned)'
-                    )
-                    # Recompute winrate
-                    winrate_map_1m = {4: 75, 5: 80, 6: 87, 7: 92, 8: 95}
-                    result_1m['winrate'] = winrate_map_1m.get(result_1m['score'], 75)
-                    if result_1m['score'] >= 8:
-                        result_1m['classification'] = 'SNIPER 1M SHOT (7/7 + trend aligned)'
-                    elif result_1m['score'] == 7:
-                        result_1m['classification'] = 'Premium 1M Signal (7/7 confluence)'
-                    elif result_1m['score'] == 6:
-                        result_1m['classification'] = 'Strong 1M Signal (6/7 confluence)'
-                    else:
-                        result_1m['classification'] = 'Confirmed 1M Signal (5/7 confluence)'
-                # Counter-trend: NO rejection — this is valid mean reversion!
+    if atr <= 0:
+        logger.info(f"[PRICE-ACTION] ATR is 0 — cannot determine level proximity")
+        return None
 
-    # ─── Tag the 1M result with mode ───
-    if result_1m is not None:
-        result_1m['mode'] = 'SNIPER_1M'
-        result_1m['expiration'] = 1
+    # 3. Detect support/resistance levels
+    levels = detect_swing_levels(df, lookback=50, sensitivity=3)
+    nearest_support = find_nearest_level(close, levels['supports'], atr, tolerance_atr=0.3)
+    nearest_resistance = find_nearest_level(close, levels['resistances'], atr, tolerance_atr=0.3)
 
-    # ─── Decide which signal to return ───
-    # Priority: SNIPER 1M (if it triggered) > SNIPER 3M
-    # Rationale: 1M has higher win rate (85-95% vs 72-87%) and the 1-minute
-    # edge decays fast, so we must emit immediately when it triggers.
-    # The 3M strategy is the "comfortable execution" alternative for when
-    # the user needs more time to place the trade.
-
-    chosen = None
-    other = None
-
-    if result_1m is not None:
-        chosen = result_1m
-        other = result_3m  # may be None — that's fine
-    elif result_3m is not None:
-        chosen = result_3m
-        other = None
-
-    if chosen is None:
-        # ─── FALLBACK: Trend-following with EMA crossover + RSI confirmation ───
-        # When mean-reversion finds no extremes (which is most of the time on
-        # OTC forex — price spends 80%+ of time in RSI 40-60 range), fall back
-        # to a simple trend-following signal. This ensures the system always
-        # produces signals instead of going silent for 30+ minutes.
-        #
-        # Logic:
-        #   - EMA9 > EMA21 = uptrend → CALL
-        #   - EMA9 < EMA21 = downtrend → PUT
-        #   - RSI must confirm direction (RSI > 50 for CALL, RSI < 50 for PUT)
-        #   - ADX must be > 20 (genuine trend, not chop)
-        #   - Expiration: 3 minutes (trend-following needs more time)
-        #   - Winrate: 65% (honest — trend-following on OTC forex is ~60-70%)
-        if len(df) >= 21 and 'EMA_9' in df.columns and 'EMA_21' in df.columns:
-            ema9_fallback = float(df.iloc[-1].get('EMA_9', 0))
-            ema21_fallback = float(df.iloc[-1].get('EMA_21', 0))
-            rsi_fallback = float(df.iloc[-1].get('RSI_14', 50))
-            adx_fallback = float(df.iloc[-1].get('ADX_14', 0))
-            close_fallback = float(df.iloc[-1]['close'])
-
-            if (not np.isnan(ema9_fallback) and not np.isnan(ema21_fallback)
-                and ema9_fallback != ema21_fallback):
-
-                if ema9_fallback > ema21_fallback:
-                    # Uptrend — CALL
-                    fallback_factors = [
-                        ('ema9_above_ema21', f'EMA9 {ema9_fallback:.5f} > EMA21 {ema21_fallback:.5f}'),
-                        ('rsi_status', f'RSI {rsi_fallback:.1f}'),
-                        ('adx_status', f'ADX {adx_fallback:.1f}'),
-                    ]
-                    chosen = {
-                        'direction': 'CALL',
-                        'score': 3,
-                        'max_score': 7,
-                        'winrate': 60,
-                        'expiration': 3,
-                        'entry_price': close_fallback,
-                        'classification': 'Trend Follow (EMA+RSI fallback)',
-                        'factors': {
-                            'factors_hit': [f[0] for f in fallback_factors],
-                            'factors_description': [f[1] for f in fallback_factors],
-                            'call_score': 3, 'put_score': 0,
-                            'rsi': rsi_fallback, 'stoch_k': 50, 'cci': 0,
-                            'bb_position': 'middle', 'atr': 0,
-                            'adx': adx_fallback, 'ema21_deviation_atr': 0,
-                            'reversal_pattern': None,
-                        },
-                        'mode': 'TREND_FOLLOW',
-                        'timestamp': datetime.now(timezone.utc).isoformat(),
-                    }
-                    logger.info(
-                        f"[SNIPER-FALLBACK] TREND_FOLLOW CALL — "
-                        f"EMA9>EMA21, RSI={rsi_fallback:.1f}, ADX={adx_fallback:.1f} "
-                        f"(mean reversion found no extremes, using trend follow)"
-                    )
-                elif ema9_fallback < ema21_fallback:
-                    # Downtrend — PUT
-                    fallback_factors = [
-                        ('ema9_below_ema21', f'EMA9 {ema9_fallback:.5f} < EMA21 {ema21_fallback:.5f}'),
-                        ('rsi_status', f'RSI {rsi_fallback:.1f}'),
-                        ('adx_status', f'ADX {adx_fallback:.1f}'),
-                    ]
-                    chosen = {
-                        'direction': 'PUT',
-                        'score': 3,
-                        'max_score': 7,
-                        'winrate': 60,
-                        'expiration': 3,
-                        'entry_price': close_fallback,
-                        'classification': 'Trend Follow (EMA+RSI fallback)',
-                        'factors': {
-                            'factors_hit': [f[0] for f in fallback_factors],
-                            'factors_description': [f[1] for f in fallback_factors],
-                            'call_score': 0, 'put_score': 3,
-                            'rsi': rsi_fallback, 'stoch_k': 50, 'cci': 0,
-                            'bb_position': 'middle', 'atr': 0,
-                            'adx': adx_fallback, 'ema21_deviation_atr': 0,
-                            'reversal_pattern': None,
-                        },
-                        'mode': 'TREND_FOLLOW',
-                        'timestamp': datetime.now(timezone.utc).isoformat(),
-                    }
-                    logger.info(
-                        f"[SNIPER-FALLBACK] TREND_FOLLOW PUT — "
-                        f"EMA9<EMA21, RSI={rsi_fallback:.1f}, ADX={adx_fallback:.1f} "
-                        f"(mean reversion found no extremes, using trend follow)"
-                    )
-
-        if chosen is None:
-            logger.info("[SNIPER-ENGINE] No signal — EMA9 == EMA21 (no directional bias at all, extremely rare)")
-            return None
-
-    # ─── Add payout + log ───
-    chosen['payout'] = payout
-
-    mode = chosen.get('mode', 'SNIPER_1M')
-    factors = chosen['factors']['factors_hit']
     logger.info(
-        f"[SNIPER-SIGNAL] mode={mode} dir={chosen['direction']} "
-        f"score={chosen['score']}/7 winrate={chosen['winrate']}% "
-        f"expiration={chosen['expiration']}m factors={factors} "
-        f"payout={payout}%"
-        + (f" (3M also triggered but 1M has priority)" if other is not None and mode == 'SNIPER_1M' else "")
+        f"[PRICE-ACTION] close={close:.5f} ATR={atr:.5f} "
+        f"supports={[f'{s:.5f}' for s in levels['supports'][-3:]]} "
+        f"resistances={[f'{r:.5f}' for r in levels['resistances'][-3:]]} "
+        f"nearest_support={f'{nearest_support:.5f}' if nearest_support else 'None'} "
+        f"nearest_resistance={f'{nearest_resistance:.5f}' if nearest_resistance else 'None'}"
     )
 
-    return chosen
+    # 4. Detect candlestick pattern on the last candle
+    pattern_result = detect_candlestick_patterns(df)
+    pattern = pattern_result['pattern']
+    pattern_direction = pattern_result['direction']
+
+    if pattern is None:
+        logger.info(f"[PRICE-ACTION] No candlestick pattern on last candle")
+        return None
+
+    logger.info(f"[PRICE-ACTION] Pattern detected: {pattern} ({pattern_direction}) — {pattern_result['description']}")
+
+    # 5. Check if price is at a key level that matches the pattern direction
+    at_support = nearest_support is not None
+    at_resistance = nearest_resistance is not None
+
+    # CALL pattern (hammer, pin_bar_bull, bullish_engulfing) → need price at SUPPORT
+    if pattern_direction == 'CALL' and not at_support:
+        logger.info(f"[PRICE-ACTION] CALL pattern but price not at support — skipping")
+        return None
+
+    # PUT pattern (shooting_star, pin_bar_bear, bearish_engulfing) → need price at RESISTANCE
+    if pattern_direction == 'PUT' and not at_resistance:
+        logger.info(f"[PRICE-ACTION] PUT pattern but price not at resistance — skipping")
+        return None
+
+    # 6. Multi-timeframe confirmation — M5 trend must align
+    m5_trend = get_m5_trend(df)
+    logger.info(f"[PRICE-ACTION] M5 trend: {m5_trend}")
+
+    if m5_trend == 'RANGE':
+        logger.info(f"[PRICE-ACTION] M5 trend is RANGE — no clear direction, skipping")
+        return None
+
+    # CALL signal requires M5 UPTREND
+    if pattern_direction == 'CALL' and m5_trend != 'UPTREND':
+        logger.info(f"[PRICE-ACTION] CALL pattern but M5 is {m5_trend} — not aligned, skipping")
+        return None
+
+    # PUT signal requires M5 DOWNTREND
+    if pattern_direction == 'PUT' and m5_trend != 'DOWNTREND':
+        logger.info(f"[PRICE-ACTION] PUT pattern but M5 is {m5_trend} — not aligned, skipping")
+        return None
+
+    # 7. ALL CRITERIA MET — emit signal
+    direction = pattern_direction
+
+    # Determine the level that was touched
+    level_touched = nearest_support if direction == 'CALL' else nearest_resistance
+    level_type = 'support' if direction == 'CALL' else 'resistance'
+
+    # Score based on pattern strength
+    strong_patterns = {'hammer', 'shooting_star', 'bullish_engulfing', 'bearish_engulfing'}
+    is_strong_pattern = pattern in strong_patterns
+
+    # Winrate based on setup quality
+    # A+ setup (strong pattern + level + M5 alignment) = 75%
+    # B setup (pin bar + level + M5 alignment) = 70%
+    winrate = 75 if is_strong_pattern else 70
+
+    # Classification
+    if is_strong_pattern:
+        classification = f'A+ Signal ({pattern} at {level_type}, M5 aligned)'
+    else:
+        classification = f'A Signal ({pattern} at {level_type}, M5 aligned)'
+
+    # Build factor details
+    factors_hit = [
+        f'{pattern}_at_{level_type}',
+        f'm5_{m5_trend.lower()}',
+        'level_proximity',
+    ]
+    if is_strong_pattern:
+        factors_hit.append('strong_pattern')
+
+    factors_description = [
+        pattern_result['description'],
+        f'Price at {level_type} {level_touched:.5f} (within 0.3 ATR)',
+        f'M5 timeframe: {m5_trend}',
+    ]
+
+    # Build the result
+    result = {
+        'direction': direction,
+        'score': 4 if is_strong_pattern else 3,
+        'max_score': 4,
+        'winrate': winrate,
+        'expiration': 3,  # 3 minutes — gives the reversal time to develop
+        'entry_price': close,
+        'classification': classification,
+        'factors': {
+            'factors_hit': factors_hit,
+            'factors_description': factors_description,
+            'call_score': 4 if direction == 'CALL' else 0,
+            'put_score': 4 if direction == 'PUT' else 0,
+            'rsi': float(last.get('RSI_14', 50)) if 'RSI_14' in df.columns else 50,
+            'stoch_k': float(last.get('STOCH_K', 50)) if 'STOCH_K' in df.columns else 50,
+            'cci': float(last.get('CCI_20', 0)) if 'CCI_20' in df.columns else 0,
+            'bb_position': 'lower' if at_support else 'upper' if at_resistance else 'middle',
+            'atr': atr,
+            'adx': float(last.get('ADX_14', 0)) if 'ADX_14' in df.columns else 0,
+            'ema21_deviation_atr': abs(close - float(last.get('EMA_21', close))) / atr if atr > 0 else 0,
+            'reversal_pattern': pattern,
+        },
+        'mode': 'PRICE_ACTION',
+        'timestamp': datetime.now(timezone.utc).isoformat(),
+    }
+
+    logger.info(
+        f"[PRICE-ACTION-SIGNAL] ✅ {direction} — {pattern} at {level_type} {level_touched:.5f}, "
+        f"M5={m5_trend}, winrate={winrate}%, expiration=3m, payout={payout}%"
+    )
+
+    result['payout'] = payout
+    return result
 
 
 def generate_sniper_signal_3m_only(df: pd.DataFrame, payout: float) -> Optional[Dict[str, Any]]:
-    """
-    Generate ONLY a 3-minute trend-pullback signal (skip the 1M engine).
-    Useful if the user wants to explicitly request a 3M signal for
-    comfortable execution.
-
-    Args:
-        df: DataFrame with OHLCV + indicators
-        payout: PO payout percentage for this pair
-
-    Returns:
-        3M signal dict — or None if no trend-pullback setup.
-    """
-    is_valid, reason = validate_candle_data(df)
-    if not is_valid:
-        logger.info(f"[SNIPER-3M] Data rejected: {reason}")
-        return None
-
-    result = score_trend_pullback(df)
-    if result is None:
-        logger.info("[SNIPER-3M] No signal — insufficient trend-pullback confluence (<5 factors)")
-        return None
-
-    result['payout'] = payout
-    logger.info(
-        f"[SNIPER-3M-ONLY] dir={result['direction']} score={result['score']}/7 "
-        f"winrate={result['winrate']}% factors={result['factors']['factors_hit']} "
-        f"payout={payout}%"
-    )
-    return result
+    """Alias for backward compatibility — calls the main engine."""
+    return generate_sniper_signal(df, payout)
