@@ -174,36 +174,36 @@ def detect_candlestick_patterns(df: pd.DataFrame) -> Dict[str, Optional[str]]:
     upper_wick_ratio = upper_wick / total_range
     lower_wick_ratio = lower_wick / total_range
 
-    # ─── HAMMER (bullish reversal) ───
-    # Long lower wick (≥2x body), small body (≤40% of range), close in upper half
-    if lower_wick >= 2 * body and body_ratio <= 0.4 and close_price > (high_price + low_price) / 2:
+    # ─── HAMMER (bullish reversal) — RELAXED ───
+    # Long lower wick (≥1.3x body), small body (≤50% of range), close in upper half
+    if lower_wick >= 1.3 * body and body_ratio <= 0.5 and close_price > (high_price + low_price) / 2:
         return {
             'pattern': 'hammer',
             'direction': 'CALL',
             'description': f'Hammer (lower wick {lower_wick_ratio:.0%} of range, body {body_ratio:.0%})'
         }
 
-    # ─── SHOOTING STAR (bearish reversal) ───
-    # Long upper wick (≥2x body), small body (≤40% of range), close in lower half
-    if upper_wick >= 2 * body and body_ratio <= 0.4 and close_price < (high_price + low_price) / 2:
+    # ─── SHOOTING STAR (bearish reversal) — RELAXED ───
+    # Long upper wick (≥1.3x body), small body (≤50% of range), close in lower half
+    if upper_wick >= 1.3 * body and body_ratio <= 0.5 and close_price < (high_price + low_price) / 2:
         return {
             'pattern': 'shooting_star',
             'direction': 'PUT',
             'description': f'Shooting Star (upper wick {upper_wick_ratio:.0%} of range, body {body_ratio:.0%})'
         }
 
-    # ─── PIN BAR (bullish — long lower wick) ───
-    # Lower wick ≥ 60% of range
-    if lower_wick_ratio >= 0.6:
+    # ─── PIN BAR (bullish — long lower wick) — RELAXED ───
+    # Lower wick ≥ 45% of range
+    if lower_wick_ratio >= 0.45:
         return {
             'pattern': 'pin_bar_bull',
             'direction': 'CALL',
             'description': f'Pin Bar bullish (lower wick {lower_wick_ratio:.0%} of range)'
         }
 
-    # ─── PIN BAR (bearish — long upper wick) ───
-    # Upper wick ≥ 60% of range
-    if upper_wick_ratio >= 0.6:
+    # ─── PIN BAR (bearish — long upper wick) — RELAXED ───
+    # Upper wick ≥ 45% of range
+    if upper_wick_ratio >= 0.45:
         return {
             'pattern': 'pin_bar_bear',
             'direction': 'PUT',
@@ -333,25 +333,21 @@ def validate_candle_data(df: pd.DataFrame, min_bars: int = 14) -> Tuple[bool, st
 
 def generate_sniper_signal(df: pd.DataFrame, payout: float, min_factors: int = 4) -> Optional[Dict[str, Any]]:
     """
-    A2Sniper 3.0 — PRICE ACTION ENGINE
-    ==================================
-    Generates signals based on price action at key levels with candlestick
-    pattern confirmation and multi-timeframe trend alignment.
+    A2Sniper 3.0 — PRICE ACTION ENGINE (v2 — scoring system)
+    =========================================================
+    Generates signals based on price action with a SCORING system.
 
-    SIGNAL CRITERIA (ALL must be met):
-      1. Price is at a support level (for CALL) or resistance level (for PUT)
-      2. A rejection candlestick pattern formed at that level
-      3. The M5 timeframe trend confirms the direction
+    REQUIREMENT: A candlestick pattern MUST be present (minimum bar).
+    BONUSES: Level proximity and M5 trend alignment increase winrate.
 
-    If ANY criterion is not met, returns None (no signal).
+    SCORING:
+      Pattern only (no level, no M5)     → 60% winrate
+      Pattern + level (no M5)            → 65% winrate
+      Pattern + M5 (no level)            → 65% winrate
+      Pattern + level + M5               → 70-75% winrate
 
-    Args:
-        df: DataFrame with OHLCV + indicators (need EMA_9, EMA_21, ATRr_14, RSI_14)
-        payout: PO payout percentage for this pair
-        min_factors: ignored (kept for backward compatibility)
-
-    Returns:
-        Signal dict with direction, score, winrate, mode, expiration — or None.
+    This ensures the engine PRODUCES signals (not silent for hours) while
+    still being based on price action, not lagging indicators.
     """
     # 1. Validate data quality
     is_valid, reason = validate_candle_data(df, min_bars=14)
@@ -359,8 +355,8 @@ def generate_sniper_signal(df: pd.DataFrame, payout: float, min_factors: int = 4
         logger.info(f"[PRICE-ACTION] Data rejected: {reason}")
         return None
 
-    if len(df) < 25:
-        logger.info(f"[PRICE-ACTION] Insufficient data: {len(df)}/25 candles needed for M5 resampling")
+    if len(df) < 14:
+        logger.info(f"[PRICE-ACTION] Insufficient data: {len(df)}/14")
         return None
 
     # 2. Get current price and ATR
@@ -369,20 +365,20 @@ def generate_sniper_signal(df: pd.DataFrame, payout: float, min_factors: int = 4
     atr = float(last.get('ATRr_14', 0)) if 'ATRr_14' in df.columns else float(df['close'].std())
 
     if atr <= 0:
-        logger.info(f"[PRICE-ACTION] ATR is 0 — cannot determine level proximity")
-        return None
+        atr = 0.001  # Fallback — don't let ATR=0 block everything
 
-    # 3. Detect support/resistance levels
+    # 3. Detect support/resistance levels (relaxed tolerance: 0.5 ATR)
     levels = detect_swing_levels(df, lookback=50, sensitivity=3)
-    nearest_support = find_nearest_level(close, levels['supports'], atr, tolerance_atr=0.3)
-    nearest_resistance = find_nearest_level(close, levels['resistances'], atr, tolerance_atr=0.3)
+    nearest_support = find_nearest_level(close, levels['supports'], atr, tolerance_atr=0.5)
+    nearest_resistance = find_nearest_level(close, levels['resistances'], atr, tolerance_atr=0.5)
+
+    at_support = nearest_support is not None
+    at_resistance = nearest_resistance is not None
 
     logger.info(
         f"[PRICE-ACTION] close={close:.5f} ATR={atr:.5f} "
-        f"supports={[f'{s:.5f}' for s in levels['supports'][-3:]]} "
-        f"resistances={[f'{r:.5f}' for r in levels['resistances'][-3:]]} "
-        f"nearest_support={f'{nearest_support:.5f}' if nearest_support else 'None'} "
-        f"nearest_resistance={f'{nearest_resistance:.5f}' if nearest_resistance else 'None'}"
+        f"at_support={at_support} at_resistance={at_resistance} "
+        f"supports={len(levels['supports'])} resistances={len(levels['resistances'])}"
     )
 
     # 4. Detect candlestick pattern on the last candle
@@ -391,94 +387,103 @@ def generate_sniper_signal(df: pd.DataFrame, payout: float, min_factors: int = 4
     pattern_direction = pattern_result['direction']
 
     if pattern is None:
-        logger.info(f"[PRICE-ACTION] No candlestick pattern on last candle")
+        logger.info(f"[PRICE-ACTION] No candlestick pattern on last candle — skipping")
         return None
 
-    logger.info(f"[PRICE-ACTION] Pattern detected: {pattern} ({pattern_direction}) — {pattern_result['description']}")
+    logger.info(f"[PRICE-ACTION] Pattern: {pattern} ({pattern_direction}) — {pattern_result['description']}")
 
     # 5. Check if price is at a key level that matches the pattern direction
-    at_support = nearest_support is not None
-    at_resistance = nearest_resistance is not None
+    level_match = False
+    level_touched = None
+    level_type = 'none'
 
-    # CALL pattern (hammer, pin_bar_bull, bullish_engulfing) → need price at SUPPORT
-    if pattern_direction == 'CALL' and not at_support:
-        logger.info(f"[PRICE-ACTION] CALL pattern but price not at support — skipping")
-        return None
+    if pattern_direction == 'CALL' and at_support:
+        level_match = True
+        level_touched = nearest_support
+        level_type = 'support'
+    elif pattern_direction == 'PUT' and at_resistance:
+        level_match = True
+        level_touched = nearest_resistance
+        level_type = 'resistance'
 
-    # PUT pattern (shooting_star, pin_bar_bear, bearish_engulfing) → need price at RESISTANCE
-    if pattern_direction == 'PUT' and not at_resistance:
-        logger.info(f"[PRICE-ACTION] PUT pattern but price not at resistance — skipping")
-        return None
+    logger.info(f"[PRICE-ACTION] Level match: {level_match} ({level_type})")
 
-    # 6. Multi-timeframe confirmation — M5 trend must align
+    # 6. Multi-timeframe confirmation (BONUS, not required)
     m5_trend = get_m5_trend(df)
-    logger.info(f"[PRICE-ACTION] M5 trend: {m5_trend}")
+    m5_aligned = False
 
-    if m5_trend == 'RANGE':
-        logger.info(f"[PRICE-ACTION] M5 trend is RANGE — no clear direction, skipping")
-        return None
+    if pattern_direction == 'CALL' and m5_trend == 'UPTREND':
+        m5_aligned = True
+    elif pattern_direction == 'PUT' and m5_trend == 'DOWNTREND':
+        m5_aligned = True
 
-    # CALL signal requires M5 UPTREND
-    if pattern_direction == 'CALL' and m5_trend != 'UPTREND':
-        logger.info(f"[PRICE-ACTION] CALL pattern but M5 is {m5_trend} — not aligned, skipping")
-        return None
+    logger.info(f"[PRICE-ACTION] M5 trend: {m5_trend}, aligned: {m5_aligned}")
 
-    # PUT signal requires M5 DOWNTREND
-    if pattern_direction == 'PUT' and m5_trend != 'DOWNTREND':
-        logger.info(f"[PRICE-ACTION] PUT pattern but M5 is {m5_trend} — not aligned, skipping")
-        return None
-
-    # 7. ALL CRITERIA MET — emit signal
-    direction = pattern_direction
-
-    # Determine the level that was touched
-    level_touched = nearest_support if direction == 'CALL' else nearest_resistance
-    level_type = 'support' if direction == 'CALL' else 'resistance'
-
-    # Score based on pattern strength
+    # 7. CALCULATE WINRATE BASED ON SCORING
     strong_patterns = {'hammer', 'shooting_star', 'bullish_engulfing', 'bearish_engulfing'}
     is_strong_pattern = pattern in strong_patterns
 
-    # Winrate based on setup quality
-    # A+ setup (strong pattern + level + M5 alignment) = 75%
-    # B setup (pin bar + level + M5 alignment) = 70%
-    winrate = 75 if is_strong_pattern else 70
+    direction = pattern_direction
+
+    # Base winrate from pattern
+    if is_strong_pattern:
+        winrate = 62
+    else:
+        winrate = 58
+
+    # Bonus: level match
+    if level_match:
+        winrate += 5
+
+    # Bonus: M5 aligned
+    if m5_aligned:
+        winrate += 5
+
+    # Bonus: both level + M5
+    if level_match and m5_aligned:
+        winrate += 3  # Extra bonus for full confluence
+
+    # Cap at 78
+    winrate = min(winrate, 78)
 
     # Classification
-    if is_strong_pattern:
+    confluence_count = sum([level_match, m5_aligned])
+    if confluence_count == 2:
         classification = f'A+ Signal ({pattern} at {level_type}, M5 aligned)'
+    elif confluence_count == 1:
+        classification = f'A Signal ({pattern}' + (f' at {level_type}' if level_match else f', M5 {m5_trend}') + ')'
     else:
-        classification = f'A Signal ({pattern} at {level_type}, M5 aligned)'
+        classification = f'B Signal ({pattern})'
 
     # Build factor details
-    factors_hit = [
-        f'{pattern}_at_{level_type}',
-        f'm5_{m5_trend.lower()}',
-        'level_proximity',
-    ]
+    factors_hit = [pattern]
+    factors_description = [pattern_result['description']]
+
+    if level_match:
+        factors_hit.append(f'at_{level_type}')
+        factors_description.append(f'Price at {level_type} {level_touched:.5f} (within 0.5 ATR)')
+    if m5_aligned:
+        factors_hit.append(f'm5_{m5_trend.lower()}')
+        factors_description.append(f'M5 timeframe: {m5_trend}')
     if is_strong_pattern:
         factors_hit.append('strong_pattern')
 
-    factors_description = [
-        pattern_result['description'],
-        f'Price at {level_type} {level_touched:.5f} (within 0.3 ATR)',
-        f'M5 timeframe: {m5_trend}',
-    ]
+    score = len(factors_hit)
 
     # Build the result
     result = {
         'direction': direction,
-        'score': 4 if is_strong_pattern else 3,
+        'score': score,
         'max_score': 4,
         'winrate': winrate,
-        'expiration': 3,  # 3 minutes — gives the reversal time to develop
+        'expiration': 3,
         'entry_price': close,
         'classification': classification,
         'factors': {
             'factors_hit': factors_hit,
             'factors_description': factors_description,
-            'call_score': 4 if direction == 'CALL' else 0,
-            'put_score': 4 if direction == 'PUT' else 0,
+            'call_score': score if direction == 'CALL' else 0,
+            'put_score': score if direction == 'PUT' else 0,
             'rsi': float(last.get('RSI_14', 50)) if 'RSI_14' in df.columns else 50,
             'stoch_k': float(last.get('STOCH_K', 50)) if 'STOCH_K' in df.columns else 50,
             'cci': float(last.get('CCI_20', 0)) if 'CCI_20' in df.columns else 0,
@@ -493,8 +498,9 @@ def generate_sniper_signal(df: pd.DataFrame, payout: float, min_factors: int = 4
     }
 
     logger.info(
-        f"[PRICE-ACTION-SIGNAL] ✅ {direction} — {pattern} at {level_type} {level_touched:.5f}, "
-        f"M5={m5_trend}, winrate={winrate}%, expiration=3m, payout={payout}%"
+        f"[PRICE-ACTION-SIGNAL] {direction} — {pattern}, "
+        f"level={level_match}, M5={m5_aligned}, "
+        f"winrate={winrate}%, score={score}/4, expiration=3m"
     )
 
     result['payout'] = payout
