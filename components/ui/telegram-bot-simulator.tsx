@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Bot, Zap, TrendingUp, TrendingDown, ChevronRight, ChevronLeft, ShieldAlert, Info, BarChart4, Calculator, X, Play, RefreshCw, Trash2, Save, Download, Send, Check, Plus, AlertTriangle } from 'lucide-react';
+import { Bot, Zap, TrendingUp, TrendingDown, ChevronRight, ChevronLeft, ShieldAlert, Info, BarChart4, Calculator, X, Play, RefreshCw, Trash2, Save, Download, Send, Check, Plus, AlertTriangle, Loader2 } from 'lucide-react';
 import { useAppStore } from '@/lib/store';
 import { toast } from 'sonner';
 import { tradingPairs, Signal, UserStats } from '@/lib/mock-data';
@@ -158,7 +158,7 @@ interface Message {
   content: string;
   sender: 'user' | 'bot';
   timestamp: Date;
-  type: 'text' | 'signal' | 'performance' | 'pairs_list' | 'ssid_input';
+  type: 'text' | 'signal' | 'scanning' | 'performance' | 'pairs_list' | 'ssid_input';
   pair_data?: SignalPairData;
 }
 
@@ -481,7 +481,7 @@ export function TelegramBotSimulator() {
   // Message ID counter to avoid collisions
   const messageIdCounter = useRef(0);
 
-  const addMessage = (content: string, sender: 'user' | 'bot', type: 'text' | 'signal' | 'performance' | 'pairs_list' | 'ssid_input' = 'text', pair_data?: SignalPairData) => {
+  const addMessage = (content: string, sender: 'user' | 'bot', type: 'text' | 'signal' | 'scanning' | 'performance' | 'pairs_list' | 'ssid_input' = 'text', pair_data?: SignalPairData) => {
     messageIdCounter.current += 1;
     const newMessage: Message = {
       id: `msg_${Date.now()}_${messageIdCounter.current}`,
@@ -492,6 +492,12 @@ export function TelegramBotSimulator() {
       pair_data
     };
     setMessages(prev => [...prev, newMessage]);
+    return newMessage.id;
+  };
+
+  // Transform an existing message into a different type (e.g. scanning → signal)
+  const updateMessage = (id: string, updates: Partial<Message>) => {
+    setMessages(prev => prev.map(m => m.id === id ? { ...m, ...updates } : m));
   };
 
   const simulateTyping = async (duration = 2000) => {
@@ -701,10 +707,22 @@ Zero Simulation. 100% Real-Market.`;
                   ? 'bg-[#D4AF37]/20 border border-[#D4AF37]/30 text-white rounded-2xl rounded-tr-none px-4 py-3'
                   : message.type === 'signal' 
                     ? '' // Signal handles its own styling
-                    : 'bg-[#121216]/80 backdrop-blur-md border border-gray-800/80 text-gray-200 rounded-2xl rounded-tl-none px-4 py-3 shadow-xl shadow-black/20'
+                    : message.type === 'scanning'
+                      ? 'bg-[#121216]/80 backdrop-blur-md border border-green-500/20 text-gray-200 rounded-2xl rounded-tl-none px-4 py-3 shadow-xl shadow-green-500/10'
+                      : 'bg-[#121216]/80 backdrop-blur-md border border-gray-800/80 text-gray-200 rounded-2xl rounded-tl-none px-4 py-3 shadow-xl shadow-black/20'
               }`}>
                 
-                {message.type === 'signal' && message.pair_data ? (
+                {message.type === 'scanning' ? (
+                  <div className="flex items-center gap-2">
+                    <Loader2 className="w-4 h-4 text-green-400 animate-spin" />
+                    <span className="text-sm text-gray-300 font-bold">{message.content}</span>
+                    <span className="flex gap-0.5">
+                      <motion.span animate={{ opacity: [0.3, 1, 0.3] }} transition={{ repeat: Infinity, duration: 1.2, delay: 0 }} className="w-1 h-1 bg-green-400 rounded-full" />
+                      <motion.span animate={{ opacity: [0.3, 1, 0.3] }} transition={{ repeat: Infinity, duration: 1.2, delay: 0.2 }} className="w-1 h-1 bg-green-400 rounded-full" />
+                      <motion.span animate={{ opacity: [0.3, 1, 0.3] }} transition={{ repeat: Infinity, duration: 1.2, delay: 0.4 }} className="w-1 h-1 bg-green-400 rounded-full" />
+                    </span>
+                  </div>
+                ) : message.type === 'signal' && message.pair_data ? (
                   <motion.div 
                     initial={{ scale: 0.9, opacity: 0 }}
                     animate={{ scale: 1, opacity: 1 }}
@@ -951,37 +969,28 @@ Zero Simulation. 100% Real-Market.`;
       <div className="p-4 bg-[#0a0a0c]/95 backdrop-blur-3xl border-t border-gray-800/50 z-20 space-y-3">
         <button 
           onClick={async () => {
-            await simulateTyping(500);
             if (liveStatus !== 'LIVE') {
               addMessage("⚠️ Cannot scan for signals. No live market connection.", 'bot');
               return;
             }
-            // Directly request a signal — backend scans ALL pairs and returns
-            // the best available setup. No pair selection needed.
-            addMessage("⏳ Scanning all active pairs for the best signal opportunity...", 'bot');
-            await simulateTyping(1500);
+            // Add a "scanning" message with animated dots that will TRANSFORM
+            // into the signal card when the scan completes. No separate message.
+            const scanMsgId = addMessage("⏳ Scanning all active pairs for the best signal opportunity...", 'bot', 'scanning');
             const res = await requestSignal('SCAN_ALL');
             if (res.success && res.signal) {
               const sig = res.signal;
-              const msg = `🎯 <b>A2SNIPER SIGNAL</b>
-━━━━━━━━━━━━━━━━━━━━━
-📊 Paire : <b>${sig.pair}</b>
-🟢 Direction : <b>${sig.direction}</b>
-⌛ Expiration : <b>${sig.expiration}m</b>
-💰 Payout : <b>${sig.payout}%</b>
-🎯 Winrate : <b>${sig.winrate}%</b>
-
-🏗️ Strategy : <i>${sig.smc_structure}</i>
-⚡ Pattern : <i>${sig.chart_pattern || 'N/A'}</i>
-
-Scanned all active pairs — this is the best opportunity found.
-Zero Simulation. 100% Real-Market.`;
-              // Pass the FULL signal object as pair_data so the card has
-              // all fields: pair, direction, payout, expiration, timestamp,
-              // winrate, entry_price, smc_structure, chart_pattern, etc.
-              addMessage(msg, 'bot', 'signal', sig as unknown as SignalPairData);
+              // Transform the scanning message into a signal card IN PLACE
+              updateMessage(scanMsgId, {
+                type: 'signal',
+                content: '',
+                pair_data: sig as unknown as SignalPairData,
+              });
             } else {
-              addMessage(`❌ ${res.message || 'No signal opportunity found right now. Try again in 1-2 minutes.'}`, 'bot');
+              // Transform the scanning message into an error message IN PLACE
+              updateMessage(scanMsgId, {
+                type: 'text',
+                content: `❌ ${res.message || 'No signal opportunity found right now. Try again in 1-2 minutes.'}`,
+              });
             }
           }}
           className="w-full py-2 bg-gradient-to-r from-green-600 to-green-700 hover:from-green-500 hover:to-green-600 rounded-2xl text-[10px] font-black text-white flex items-center justify-center gap-2 transition-all shadow-[0_0_20px_rgba(34,197,94,0.2)] border border-green-400/30 group active:scale-95 whitespace-nowrap"
