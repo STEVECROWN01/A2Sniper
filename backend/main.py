@@ -1644,7 +1644,14 @@ async def request_live_signal(request: Request, credentials: HTTPAuthorizationCr
             await asyncio.sleep(0)  # Yield to event loop
 
         if best_signal:
-            logger.info(f"[SIGNAL-REQUEST] SCAN_ALL — returning best signal: {best_signal.get('pair')} (score={best_score})")
+            # Update the timestamp to NOW so the countdown starts from when
+            # the user RECEIVES the signal, not from when it was found during
+            # the scan. Without this, the signal could arrive already expired
+            # because the scan took 1-3 minutes to check all 30+ pairs.
+            fresh_ts = datetime.now(timezone.utc)
+            best_signal['timestamp'] = fresh_ts.isoformat()
+            best_signal['time'] = fresh_ts.strftime('%H:%M:%S')
+            logger.info(f"[SIGNAL-REQUEST] SCAN_ALL — returning best signal: {best_signal.get('pair')} (score={best_score}), timestamp updated to {fresh_ts.strftime('%H:%M:%S')}")
             return {"status": "success", "signal": best_signal, "mode": best_signal.get('mode', 'price_action')}
 
         logger.info(f"[SIGNAL-REQUEST] SCAN_ALL — no signal found on any of {len(all_pairs)} pairs")
