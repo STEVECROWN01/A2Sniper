@@ -283,7 +283,7 @@ function PairRow({
 }
 
 export function TelegramBotSimulator() {
-  const { liveStatus, connectMarket, requestSignal, signals, userStats, marketInfo } = useAppStore();
+  const { liveStatus, connectMarket, requestSignal, signals, userStats, marketInfo, attemptReconnect } = useAppStore();
   const [messages, setMessages] = useState<Message[]>([]);
   const [isTyping, setIsTyping] = useState(false);
   const [pairsScrollIndex, setPairsScrollIndex] = useState(0);
@@ -682,9 +682,21 @@ Zero Simulation. 100% Real-Market.`;
               <span className="text-[8px] font-black text-green-400 tracking-wider leading-none">CONNECTED</span>
             </div>
           ) : (
-             <div className="bg-red-600/20 px-2.5 py-1 rounded-lg border border-red-500/30 flex items-center justify-center">
-              <span className="text-[8px] font-black text-red-400 tracking-wider leading-none">DISCONNECTED</span>
-            </div>
+            <button
+              onClick={async () => {
+                addMessage("🔄 Reconnecting with saved SSID...", 'bot');
+                const result = await attemptReconnect();
+                if (result.success) {
+                  toast.success("Reconnected to Pocket Option market!");
+                } else {
+                  addMessage(`❌ Reconnection failed: ${result.message || 'No saved SSID found. Please go to the Signals page to connect.'}`, 'bot');
+                }
+              }}
+              className="bg-red-600/20 px-2.5 py-1 rounded-lg border border-red-500/30 flex items-center justify-center hover:bg-red-600/40 hover:border-red-500/50 transition-all cursor-pointer active:scale-95"
+              title="Reconnect with saved SSID"
+            >
+              <span className="text-[8px] font-black text-red-400 tracking-wider leading-none">CONNECT</span>
+            </button>
           )}
           <button title="Vider le chat" onClick={() => setShowClearModal(true)} className="p-1.5 hover:bg-red-500/10 rounded-lg text-gray-500 hover:text-red-400 transition-colors">
             <Trash2 className="w-4 h-4" />
