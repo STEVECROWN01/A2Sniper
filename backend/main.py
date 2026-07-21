@@ -1651,7 +1651,16 @@ async def request_live_signal(request: Request, credentials: HTTPAuthorizationCr
             fresh_ts = datetime.now(timezone.utc)
             best_signal['timestamp'] = fresh_ts.isoformat()
             best_signal['time'] = fresh_ts.strftime('%H:%M:%S')
-            logger.info(f"[SIGNAL-REQUEST] SCAN_ALL — returning best signal: {best_signal.get('pair')} (score={best_score}), timestamp updated to {fresh_ts.strftime('%H:%M:%S')}")
+
+            # Refresh the payout from the scanner's LATEST data — PO updates
+            # payouts dynamically and the cached value from when the scan
+            # started may be stale (e.g., bot shows 82% but PO UI shows 90%).
+            fresh_payout = po_scanner.get_payout(best_signal.get('pair', ''))
+            if fresh_payout and fresh_payout > 0:
+                best_signal['payout'] = fresh_payout
+                logger.info(f"[SIGNAL-REQUEST] SCAN_ALL — payout refreshed: {best_signal.get('pair')} = {fresh_payout}%")
+
+            logger.info(f"[SIGNAL-REQUEST] SCAN_ALL — returning best signal: {best_signal.get('pair')} (score={best_score}), timestamp={fresh_ts.strftime('%H:%M:%S')}, payout={best_signal.get('payout')}%")
             return {"status": "success", "signal": best_signal, "mode": best_signal.get('mode', 'price_action')}
 
         logger.info(f"[SIGNAL-REQUEST] SCAN_ALL — no signal found on any of {len(all_pairs)} pairs")
