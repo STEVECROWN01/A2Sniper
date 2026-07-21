@@ -354,7 +354,7 @@ export function TelegramBotSimulator() {
       setTimeout(() => {
         setIsAnalyzing(false);
         addMessage(`✅ Initial analysis complete! The system is now broadcasting real signals.`, 'bot');
-        addMessage(`🎉Welcome to A2Sniper 3.0!\n\n🤖The cutting-edge assistant for your high-frequency binary trading.\n\n🟢 You are now successfully connected to the market 💹\n\nTo start receiving your binary trading signals, please click the 'Currency Pairs' button below, then click the currency pair of your choice to receive your signal.\n\n🎉Have an excellent trading session!\n@A2Sniper_BinaryTrade`, 'bot');
+        addMessage(`🎉Welcome to A2Sniper 3.0!\n\n🤖The cutting-edge assistant for your high-frequency binary trading.\n\n🟢 You are now successfully connected to the market 💹\n\nTo start receiving your binary trading signals, please click the 'GET SIGNAL' button below to receive your signal.\n\n🎉Have an excellent trading session!\n@A2Sniper_BinaryTrade`, 'bot');
       }, 5000);
     } else {
       const errMsg = "Connection expired or invalid. The provided SSID is not active.";
@@ -386,7 +386,7 @@ export function TelegramBotSimulator() {
           const currentLiveStatus = useAppStore.getState().liveStatus;
           
           if (currentLiveStatus === 'LIVE') {
-            addMessage(`🎉Welcome to A2Sniper 3.0!\n\n🤖The cutting-edge assistant for your high-frequency binary trading.\n\n🟢 You are now successfully connected to the market 💹\n\nTo start receiving your binary trading signals, please click the 'Currency Pairs' button below, then click the currency pair of your choice to receive your signal.\n\n🎉Have an excellent trading session!\n@A2Sniper_BinaryTrade`, 'bot');
+            addMessage(`🎉Welcome to A2Sniper 3.0!\n\n🤖The cutting-edge assistant for your high-frequency binary trading.\n\n🟢 You are now successfully connected to the market 💹\n\nTo start receiving your binary trading signals, please click the 'GET SIGNAL' button below to receive your signal.\n\n🎉Have an excellent trading session!\n@A2Sniper_BinaryTrade`, 'bot');
           } else {
             addMessage(`🎉Welcome to A2Sniper 3.0!\n\n🤖The cutting-edge assistant for your high-frequency binary trading.\n\n⛔ You are not currently connected to the market (or your SSID has expired) ⚠️\n\nTo receive signals on active pairs, please connect to the market by providing your current SSID. Here's how:\n1. Open your account on pocketoption.com\n2. Press F12 (Inspect) → Network tab\n3. Filter by "socket.io" then click on a websocket\n4. In the Messages tab, find the stable authentication frame containing the "session" key (starting with 42["auth",{"session":"..."). Right-click it and select "Copy message"\n5. Paste it into the "SSID (Auth Frame)" field of the bot (below 👇) then send.`, 'bot', 'ssid_input');
           }
@@ -548,7 +548,7 @@ Zero Simulation. 100% Real-Market.`;
         setTimeout(() => {
           setIsAnalyzing(false);
           addMessage(`✅ Initial analysis complete! The system is now broadcasting real signals.`, 'bot');
-          addMessage(`🎉Welcome to A2Sniper 3.0!\n\n🤖The cutting-edge assistant for your high-frequency binary trading.\n\n🟢 You are now successfully connected to the market 💹\n\nTo start receiving your binary trading signals, please click the 'Currency Pairs' button below, then click the currency pair of your choice to receive your signal.\n\n🎉Have an excellent trading session!\n@A2Sniper_BinaryTrade`, 'bot');
+          addMessage(`🎉Welcome to A2Sniper 3.0!\n\n🤖The cutting-edge assistant for your high-frequency binary trading.\n\n🟢 You are now successfully connected to the market 💹\n\nTo start receiving your binary trading signals, please click the 'GET SIGNAL' button below to receive your signal.\n\n🎉Have an excellent trading session!\n@A2Sniper_BinaryTrade`, 'bot');
         }, 5000);
       } else {
         addMessage(`❌ Connection failed. The provided SSID is expired or invalid. Please retry the connection steps.`, 'bot');
@@ -610,7 +610,7 @@ Zero Simulation. 100% Real-Market.`;
       }
     } else {
       if (liveStatus === 'LIVE') {
-        addMessage(`🎉Welcome to A2Sniper 3.0!\n\n🤖The cutting-edge assistant for your high-frequency binary trading.\n\n🟢 You are now successfully connected to the market 💹\n\nTo start receiving your binary trading signals, please click the 'Currency Pairs' button below, then click the currency pair of your choice to receive your signal.\n\n🎉Have an excellent trading session!\n@A2Sniper_BinaryTrade`, 'bot');
+        addMessage(`🎉Welcome to A2Sniper 3.0!\n\n🤖The cutting-edge assistant for your high-frequency binary trading.\n\n🟢 You are now successfully connected to the market 💹\n\nTo start receiving your binary trading signals, please click the 'GET SIGNAL' button below to receive your signal.\n\n🎉Have an excellent trading session!\n@A2Sniper_BinaryTrade`, 'bot');
       } else {
         addMessage(`🎉Welcome to A2Sniper 3.0!\n\n🤖The cutting-edge assistant for your high-frequency binary trading.\n\n⛔ You are not currently connected to the market (or your SSID has expired) ⚠️\n\nTo receive signals on active pairs, please connect to the market by providing your current SSID. Here's how:\n1. Open your account on pocketoption.com\n2. Press F12 (Inspect) → Network tab\n3. Filter by "socket.io" then click on a websocket\n4. In the Messages tab, find the stable authentication frame containing the "session" key (starting with 42["auth",{"session":"..."). Right-click it and select "Copy message"\n5. Paste it into the "SSID (Auth Frame)" field of the bot (below 👇) then send.`, 'bot', 'ssid_input');
       }
@@ -953,15 +953,47 @@ Zero Simulation. 100% Real-Market.`;
           onClick={async () => {
             await simulateTyping(500);
             if (liveStatus !== 'LIVE') {
-              addMessage("⚠️ Cannot list active pairs. No live market connection.", 'bot');
+              addMessage("⚠️ Cannot scan for signals. No live market connection.", 'bot');
               return;
             }
-            addMessage("Select an active pair for immediate analysis :", 'bot', 'pairs_list');
+            // Directly request a signal — backend scans ALL pairs and returns
+            // the best available setup. No pair selection needed.
+            addMessage("⏳ Scanning all active pairs for the best signal opportunity...", 'bot');
+            await simulateTyping(1500);
+            const res = await requestSignal('SCAN_ALL');
+            if (res.success && res.signal) {
+              const sig = res.signal;
+              const msg = `🎯 <b>A2SNIPER SIGNAL</b>
+━━━━━━━━━━━━━━━━━━━━━
+📊 Paire : <b>${sig.pair}</b>
+🟢 Direction : <b>${sig.direction}</b>
+⌛ Expiration : <b>${sig.expiration}m</b>
+💰 Payout : <b>${sig.payout}%</b>
+🎯 Winrate : <b>${sig.winrate}%</b>
+
+🏗️ Strategy : <i>${sig.smc_structure}</i>
+⚡ Pattern : <i>${sig.chart_pattern || 'N/A'}</i>
+
+Scanned all active pairs — this is the best opportunity found.
+Zero Simulation. 100% Real-Market.`;
+              addMessage(msg, 'bot', 'signal', { 
+                pair_data: { 
+                  pair: sig.pair, 
+                  direction: sig.direction, 
+                  payout: sig.payout, 
+                  expiration: sig.expiration, 
+                  timestamp: sig.timestamp,
+                  winrate: sig.winrate,
+                } 
+              });
+            } else {
+              addMessage(`❌ ${res.message || 'No signal opportunity found right now. Try again in 1-2 minutes.'}`, 'bot');
+            }
           }}
           className="w-full py-2 bg-gradient-to-r from-green-600 to-green-700 hover:from-green-500 hover:to-green-600 rounded-2xl text-[10px] font-black text-white flex items-center justify-center gap-2 transition-all shadow-[0_0_20px_rgba(34,197,94,0.2)] border border-green-400/30 group active:scale-95 whitespace-nowrap"
         >
           <Zap className="w-4 h-4 fill-white animate-pulse" />
-          Currency Pairs
+          GET SIGNAL
         </button>
 
         <div className="flex gap-2">
@@ -1777,7 +1809,7 @@ function InfoModal({ type, onClose, stats }: { type: 'DISCLAIMER' | 'AIDE' | 'PE
           <p className="font-bold text-[#D4AF37] uppercase tracking-widest text-[10px]">Deployment Steps</p>
           <ol className="list-decimal pl-4 space-y-3 text-gray-300">
             <li><strong>Connectivity</strong> : Make sure you have provided a valid SSID and that the 'CONNECTED' indicator is green.</li>
-            <li><strong>Analyze</strong>: Click on <span className="text-[#D4AF37]">Currency Pairs</span> to see current market opportunities.</li>
+            <li><strong>Analyze</strong>: Click on <span className="text-[#D4AF37]">GET SIGNAL</span> to scan all pairs and get the best signal.</li>
             <li><strong>Execution</strong> : Follow the signaled direction (<span className="text-green-400">CALL</span> or <span className="text-red-400">PUT</span>) and the exact expiration time displayed.</li>
             <li><strong>Risk Management</strong> : Use the <span className="text-red-400">Risk Manager</span> to plan your sessions and protect your capital.</li>
             <li><strong>Strategy</strong> : Our system uses a tripartite consensus validating SMC structures and institutional zones before delivering a signal.</li>

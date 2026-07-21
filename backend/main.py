@@ -1608,6 +1608,51 @@ async def request_live_signal(request: Request, credentials: HTTPAuthorizationCr
             detail="A2Sniper scanner is not connected to the live market. Please connect first."
         )
 
+    # ═══ SCAN_ALL MODE — scan all pairs and return the best signal ═════════
+    # When pair='SCAN_ALL', the user clicked "GET SIGNAL" which scans ALL
+    # active pairs (30+) and returns the highest-scoring price action setup.
+    # This is how professional systems work — always respond with a signal.
+    if pair == 'SCAN_ALL':
+        logger.info(f"[SIGNAL-REQUEST] SCAN_ALL mode — scanning all active pairs for best signal...")
+
+        all_pairs = list(po_scanner.find_pairs_above_payout(
+            min_payout=70.0, pair_filter="OTC", active_only=True, forex_only=True
+        ).keys())
+
+        if not all_pairs:
+            raise HTTPException(status_code=404, detail="No active pairs with payout >= 70% available right now.")
+
+        logger.info(f"[SIGNAL-REQUEST] SCAN_ALL — scanning {len(all_pairs)} pairs...")
+
+        best_signal = None
+        best_score = 0
+
+        for scan_pair in all_pairs:
+            if not po_scanner.is_connected:
+                break
+            scan_payout = po_scanner.get_payout(scan_pair)
+            if scan_payout is None or scan_payout < 70:
+                continue
+            try:
+                scan_signal = await asyncio.wait_for(force_analyze_pair(scan_pair), timeout=10.0)
+                if scan_signal and scan_signal.get('score', 0) > best_score:
+                    best_signal = scan_signal
+                    best_score = scan_signal.get('score', 0)
+                    logger.info(f"[SIGNAL-REQUEST] SCAN_ALL — found signal on {scan_pair} (score={best_score})")
+            except Exception:
+                pass
+            await asyncio.sleep(0)  # Yield to event loop
+
+        if best_signal:
+            logger.info(f"[SIGNAL-REQUEST] SCAN_ALL — returning best signal: {best_signal.get('pair')} (score={best_score})")
+            return {"status": "success", "signal": best_signal, "mode": best_signal.get('mode', 'price_action')}
+
+        logger.info(f"[SIGNAL-REQUEST] SCAN_ALL — no signal found on any of {len(all_pairs)} pairs")
+        raise HTTPException(
+            status_code=404,
+            detail="No signal opportunity found right now. Try again in 1-2 minutes."
+        )
+
     real_payout = po_scanner.get_payout(pair)
     logger.info(f"[SIGNAL-REQUEST] pair={pair} payout={real_payout} — payout lookup result")
 
