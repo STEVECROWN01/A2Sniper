@@ -987,7 +987,7 @@ Zero Simulation. 100% Real-Market.`;
             }
             // Add a "scanning" message with animated dots that will TRANSFORM
             // into the signal card when the scan completes. No separate message.
-            const scanMsgId = addMessage("⏳ Scanning all active pairs for the best signal opportunity...", 'bot', 'scanning');
+            const scanMsgId = addMessage("⏳ Scanning all active pairs for the best signal opportunity", 'bot', 'scanning');
             const res = await requestSignal('SCAN_ALL');
             if (res.success && res.signal) {
               const sig = res.signal;
