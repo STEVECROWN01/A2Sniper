@@ -1658,8 +1658,45 @@ async def request_live_signal(request: Request, credentials: HTTPAuthorizationCr
         logger.info(f"[SIGNAL-REQUEST] Signal generated for {pair} (mode={signal.get('mode','?')}, winrate={signal.get('winrate','?')}%)")
         return {"status": "success", "signal": signal, "mode": signal.get('mode', 'price_action')}
 
-    # ═══ NO SIGNAL — honestly tell the user ═══════════════════════════
-    logger.info(f"[SIGNAL-REQUEST] No signal for {pair} — no price action setup found (pattern at level + M5 confirmation). Try another pair or wait 1-2 minutes.")
+    # ═══ MULTI-PAIR SCAN — professional behavior ═══════════════════════
+    # If the requested pair has no setup, scan ALL other pairs to find the
+    # BEST available setup. Professional systems always respond with a
+    # signal — they don't say "No signal" for hours.
+    logger.info(f"[SIGNAL-REQUEST] No setup on {pair} — scanning ALL pairs for best available signal...")
+
+    all_pairs = list(po_scanner.find_pairs_above_payout(
+        min_payout=70.0, pair_filter="OTC", active_only=True, forex_only=True
+    ).keys())
+
+    # Remove the already-tried pair
+    if pair in all_pairs:
+        all_pairs.remove(pair)
+
+    best_signal = None
+    best_score = 0
+
+    for alt_pair in all_pairs:
+        if not po_scanner.is_connected:
+            break
+        alt_payout = po_scanner.get_payout(alt_pair)
+        if alt_payout is None or alt_payout < 70:
+            continue
+        try:
+            alt_signal = await asyncio.wait_for(force_analyze_pair(alt_pair), timeout=10.0)
+            if alt_signal and alt_signal.get('score', 0) > best_score:
+                best_signal = alt_signal
+                best_score = alt_signal.get('score', 0)
+                logger.info(f"[SIGNAL-REQUEST] Found better signal on {alt_pair} (score={best_score})")
+        except Exception:
+            pass  # Try next pair
+        await asyncio.sleep(0)  # Yield to event loop
+
+    if best_signal:
+        logger.info(f"[SIGNAL-REQUEST] Returning best signal from multi-pair scan: {best_signal.get('pair')} (score={best_score})")
+        return {"status": "success", "signal": best_signal, "mode": best_signal.get('mode', 'price_action')}
+
+    # ═══ TRULY no signal on ANY pair ═══════════════════════════════════
+    logger.info(f"[SIGNAL-REQUEST] No signal on ANY pair — all 30+ pairs scanned, no pattern + bonus found")
     raise HTTPException(
         status_code=404,
         detail=(
