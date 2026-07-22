@@ -1622,19 +1622,32 @@ async def request_live_signal(request: Request, credentials: HTTPAuthorizationCr
         if not all_pairs:
             raise HTTPException(status_code=404, detail="No active pairs with payout >= 70% available right now.")
 
-        logger.info(f"[SIGNAL-REQUEST] SCAN_ALL — scanning {len(all_pairs)} pairs...")
+        # Filter out pairs that don't exist on PO (stale cache entries like IRR/USD)
+        # by verifying each pair has a valid, current payout from the scanner
+        valid_pairs = []
+        for p in all_pairs:
+            p_payout = po_scanner.get_payout(p)
+            if p_payout is not None and p_payout >= 70:
+                valid_pairs.append(p)
+        all_pairs = valid_pairs
+
+        logger.info(f"[SIGNAL-REQUEST] SCAN_ALL — scanning {len(all_pairs)} valid pairs (25s limit)...")
 
         best_signal = None
         best_score = 0
+        scan_start = datetime.now(timezone.utc).timestamp()
+        MAX_SCAN_SECONDS = 25  # Must finish before Vercel's 30s proxy timeout
 
         for scan_pair in all_pairs:
+            # Stop if overall time limit reached
+            elapsed = datetime.now(timezone.utc).timestamp() - scan_start
+            if elapsed > MAX_SCAN_SECONDS:
+                logger.info(f"[SIGNAL-REQUEST] SCAN_ALL — {MAX_SCAN_SECONDS}s limit reached, returning best so far")
+                break
             if not po_scanner.is_connected:
                 break
-            scan_payout = po_scanner.get_payout(scan_pair)
-            if scan_payout is None or scan_payout < 70:
-                continue
             try:
-                scan_signal = await asyncio.wait_for(force_analyze_pair(scan_pair), timeout=10.0)
+                scan_signal = await asyncio.wait_for(force_analyze_pair(scan_pair), timeout=3.0)
                 if scan_signal and scan_signal.get('score', 0) > best_score:
                     best_signal = scan_signal
                     best_score = scan_signal.get('score', 0)
