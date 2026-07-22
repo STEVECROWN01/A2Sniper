@@ -70,7 +70,7 @@ export default function RiskManagerPage() {
       const saved = localStorage.getItem('a2sniper_risk_trades');
       if (saved) { try { return JSON.parse(saved); } catch {} }
     }
-    return Array(10).fill({ result: '', amount: 0, return: 0 });
+    return Array(10).fill({ result: '', amount: 0, return: 0, payout: 0 });
   });
 
   // Session counter — persisted to localStorage so it survives page navigation.
@@ -201,10 +201,12 @@ export default function RiskManagerPage() {
 
     const computedTrades = trades.map(trade => {
       if (!trade.result || trade.amount <= 0) return { ...trade, balance: '-' };
+      // Use per-row payout if set, otherwise fall back to global payout
+      const rowPayout = (trade.payout && trade.payout > 0) ? trade.payout : payout;
       totalStake += trade.amount;
       let res = 0;
       if (trade.result === 'WIN') {
-        res = trade.amount * (payout / 100);
+        res = trade.amount * (rowPayout / 100);
         currentBalance += res;
         wins++;
         totalProfit += res;
@@ -214,7 +216,7 @@ export default function RiskManagerPage() {
         losses++;
         totalProfit += res;
       }
-      return { ...trade, return: Math.abs(res), balance: currentBalance.toFixed(2) };
+      return { ...trade, return: Math.abs(res), balance: currentBalance.toFixed(2), payout: rowPayout };
     });
 
     const winRate = (wins + losses) > 0 ? (wins / (wins + losses)) * 100 : 0;
@@ -299,8 +301,8 @@ export default function RiskManagerPage() {
     // helper showed the correct 5% amount — confusing and inconsistent.)
     const recStake = Math.max(1, parseFloat((balance * 0.05).toFixed(2)));
 
-    // Fill the first empty row with the recommended stake
-    newTrades[firstEmptyIdx] = { ...newTrades[firstEmptyIdx], amount: recStake };
+    // Fill the first empty row with the recommended stake and current payout
+    newTrades[firstEmptyIdx] = { ...newTrades[firstEmptyIdx], amount: recStake, payout: payoutPct };
 
     // Clear ALL other empty rows (set amount to 0) so they show $1 grayed
     for (let i = firstEmptyIdx + 1; i < newTrades.length; i++) {
@@ -617,7 +619,15 @@ export default function RiskManagerPage() {
     localStorage.setItem('a2sniper_risk_session_counter', String(counterToUse));
 
     // Save to sessions array (multi-session support)
-    const dataToSave = { initialCapital, payout, trades, sessionCounter: counterToUse, savedAt: new Date().toISOString() };
+    // Track createdAt (first save) and updatedAt (subsequent saves)
+    const now = new Date().toISOString();
+    const existing = (currentEditingIdx >= 0 && currentEditingIdx < allSessions.length) ? allSessions[currentEditingIdx] : null;
+    const dataToSave = {
+      initialCapital, payout, trades, sessionCounter: counterToUse,
+      savedAt: now,
+      createdAt: existing?.createdAt || now,  // Preserve original creation time
+      updatedAt: now,  // Always update to current save time
+    };
     const updated = [...allSessions];
     if (currentEditingIdx >= 0 && currentEditingIdx < updated.length) {
       updated[currentEditingIdx] = dataToSave;
@@ -749,20 +759,23 @@ export default function RiskManagerPage() {
       y = checkPageBreak(doc, y, 30);
       y = drawSectionTitle(doc, 'Trading Journal', y);
       const headers = [
-        { label: '#', width: 12 },
-        { label: 'Result', width: 22, align: 'center' as const },
-        { label: 'Stake ($)', width: 28, align: 'right' as const },
-        { label: 'Return ($)', width: 28, align: 'right' as const },
-        { label: 'Balance ($)', width: 30, align: 'right' as const },
+        { label: '#', width: 10 },
+        { label: 'Result', width: 18, align: 'center' as const },
+        { label: 'Stake ($)', width: 22, align: 'right' as const },
+        { label: 'Ret ($)', width: 22, align: 'right' as const },
+        { label: 'Bal ($)', width: 24, align: 'right' as const },
+        { label: 'Pay (%)', width: 18, align: 'center' as const },
       ];
       const rows = validTrades.map((t) => {
         const origIdx = results.computedTrades.indexOf(t);
+        const rowPayout = (t.payout && t.payout > 0) ? t.payout : payout;
         return [
           `#${origIdx + 1}`,
           t.result || '-',
           t.amount && t.amount > 0 ? t.amount.toFixed(2) : '-',
           t.result === 'WIN' ? `+${(t.return?.toFixed(2) || '0.00')}` : t.result === 'LOSS' ? `-${(t.amount?.toFixed(2) || '0.00')}` : '-',
           t.balance === '-' ? '-' : `$${t.balance}`,
+          `${rowPayout}%`,
         ];
       });
       y = drawTable(doc, PAGE.marginL, y, headers, rows);
@@ -924,12 +937,20 @@ export default function RiskManagerPage() {
                     <th className="px-6 py-4">Stake ($)</th>
                     <th className="px-6 py-4 text-right">Return ($)</th>
                     <th className="px-6 py-4 text-right">Balance ($)</th>
-                    <th className="px-4 py-4 text-center">Del</th>
+                    <th className="px-6 py-4 text-center">Payout (%)</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-800/30">
                   {results.computedTrades.map((trade, i) => (
-                    <tr key={i} className="hover:bg-white/[0.02] transition-colors group">
+                    <tr key={i} className="hover:bg-white/[0.02] transition-colors group relative">
+                      {/* Delete button — floats on hover, top-right of row */}
+                      <button
+                        onClick={() => deleteTrade(i)}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 text-gray-700 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all opacity-0 group-hover:opacity-100 z-10"
+                        title="Delete this trade"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
                       <td className="px-6 py-4 text-xs font-black text-gray-600">{i + 1}</td>
                       <td className="px-6 py-4">
                         <div className="flex gap-2 w-32">
@@ -968,14 +989,16 @@ export default function RiskManagerPage() {
                       <td className="px-6 py-4 text-right font-black text-xs text-[#D4AF37]">
                         {trade.balance === '-' ? '-' : `$${trade.balance}`}
                       </td>
-                      <td className="px-4 py-4 text-center">
-                        <button
-                          onClick={() => deleteTrade(i)}
-                          className="p-1.5 text-gray-700 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all opacity-0 group-hover:opacity-100"
-                          title="Delete this trade"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
+                      <td className="px-6 py-4 text-center">
+                        <input
+                          type="number"
+                          value={trade.payout || ''}
+                          onChange={(e) => handleUpdateTrade(i, 'payout', Number(e.target.value))}
+                          placeholder={String(payout)}
+                          className={`w-16 bg-black/40 border border-gray-800 rounded-lg px-2 py-1.5 text-xs font-black text-center focus:border-[#D4AF37] outline-none ${
+                            trade.payout > 0 ? 'text-white' : 'text-gray-600'
+                          }`}
+                        />
                       </td>
                     </tr>
                   ))}

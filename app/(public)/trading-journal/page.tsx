@@ -12,12 +12,15 @@ interface TradeEntry {
   result: string;
   amount: number;
   return: number;
+  payout?: number;
 }
 
 interface SessionData {
   trades: TradeEntry[];
   payout: number;
   initialCapital: number;
+  createdAt?: string;
+  updatedAt?: string;
   sessionCounter: number;
 }
 
@@ -136,7 +139,9 @@ export default function TradingJournalPage() {
     sessionData.trades.forEach((t: TradeEntry) => {
       if (t.result === 'WIN' && t.amount > 0) {
         wins++;
-        profit += t.amount * (sessionData.payout / 100);
+        // Use per-row payout if set, otherwise fall back to session payout
+        const rowPayout = (t.payout && t.payout > 0) ? t.payout : sessionData.payout;
+        profit += t.amount * (rowPayout / 100);
       } else if (t.result === 'LOSS' && t.amount > 0) {
         losses++;
         profit -= t.amount;
@@ -234,6 +239,12 @@ export default function TradingJournalPage() {
     y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Initial Capital', `$${sessionData.initialCapital.toFixed(2)}`);
     y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Payout', `${sessionData.payout}%`, { valueColor: '#D4AF37' });
     y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Total Trades', `${stats.totalTrades}`);
+    if (sessionData.createdAt) {
+      y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Created at', new Date(sessionData.createdAt).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }));
+    }
+    if (sessionData.updatedAt && sessionData.updatedAt !== sessionData.createdAt) {
+      y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Updated', new Date(sessionData.updatedAt).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }), { valueColor: '#D4AF37' });
+    }
     y += 2;
 
     // Performance Stats
@@ -273,7 +284,8 @@ export default function TradingJournalPage() {
 
       let runningProfit = 0;
       const rows = validTrades.map((t: TradeEntry, i: number) => {
-        const profitLoss = t.result === 'WIN' ? t.amount * (sessionData.payout / 100) : -t.amount;
+        const rowPayout = (t.payout && t.payout > 0) ? t.payout : sessionData.payout;
+        const profitLoss = t.result === 'WIN' ? t.amount * (rowPayout / 100) : -t.amount;
         runningProfit += profitLoss;
         return [
           `#${i + 1}`,
@@ -416,6 +428,18 @@ export default function TradingJournalPage() {
                   <span>Lost Trades (LOSS) :</span>
                   <span className="text-red-500">{stats.losses}</span>
                 </div>
+                {sessionData.createdAt && (
+                  <div className="flex justify-between text-gray-400 pt-2 border-t border-white/5">
+                    <span>Created at :</span>
+                    <span className="text-gray-300">{new Date(sessionData.createdAt).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })}</span>
+                  </div>
+                )}
+                {sessionData.updatedAt && sessionData.updatedAt !== sessionData.createdAt && (
+                  <div className="flex justify-between text-gray-400">
+                    <span>Updated :</span>
+                    <span className="text-[#D4AF37]">{new Date(sessionData.updatedAt).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })}</span>
+                  </div>
+                )}
               </div>
             </div>
 
