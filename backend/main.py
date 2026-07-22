@@ -1631,23 +1631,23 @@ async def request_live_signal(request: Request, credentials: HTTPAuthorizationCr
                 valid_pairs.append(p)
         all_pairs = valid_pairs
 
-        logger.info(f"[SIGNAL-REQUEST] SCAN_ALL — scanning {len(all_pairs)} valid pairs (25s limit)...")
+        logger.info(f"[SIGNAL-REQUEST] SCAN_ALL — scanning {len(all_pairs)} valid pairs (20s limit)...")
 
         best_signal = None
         best_score = 0
         scan_start = datetime.now(timezone.utc).timestamp()
-        MAX_SCAN_SECONDS = 25  # Must finish before Vercel's 30s proxy timeout
+        MAX_SCAN_SECONDS = 20  # Must finish well before Vercel's 30s proxy timeout
 
         for scan_pair in all_pairs:
             # Stop if overall time limit reached
             elapsed = datetime.now(timezone.utc).timestamp() - scan_start
             if elapsed > MAX_SCAN_SECONDS:
-                logger.info(f"[SIGNAL-REQUEST] SCAN_ALL — {MAX_SCAN_SECONDS}s limit reached, returning best so far")
+                logger.info(f"[SIGNAL-REQUEST] SCAN_ALL — {MAX_SCAN_SECONDS}s limit reached, returning best so far (scanned {elapsed:.1f}s)")
                 break
             if not po_scanner.is_connected:
                 break
             try:
-                scan_signal = await asyncio.wait_for(force_analyze_pair(scan_pair), timeout=3.0)
+                scan_signal = await asyncio.wait_for(force_analyze_pair(scan_pair), timeout=2.0)
                 if scan_signal and scan_signal.get('score', 0) > best_score:
                     best_signal = scan_signal
                     best_score = scan_signal.get('score', 0)
