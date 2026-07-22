@@ -199,7 +199,7 @@ export function createBrandedPDF(title: string, subtitle?: string, user?: PDFUse
   // "3.0" version tag
   doc.setFontSize(9);
   doc.setTextColor(156, 163, 175);
-  doc.text('v3.0', PAGE.marginL + 50, 14);
+  doc.text('v3.0', PAGE.marginL + 30, 14);
 
   // Title
   doc.setFontSize(11);
@@ -410,11 +410,6 @@ export function drawUserInfoCard(
     doc.text(`ID: ${shortId}`, PAGE.width - PAGE.marginR - 4, y + 17, { align: 'right' });
   }
 
-  // A2Sniper logo small icon bottom-right of card
-  try {
-    doc.addImage(A2SNIPER_LOGO_BASE64, 'JPEG', PAGE.width - PAGE.marginR - 6, y + cardH - 7, 5, 5);
-  } catch {}
-
   // Divider line
   doc.setDrawColor(212, 175, 55);
   doc.setLineWidth(0.15);
@@ -493,7 +488,12 @@ export function drawTable(
 ): number {
   const rowH = 7;
   const headerH = 8;
-  const totalW = headers.reduce((sum, h) => sum + h.width, 0);
+  // Scale column widths to fill the full content width (no empty space on right)
+  const rawTotal = headers.reduce((sum, h) => sum + h.width, 0);
+  const targetWidth = PAGE.contentW;
+  const scale = targetWidth / rawTotal;
+  const scaledHeaders = headers.map(h => ({ ...h, width: h.width * scale }));
+  const totalW = targetWidth;
 
   // Header background
   const hRgb = hexToRgb(options?.headerBg || BRAND.darkBg);
@@ -510,7 +510,7 @@ export function drawTable(
   doc.setFontSize(7);
   doc.setTextColor(255, 255, 255);
   let colX = x;
-  headers.forEach(h => {
+  scaledHeaders.forEach(h => {
     const align = h.align || 'left';
     const textX = align === 'right' ? colX + h.width - 2 : align === 'center' ? colX + h.width / 2 : colX + 2;
     doc.text(h.label.toUpperCase(), textX, y + 5.5, { align: align === 'center' ? 'center' : align === 'right' ? 'right' : 'left' });
@@ -532,7 +532,7 @@ export function drawTable(
     colX = x;
     doc.setTextColor(31, 41, 55);
     row.forEach((cell, cellIdx) => {
-      const h = headers[cellIdx];
+      const h = scaledHeaders[cellIdx];
       const align = h.align || 'left';
       const textX = align === 'right' ? colX + h.width - 2 : align === 'center' ? colX + h.width / 2 : colX + 2;
 
