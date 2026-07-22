@@ -112,7 +112,14 @@ export default function SettingsPage() {
 
       if (res.ok) {
         const data = await res.json();
-        setAvatarUrl(data.avatar_url || URL.createObjectURL(file));
+        const newAvatarUrl = data.avatar_url || URL.createObjectURL(file);
+        setAvatarUrl(newAvatarUrl);
+        // CRITICAL: Update the user object in the store so the avatar
+        // appears in the header/navigation immediately and persists.
+        const store = useAppStore.getState();
+        if (store.user) {
+          store.setUser({ ...store.user, avatar: newAvatarUrl });
+        }
         toast.success('Profile photo updated!');
       } else {
         // Fallback: show preview locally even if API fails

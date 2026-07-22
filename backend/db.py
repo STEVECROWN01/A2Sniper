@@ -122,6 +122,7 @@ class User(Base):
     is_admin = Column(Boolean, default=False)
     created_at = Column(DateTime(timezone=True))
     auth_provider = Column(String, default="email")  # "email" or "google" — tracks how the user signed up
+    avatar = Column(Text, nullable=True)  # Base64-encoded profile picture
     subscription = relationship("UserSubscription", back_populates="user", uselist=False, cascade="all, delete-orphan")
 
 class UserSubscription(Base):
@@ -324,6 +325,23 @@ async def init_db():
                         "ALTER TABLE users ADD COLUMN full_name VARCHAR"
                     ))
                     logger.info("[DB] Migration: Added full_name column to users table")
+
+                # Add avatar column to users table (for profile picture storage)
+                try:
+                    async with engine.begin() as conn:
+                        result = await conn.execute(
+                            __import__('sqlalchemy').text(
+                                "SELECT column_name FROM information_schema.columns "
+                                "WHERE table_name='users' AND column_name='avatar'"
+                            )
+                        )
+                        if not result.fetchone():
+                            await conn.execute(__import__('sqlalchemy').text(
+                                "ALTER TABLE users ADD COLUMN avatar TEXT"
+                            ))
+                            logger.info("[DB] Migration: Added avatar column to users table")
+                except Exception as e:
+                    logger.warning(f"[DB] Migration for users.avatar failed (non-fatal): {e}")
 
                 # Check subscriptions table has telegram_chat_id
                 result = await conn.execute(

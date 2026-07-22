@@ -146,8 +146,12 @@ export function Navigation() {
             {/* User Profile */}
             <div className="flex-shrink-0 flex border-t border-white/5 p-4 bg-[#050507]/40">
               <div className="flex items-center space-x-3 w-full">
-                <div className="w-10 h-10 bg-white/[0.02] border border-[#D4AF37]/20 rounded-full flex items-center justify-center flex-shrink-0">
-                  <User className="w-5 h-5 text-[#D4AF37]" />
+                <div className="w-10 h-10 bg-white/[0.02] border border-[#D4AF37]/20 rounded-full flex items-center justify-center flex-shrink-0 overflow-hidden">
+                  {user?.avatar ? (
+                    <img src={user.avatar} alt={user?.name || 'User'} className="w-full h-full object-cover" />
+                  ) : (
+                    <User className="w-5 h-5 text-[#D4AF37]" />
+                  )}
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
@@ -253,7 +257,11 @@ export function Navigation() {
               className="flex items-center p-1 border border-[#D4AF37]/20 rounded-full hover:bg-white/[0.03] transition-colors"
             >
               <div className="w-7 h-7 bg-white/[0.02] rounded-full flex items-center justify-center overflow-hidden">
-                <User className="w-4 h-4 text-[#D4AF37]" />
+                {user?.avatar ? (
+                  <img src={user.avatar} alt={user?.name || 'User'} className="w-full h-full object-cover" />
+                ) : (
+                  <User className="w-4 h-4 text-[#D4AF37]" />
+                )}
               </div>
             </button>
 

@@ -2375,9 +2375,59 @@ async def login(request: Request):
                 "name": user.full_name,
                 "is_admin": user.is_admin,
                 "plan": subscription.plan_name if subscription else "Free",
-                "auth_provider": getattr(user, 'auth_provider', 'email') or 'email'
+                "auth_provider": getattr(user, 'auth_provider', 'email') or 'email',
+                "avatar": getattr(user, 'avatar', None)
             }
         }
+
+@app.post("/api/auth/upload-avatar")
+async def upload_avatar(request: Request, credentials: HTTPAuthorizationCredentials = Security(security)):
+    """Upload a profile picture (avatar) for the authenticated user.
+    Stores the image as base64 in the users.avatar column."""
+    payload = decode_access_token(credentials.credentials)
+    _jti = payload.get("jti")
+    if _jti and await is_token_revoked(_jti):
+        raise HTTPException(status_code=401, detail="Token has been revoked")
+
+    user_id = payload.get("sub")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    try:
+        form = await request.form()
+        file = form.get("avatar")
+        if not file or not hasattr(file, 'read'):
+            raise HTTPException(status_code=400, detail="No file uploaded")
+
+        contents = await file.read()
+        if len(contents) > 5 * 1024 * 1024:
+            raise HTTPException(status_code=400, detail="Image too large (max 5MB)")
+
+        import base64
+        # Determine mime type
+        content_type = getattr(file, 'content_type', 'image/jpeg') or 'image/jpeg'
+        if content_type not in ('image/jpeg', 'image/png', 'image/webp', 'image/gif'):
+            content_type = 'image/jpeg'
+        # Encode as base64 data URL
+        b64 = base64.b64encode(contents).decode('utf-8')
+        avatar_data_url = f"data:{content_type};base64,{b64}"
+
+        # Save to database
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(select(User).where(User.id == user_id))
+            user = result.scalar_one_or_none()
+            if not user:
+                raise HTTPException(status_code=404, detail="User not found")
+            user.avatar = avatar_data_url
+            await session.commit()
+
+        return {"status": "success", "avatar_url": avatar_data_url}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[UPLOAD-AVATAR] Error: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to upload avatar: {str(e)}")
+
 
 @app.post("/api/auth/google")
 async def auth_google(request: Request):
@@ -2904,7 +2954,8 @@ async def refresh_access_token(request: Request):
                 "name": user.full_name,
                 "is_admin": user.is_admin,
                 "plan": subscription.plan_name if subscription else "Free",
-                "auth_provider": getattr(user, 'auth_provider', 'email') or 'email'
+                "auth_provider": getattr(user, 'auth_provider', 'email') or 'email',
+                "avatar": getattr(user, 'avatar', None)
             }
         }
 
