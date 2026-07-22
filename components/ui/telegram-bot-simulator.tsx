@@ -727,14 +727,9 @@ Zero Simulation. 100% Real-Market.`;
                 {message.type === 'scanning' ? (
                   <div className="flex items-center gap-2">
                     <Loader2 className="w-4 h-4 text-green-400 animate-spin flex-shrink-0" />
-                    <span className="text-sm text-gray-300 font-bold flex items-center gap-1">
-                      {message.content}
-                      <span className="inline-flex gap-0.5 items-center ml-1">
-                        <motion.span animate={{ opacity: [0.3, 1, 0.3] }} transition={{ repeat: Infinity, duration: 1.2, delay: 0 }} className="w-1.5 h-1.5 bg-green-400 rounded-full inline-block" />
-                        <motion.span animate={{ opacity: [0.3, 1, 0.3] }} transition={{ repeat: Infinity, duration: 1.2, delay: 0.2 }} className="w-1.5 h-1.5 bg-green-400 rounded-full inline-block" />
-                        <motion.span animate={{ opacity: [0.3, 1, 0.3] }} transition={{ repeat: Infinity, duration: 1.2, delay: 0.4 }} className="w-1.5 h-1.5 bg-green-400 rounded-full inline-block" />
-                      </span>
-                    </span>
+                    <p className="text-sm text-gray-300 font-bold">
+                      {message.content}<motion.span animate={{ opacity: [0.3, 1, 0.3] }} transition={{ repeat: Infinity, duration: 1.2, delay: 0 }} className="inline-block w-1 h-1 bg-green-400 rounded-full ml-1" /><motion.span animate={{ opacity: [0.3, 1, 0.3] }} transition={{ repeat: Infinity, duration: 1.2, delay: 0.2 }} className="inline-block w-1 h-1 bg-green-400 rounded-full ml-0.5" /><motion.span animate={{ opacity: [0.3, 1, 0.3] }} transition={{ repeat: Infinity, duration: 1.2, delay: 0.4 }} className="inline-block w-1 h-1 bg-green-400 rounded-full ml-0.5" />
+                    </p>
                   </div>
                 ) : message.type === 'signal' && message.pair_data ? (
                   <motion.div 
