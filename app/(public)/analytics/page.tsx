@@ -102,7 +102,7 @@ export default function AnalyticsPage() {
           </p>
         </motion.div>
 
-        <div className="flex items-center space-x-3">
+        <div className="flex items-center space-x-3 flex-wrap">
           <select
             value={selectedTimeframe}
             onChange={(e) => setSelectedTimeframe(e.target.value)}

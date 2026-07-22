@@ -219,7 +219,7 @@ export function Navigation() {
             </button>
 
             {showNotifications && (
-              <div className="absolute right-0 mt-3 w-80 bg-[#0a0a0c] rounded-2xl border border-white/10 shadow-[0_10px_30px_rgba(0,0,0,0.5)] z-50">
+              <div className="absolute right-0 mt-3 w-[min(20rem,90vw)] bg-[#0a0a0c] rounded-2xl border border-white/10 shadow-[0_10px_30px_rgba(0,0,0,0.5)] z-50">
                 <div className="p-4 border-b border-white/5 flex justify-between items-center">
                   <h3 className="font-bold text-xs uppercase tracking-wider text-white">Notifications</h3>
                 </div>

@@ -249,7 +249,7 @@ export default function HomePage() {
                 transition={{ duration: 0.5, delay: index * 0.1 }}
                 className={`relative bg-[#0a0a0c]/80 p-8 rounded-2xl flex flex-col justify-between border transition-all duration-300 ${
                   plan.popular 
-                    ? 'border-[#D4AF37] scale-105 shadow-[0_0_30px_rgba(212,175,55,0.15)] bg-[#0c0c0f]' 
+                    ? 'border-[#D4AF37] md:scale-105 shadow-[0_0_30px_rgba(212,175,55,0.15)] bg-[#0c0c0f]' 
                     : 'border-white/5 hover:border-[#D4AF37]/20'
                 }`}
               >

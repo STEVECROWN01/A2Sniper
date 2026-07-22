@@ -288,7 +288,7 @@ export default function SignalsPage() {
                 </p>
               </div>
               
-              <div className="flex items-center space-x-3">
+              <div className="flex items-center space-x-3 flex-wrap">
                 <div 
                   title={liveStatus === 'LIVE' ? "ANALYSIS BASED ON REAL DATA" : "SYSTEM DISCONNECTED FROM MARKET"}
                   className="flex items-center px-3 py-2 bg-[#0a0a0c] rounded-xl border border-white/5 shadow-sm cursor-help transition-all"

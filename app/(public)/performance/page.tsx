@@ -283,7 +283,7 @@ export default function PerformancePage() {
       <div className="space-y-8">
         <div className="mb-8">
           <div className="h-8 w-64 bg-[#1a1a2e] rounded animate-pulse mb-2" />
-          <div className="h-4 w-96 bg-[#1a1a2e] rounded animate-pulse" />
+          <div className="h-4 w-full max-w-96 bg-[#1a1a2e] rounded animate-pulse" />
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
           {[1,2,3,4].map(i => (
@@ -313,7 +313,7 @@ export default function PerformancePage() {
                 </p>
               </div>
               
-              <div className="flex items-center space-x-3">
+              <div className="flex items-center space-x-3 flex-wrap">
                 <select
                   value={selectedTimeframe}
                   onChange={(e) => setSelectedTimeframe(e.target.value)}
@@ -421,7 +421,7 @@ export default function PerformancePage() {
                       className="border-b border-[#1a1a2e] hover:bg-white/[0.02]"
                     >
                       <td className="py-4 px-4">
-                        <div className="flex items-center space-x-3">
+                        <div className="flex items-center space-x-3 flex-wrap">
                           <div className="w-8 h-8 bg-gradient-to-r from-[#D4AF37] to-[#C5A059] rounded-lg flex items-center justify-center">
                             <span className="text-black font-bold text-xs">
                               {stat.pair.split('/')[0]}

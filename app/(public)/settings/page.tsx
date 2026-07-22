@@ -423,7 +423,7 @@ export default function SettingsPage() {
                     </h2>
 
                     <div className="space-y-6">
-                      <div className="flex items-center space-x-4">
+                      <div className="flex items-center space-x-4 flex-wrap">
                         <div className="w-16 h-16 bg-gradient-to-r from-[#D4AF37] to-[#C5A059] rounded-full flex items-center justify-center overflow-hidden">
                           {avatarUrl ? (
                             <img src={avatarUrl} alt="Avatar" className="w-full h-full object-cover" />
@@ -817,7 +817,7 @@ export default function SettingsPage() {
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.5, delay: 0.2 }}
-                className="mt-8 flex items-center space-x-4"
+                className="mt-8 flex items-center space-x-4 flex-wrap"
               >
                 <button
                   onClick={handleSave}

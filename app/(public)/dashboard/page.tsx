@@ -189,7 +189,7 @@ export default function DashboardPage() {
     return (
       <div className="relative flex flex-col items-center">
         <div className="relative">
-          <svg height={radius * 2} width={radius * 2} className="transform -rotate-90">
+          <svg height={radius * 2} width={radius * 2} viewBox="0 0 {radius * 2} {radius * 2}" className="transform -rotate-90 w-full max-w-[160px] h-auto">
             <defs>
               <linearGradient id="gaugeGradient" x1="0%" y1="0%" x2="100%" y2="0%">
                 <stop offset="0%" stopColor="#C5A059" />
