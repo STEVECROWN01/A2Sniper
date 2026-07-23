@@ -929,15 +929,23 @@ export default function RiskManagerPage() {
             </div>
 
             <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse">
+              <table className="w-full table-fixed border-collapse">
+                <colgroup>
+                  <col className="w-[5%]" />
+                  <col className="w-[22%]" />
+                  <col className="w-[18%]" />
+                  <col className="w-[18%]" />
+                  <col className="w-[20%]" />
+                  <col className="w-[17%]" />
+                </colgroup>
                 <thead>
-                  <tr className="bg-black/40 text-[10px] font-black text-gray-600 uppercase tracking-[0.2em]">
-                    <th className="px-6 py-4">#</th>
-                    <th className="px-6 py-4">Result</th>
-                    <th className="px-6 py-4">Stake ($)</th>
-                    <th className="px-6 py-4 text-right">Return ($)</th>
-                    <th className="px-6 py-4 text-right">Balance ($)</th>
-                    <th className="px-6 py-4 text-center">Payout (%)</th>
+                  <tr className="bg-black/40 text-[10px] font-black text-gray-600 uppercase tracking-[0.1em] sm:tracking-[0.2em]">
+                    <th className="px-2 sm:px-4 py-3 text-left">#</th>
+                    <th className="px-2 sm:px-4 py-3 text-left">Result</th>
+                    <th className="px-2 sm:px-4 py-3 text-left">Stake ($)</th>
+                    <th className="px-2 sm:px-4 py-3 text-right">Return ($)</th>
+                    <th className="px-2 sm:px-4 py-3 text-right">Balance ($)</th>
+                    <th className="px-2 sm:px-4 py-3 text-center">Payout (%)</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-800/30">
@@ -946,56 +954,56 @@ export default function RiskManagerPage() {
                       {/* Delete button — floats on hover, top-right of row */}
                       <button
                         onClick={() => deleteTrade(i)}
-                        className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 text-gray-700 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all opacity-0 group-hover:opacity-100 z-10"
+                        className="absolute right-1 top-1/2 -translate-y-1/2 p-1 sm:p-1.5 text-gray-700 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all opacity-0 group-hover:opacity-100 z-10"
                         title="Delete this trade"
                       >
-                        <Trash2 className="w-4 h-4" />
+                        <Trash2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
                       </button>
-                      <td className="px-6 py-4 text-xs font-black text-gray-600">{i + 1}</td>
-                      <td className="px-6 py-4">
-                        <div className="flex gap-2 w-32">
+                      <td className="px-2 sm:px-4 py-3 text-xs font-black text-gray-600">{i + 1}</td>
+                      <td className="px-2 sm:px-4 py-3">
+                        <div className="flex gap-1 sm:gap-2">
                           <button
                             onClick={() => handleUpdateTrade(i, 'result', 'WIN')}
-                            className={`flex-1 py-1.5 rounded-lg text-[10px] font-black transition-all ${trade.result === 'WIN' ? 'bg-green-500 text-white shadow-lg shadow-green-500/20' : 'bg-gray-800/50 text-gray-500 hover:text-gray-400'}`}
+                            className={`flex-1 py-1.5 rounded-lg text-[9px] sm:text-[10px] font-black transition-all ${trade.result === 'WIN' ? 'bg-green-500 text-white shadow-lg shadow-green-500/20' : 'bg-gray-800/50 text-gray-500 hover:text-gray-400'}`}
                           >
                             WIN
                           </button>
                           <button
                             onClick={() => handleUpdateTrade(i, 'result', 'LOSS')}
-                            className={`flex-1 py-1.5 rounded-lg text-[10px] font-black transition-all ${trade.result === 'LOSS' ? 'bg-red-500 text-white shadow-lg shadow-red-500/20' : 'bg-gray-800/50 text-gray-500 hover:text-gray-400'}`}
+                            className={`flex-1 py-1.5 rounded-lg text-[9px] sm:text-[10px] font-black transition-all ${trade.result === 'LOSS' ? 'bg-red-500 text-white shadow-lg shadow-red-500/20' : 'bg-gray-800/50 text-gray-500 hover:text-gray-400'}`}
                           >
                             LOSS
                           </button>
                         </div>
                       </td>
-                      <td className="px-6 py-4">
+                      <td className="px-2 sm:px-4 py-3">
                         <input
                           type="number"
                           value={trade.amount || ''}
                           onChange={(e) => handleUpdateTrade(i, 'amount', Number(e.target.value))}
                           placeholder="1.00"
-                          className={`w-24 bg-black/40 border border-gray-800 rounded-lg px-3 py-1.5 text-xs font-black focus:border-[#D4AF37] outline-none ${
+                          className={`w-full max-w-[80px] bg-black/40 border border-gray-800 rounded-lg px-2 sm:px-3 py-1.5 text-xs font-black focus:border-[#D4AF37] outline-none ${
                             trade.amount > 0 ? 'text-white' : 'text-gray-600'
                           }`}
                         />
                       </td>
-                      <td className="px-6 py-4 text-right font-black text-xs">
+                      <td className="px-2 sm:px-4 py-3 text-right font-black text-xs">
                         {trade.result === 'WIN' ? (
                           <span className="text-green-400">+{trade.return.toFixed(2)}</span>
                         ) : trade.result === 'LOSS' ? (
                           <span className="text-red-400">-{trade.amount.toFixed(2)}</span>
                         ) : '-'}
                       </td>
-                      <td className="px-6 py-4 text-right font-black text-xs text-[#D4AF37]">
+                      <td className="px-2 sm:px-4 py-3 text-right font-black text-xs text-[#D4AF37]">
                         {trade.balance === '-' ? '-' : `$${trade.balance}`}
                       </td>
-                      <td className="px-6 py-4 text-center">
+                      <td className="px-2 sm:px-4 py-3 text-center">
                         <input
                           type="number"
                           value={trade.payout || ''}
                           onChange={(e) => handleUpdateTrade(i, 'payout', Number(e.target.value))}
                           placeholder={String(payout)}
-                          className={`w-16 bg-black/40 border border-gray-800 rounded-lg px-2 py-1.5 text-xs font-black text-center focus:border-[#D4AF37] outline-none ${
+                          className={`w-full max-w-[60px] mx-auto bg-black/40 border border-gray-800 rounded-lg px-2 py-1.5 text-xs font-black text-center focus:border-[#D4AF37] outline-none ${
                             trade.payout > 0 ? 'text-white' : 'text-gray-600'
                           }`}
                         />
