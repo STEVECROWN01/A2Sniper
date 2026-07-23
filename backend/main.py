@@ -4447,7 +4447,7 @@ async def rate_limit_middleware(request, call_next):
     now = datetime.now(timezone.utc).timestamp()
     
     # Skip rate limiting for health check endpoints
-    if request.url.path in ["/api/status", "/api/market/status", "/api/market/debug", "/api/market/balance-debug", "/api/debug/schema"]:
+    if request.url.path in ["/", "/health", "/api/status", "/api/market/status", "/api/market/debug", "/api/market/balance-debug", "/api/debug/schema"]:
         response = await call_next(request)
         latency_ms = (time() - start_time) * 1000
         _latency_samples.append(latency_ms)
