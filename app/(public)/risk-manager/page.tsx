@@ -951,14 +951,6 @@ export default function RiskManagerPage() {
                 <tbody className="divide-y divide-gray-800/30">
                   {results.computedTrades.map((trade, i) => (
                     <tr key={i} className="hover:bg-white/[0.02] transition-colors group relative">
-                      {/* Delete button — floats on hover, top-right of row */}
-                      <button
-                        onClick={() => deleteTrade(i)}
-                        className="absolute right-1 top-1/2 -translate-y-1/2 p-1 sm:p-1.5 text-gray-700 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all opacity-0 group-hover:opacity-100 z-10"
-                        title="Delete this trade"
-                      >
-                        <Trash2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                      </button>
                       <td className="px-2 sm:px-4 py-3 text-xs font-black text-gray-600">{i + 1}</td>
                       <td className="px-2 sm:px-4 py-3">
                         <div className="flex gap-1 sm:gap-2">
@@ -997,7 +989,7 @@ export default function RiskManagerPage() {
                       <td className="px-2 sm:px-4 py-3 text-right font-black text-xs text-[#D4AF37]">
                         {trade.balance === '-' ? '-' : `$${trade.balance}`}
                       </td>
-                      <td className="px-2 sm:px-4 py-3 text-center">
+                      <td className="px-2 sm:px-4 py-3 text-center relative">
                         <input
                           type="number"
                           value={trade.payout || ''}
@@ -1007,6 +999,14 @@ export default function RiskManagerPage() {
                             trade.payout > 0 ? 'text-white' : 'text-gray-600'
                           }`}
                         />
+                        {/* Delete button — floats on hover, inside the last td */}
+                        <button
+                          onClick={() => deleteTrade(i)}
+                          className="absolute -right-1 top-1/2 -translate-y-1/2 p-1 sm:p-1.5 text-gray-700 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all opacity-0 group-hover:opacity-100 z-10"
+                          title="Delete this trade"
+                        >
+                          <Trash2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                        </button>
                       </td>
                     </tr>
                   ))}
