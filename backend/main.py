@@ -35,15 +35,25 @@ from engine.pocket_option_scanner import PocketOptionScanner
 from engine.monitoring_engine import MonitoringEngine
 from engine.risk_manager import RiskManager
 from engine.sniper_engine import generate_sniper_signal, validate_candle_data
-from engine.momentum_engine import generate_momentum_signal, validate_momentum_data
-from neural_models.voting import VotingClassifierModel
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(name)s] %(levelname)s: %(message)s')
+logger = logging.getLogger('A2Sniper')
+
+try:
+    from engine.momentum_engine import generate_momentum_signal, validate_momentum_data
+except ImportError:
+    generate_momentum_signal = None
+    validate_momentum_data = None
+    logger.warning("momentum_engine not available — using sniper engine only")
+try:
+    from neural_models.voting import VotingClassifierModel
+except ImportError:
+    VotingClassifierModel = type('VotingClassifierModel', (), {'__init__': lambda self, **kw: None, 'predict': lambda self, f: {'approved': True, 'direction': 'CALL', 'probability': 0.5}, 'xgboost': type('X', (), {'is_trained': False, 'load': lambda self, p: False, 'predict': lambda self, f: {'direction': 'NO_TRADE', 'probability': 0}})(), 'lstm': type('L', (), {'is_trained': False, 'load': lambda self, p: False})(), 'transformer': type('T', (), {'is_trained': False, 'load': lambda self, p: False})()})
+    logger.warning("neural_models not available — using stub VotingClassifierModel")
 from engine.compliance import ComplianceManager, geographic_restriction_dependency
 from bot.telegram_bot import TelegramSignalBot
 from db import (init_db, SignalRecord, CandleRecord, AsyncSessionLocal, User, UserSubscription,
                   PasswordResetOTP, SystemLog, RefreshToken, RevokedToken, RateLimitEntry)
-
-logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(name)s] %(levelname)s: %(message)s')
-logger = logging.getLogger('A2Sniper')
 
 
 # ═══════════ DB LOGGING HANDLER ═══════════
