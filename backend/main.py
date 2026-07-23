@@ -1375,6 +1375,12 @@ app = FastAPI(title="A2Sniper 3.0", version="3.0.0", lifespan=lifespan)
 async def root():
     return {"status": "ok", "service": "A2Sniper 3.0", "version": "3.0.0"}
 
+@app.get("/health")
+async def health():
+    """Dedicated healthcheck endpoint — no DB, no scanner, no dependencies.
+    Returns 200 immediately as long as the server is running."""
+    return {"status": "healthy"}
+
 _frontend_url = os.getenv("FRONTEND_URL", "")
 _cors_origins = [
     "http://localhost:3000",
