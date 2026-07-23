@@ -932,11 +932,11 @@ export default function RiskManagerPage() {
               <table className="w-full table-fixed border-collapse">
                 <colgroup>
                   <col className="w-[5%]" />
-                  <col className="w-[22%]" />
-                  <col className="w-[18%]" />
-                  <col className="w-[18%]" />
                   <col className="w-[20%]" />
+                  <col className="w-[14%]" />
                   <col className="w-[17%]" />
+                  <col className="w-[19%]" />
+                  <col className="w-[16%]" />
                 </colgroup>
                 <thead>
                   <tr className="bg-black/40 text-[10px] font-black text-gray-600 uppercase tracking-[0.1em] sm:tracking-[0.2em]">
