@@ -928,15 +928,15 @@ export default function RiskManagerPage() {
               </button>
             </div>
 
-            <div className="overflow-x-auto">
-              <table className="w-full table-fixed border-collapse">
+            <div className="overflow-hidden">
+              <table className="w-[94%] table-fixed border-collapse">
                 <colgroup>
-                  <col className="w-[5%]" />
-                  <col className="w-[20%]" />
-                  <col className="w-[14%]" />
-                  <col className="w-[17%]" />
-                  <col className="w-[19%]" />
+                  <col className="w-[6%]" />
+                  <col className="w-[24%]" />
+                  <col className="w-[15%]" />
                   <col className="w-[16%]" />
+                  <col className="w-[18%]" />
+                  <col className="w-[15%]" />
                 </colgroup>
                 <thead>
                   <tr className="bg-black/40 text-[10px] font-black text-gray-600 uppercase tracking-[0.1em] sm:tracking-[0.2em]">
@@ -1002,7 +1002,7 @@ export default function RiskManagerPage() {
                         {/* Delete button — floats on hover, inside the last td */}
                         <button
                           onClick={() => deleteTrade(i)}
-                          className="absolute -right-1 top-1/2 -translate-y-1/2 p-1 sm:p-1.5 text-gray-700 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all opacity-0 group-hover:opacity-100 z-10"
+                          className="absolute right-0 top-1/2 -translate-y-1/2 p-1 sm:p-1.5 text-gray-700 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all opacity-0 group-hover:opacity-100 z-10"
                           title="Delete this trade"
                         >
                           <Trash2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
