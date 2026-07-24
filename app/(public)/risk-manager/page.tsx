@@ -990,23 +990,25 @@ export default function RiskManagerPage() {
                         {trade.balance === '-' ? '-' : `$${trade.balance}`}
                       </td>
                       <td className="px-2 sm:px-4 py-3 text-center">
-                        <div className="flex items-center justify-center gap-1">
+                        <div className="flex items-center">
                           <input
                             type="number"
                             value={trade.payout || ''}
                             onChange={(e) => handleUpdateTrade(i, 'payout', Number(e.target.value))}
                             placeholder={String(payout)}
-                            className={`w-14 bg-black/40 border border-gray-800 rounded-lg px-2 py-1.5 text-xs font-black text-center focus:border-[#D4AF37] outline-none ${
+                            className={`w-14 flex-shrink-0 bg-black/40 border border-gray-800 rounded-lg px-2 py-1.5 text-xs font-black text-center focus:border-[#D4AF37] outline-none ${
                               trade.payout > 0 ? 'text-white' : 'text-gray-600'
                             }`}
                           />
-                          <button
-                            onClick={() => deleteTrade(i)}
-                            className="p-1 text-gray-700 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all opacity-0 group-hover:opacity-100 flex-shrink-0"
-                            title="Delete this trade"
-                          >
-                            <Trash2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                          </button>
+                          <div className="flex-1 flex justify-center items-center">
+                            <button
+                              onClick={() => deleteTrade(i)}
+                              className="p-1 text-gray-700 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all opacity-0 group-hover:opacity-100"
+                              title="Delete this trade"
+                            >
+                              <Trash2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                            </button>
+                          </div>
                         </div>
                       </td>
                     </tr>
