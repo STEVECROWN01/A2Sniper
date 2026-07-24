@@ -929,7 +929,15 @@ export default function RiskManagerPage() {
             </div>
 
             <div className="overflow-x-auto">
-              <table className="w-full border-collapse min-w-[500px] sm:min-w-0">
+              <table className="w-full table-fixed border-collapse">
+                <colgroup>
+                  <col className="w-[5%]" />
+                  <col className="w-[26%]" />
+                  <col className="w-[15%]" />
+                  <col className="w-[17%]" />
+                  <col className="w-[19%]" />
+                  <col className="w-[18%]" />
+                </colgroup>
                 <thead>
                   <tr className="bg-black/40 text-[10px] font-black text-gray-600 uppercase tracking-[0.1em] sm:tracking-[0.2em]">
                     <th className="px-2 sm:px-4 py-3 text-left">#</th>
@@ -942,19 +950,19 @@ export default function RiskManagerPage() {
                 </thead>
                 <tbody className="divide-y divide-gray-800/30">
                   {results.computedTrades.map((trade, i) => (
-                    <tr key={i} className="hover:bg-white/[0.02] transition-colors group relative">
+                    <tr key={i} className="hover:bg-white/[0.02] transition-colors group">
                       <td className="px-2 sm:px-4 py-3 text-xs font-black text-gray-600">{i + 1}</td>
                       <td className="px-2 sm:px-4 py-3">
-                        <div className="flex gap-1 sm:gap-2">
+                        <div className="flex gap-2">
                           <button
                             onClick={() => handleUpdateTrade(i, 'result', 'WIN')}
-                            className={`flex-1 py-1.5 rounded-lg text-[9px] sm:text-[10px] font-black transition-all ${trade.result === 'WIN' ? 'bg-green-500 text-white shadow-lg shadow-green-500/20' : 'bg-gray-800/50 text-gray-500 hover:text-gray-400'}`}
+                            className={`flex-1 min-w-[50px] py-1.5 rounded-lg text-[10px] font-black transition-all ${trade.result === 'WIN' ? 'bg-green-500 text-white shadow-lg shadow-green-500/20' : 'bg-gray-800/50 text-gray-500 hover:text-gray-400'}`}
                           >
                             WIN
                           </button>
                           <button
                             onClick={() => handleUpdateTrade(i, 'result', 'LOSS')}
-                            className={`flex-1 py-1.5 rounded-lg text-[9px] sm:text-[10px] font-black transition-all ${trade.result === 'LOSS' ? 'bg-red-500 text-white shadow-lg shadow-red-500/20' : 'bg-gray-800/50 text-gray-500 hover:text-gray-400'}`}
+                            className={`flex-1 min-w-[50px] py-1.5 rounded-lg text-[10px] font-black transition-all ${trade.result === 'LOSS' ? 'bg-red-500 text-white shadow-lg shadow-red-500/20' : 'bg-gray-800/50 text-gray-500 hover:text-gray-400'}`}
                           >
                             LOSS
                           </button>
@@ -966,7 +974,7 @@ export default function RiskManagerPage() {
                           value={trade.amount || ''}
                           onChange={(e) => handleUpdateTrade(i, 'amount', Number(e.target.value))}
                           placeholder="1.00"
-                          className={`w-full max-w-[80px] bg-black/40 border border-gray-800 rounded-lg px-2 sm:px-3 py-1.5 text-xs font-black focus:border-[#D4AF37] outline-none ${
+                          className={`w-full bg-black/40 border border-gray-800 rounded-lg px-2 sm:px-3 py-1.5 text-xs font-black focus:border-[#D4AF37] outline-none ${
                             trade.amount > 0 ? 'text-white' : 'text-gray-600'
                           }`}
                         />
