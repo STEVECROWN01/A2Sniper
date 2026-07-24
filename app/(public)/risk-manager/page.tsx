@@ -928,16 +928,8 @@ export default function RiskManagerPage() {
               </button>
             </div>
 
-            <div className="overflow-hidden">
-              <table className="w-[94%] table-fixed border-collapse">
-                <colgroup>
-                  <col className="w-[6%]" />
-                  <col className="w-[24%]" />
-                  <col className="w-[15%]" />
-                  <col className="w-[16%]" />
-                  <col className="w-[18%]" />
-                  <col className="w-[15%]" />
-                </colgroup>
+            <div className="overflow-x-auto">
+              <table className="w-full border-collapse min-w-[500px] sm:min-w-0">
                 <thead>
                   <tr className="bg-black/40 text-[10px] font-black text-gray-600 uppercase tracking-[0.1em] sm:tracking-[0.2em]">
                     <th className="px-2 sm:px-4 py-3 text-left">#</th>
@@ -989,24 +981,25 @@ export default function RiskManagerPage() {
                       <td className="px-2 sm:px-4 py-3 text-right font-black text-xs text-[#D4AF37]">
                         {trade.balance === '-' ? '-' : `$${trade.balance}`}
                       </td>
-                      <td className="px-2 sm:px-4 py-3 text-center relative">
-                        <input
-                          type="number"
-                          value={trade.payout || ''}
-                          onChange={(e) => handleUpdateTrade(i, 'payout', Number(e.target.value))}
-                          placeholder={String(payout)}
-                          className={`w-full max-w-[60px] mx-auto bg-black/40 border border-gray-800 rounded-lg px-2 py-1.5 text-xs font-black text-center focus:border-[#D4AF37] outline-none ${
-                            trade.payout > 0 ? 'text-white' : 'text-gray-600'
-                          }`}
-                        />
-                        {/* Delete button — floats on hover, inside the last td */}
-                        <button
-                          onClick={() => deleteTrade(i)}
-                          className="absolute right-0 top-1/2 -translate-y-1/2 p-1 sm:p-1.5 text-gray-700 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all opacity-0 group-hover:opacity-100 z-10"
-                          title="Delete this trade"
-                        >
-                          <Trash2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                        </button>
+                      <td className="px-2 sm:px-4 py-3 text-center">
+                        <div className="flex items-center justify-center gap-1">
+                          <input
+                            type="number"
+                            value={trade.payout || ''}
+                            onChange={(e) => handleUpdateTrade(i, 'payout', Number(e.target.value))}
+                            placeholder={String(payout)}
+                            className={`w-14 bg-black/40 border border-gray-800 rounded-lg px-2 py-1.5 text-xs font-black text-center focus:border-[#D4AF37] outline-none ${
+                              trade.payout > 0 ? 'text-white' : 'text-gray-600'
+                            }`}
+                          />
+                          <button
+                            onClick={() => deleteTrade(i)}
+                            className="p-1 text-gray-700 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all opacity-0 group-hover:opacity-100 flex-shrink-0"
+                            title="Delete this trade"
+                          >
+                            <Trash2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))}

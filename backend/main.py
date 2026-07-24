@@ -3042,7 +3042,8 @@ async def get_me(credentials: HTTPAuthorizationCredentials = Security(security))
             "name": user.full_name,
             "is_admin": user.is_admin,
             "plan": subscription.plan_name if subscription else "Free",
-            "auth_provider": getattr(user, 'auth_provider', 'email') or 'email'
+            "auth_provider": getattr(user, 'auth_provider', 'email') or 'email',
+            "avatar": getattr(user, 'avatar', None)
         }
 
 
