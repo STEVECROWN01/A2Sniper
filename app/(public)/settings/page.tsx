@@ -53,6 +53,24 @@ export default function SettingsPage() {
   const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
   const [avatarUrl, setAvatarUrl] = useState<string | null>(user?.avatar || null);
 
+  // CRITICAL: Sync local avatarUrl from the store whenever user.avatar changes.
+  // Without this, if the user reloads the page:
+  //   1. Component mounts with `user === null` (auth/me fetch still in-flight)
+  //   2. `avatarUrl` initializes to null
+  //   3. /api/auth/me resolves, store updates with the real avatar
+  //   4. Navbar re-renders with the avatar (reads user.avatar directly)
+  //   5. But this component's local `avatarUrl` state stays null forever
+  //      → avatar circle stays empty after reload, even though it shows in navbar.
+  // This effect re-syncs local state whenever the store's user.avatar updates.
+  // We skip the sync only while a fresh upload is in progress, so we don't
+  // clobber the optimistic preview with the stale store value.
+  useEffect(() => {
+    if (isUploadingPhoto) return;
+    if (user?.avatar) {
+      setAvatarUrl(user.avatar);
+    }
+  }, [user?.avatar, isUploadingPhoto]);
+
   // Delete account state
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [deleteStep, setDeleteStep] = useState<'CONFIRM' | 'OTP'>('CONFIRM');
@@ -84,6 +102,49 @@ export default function SettingsPage() {
     setTimeout(() => setSavedMessage(false), 2000);
   };
 
+  /**
+   * Resize an image File to a square JPEG thumbnail at the given dimension.
+   * Why: phone photos are typically 2-5 MB at 3000×4000. The avatar only renders
+   * at 40×40 (navbar) / 64×64 (settings). Resizing client-side to 256×256 JPEG
+   * q=0.85 produces a ~15-30 KB file — ~150× smaller — making uploads near-instant
+   * and saving DB storage (base64 of 30KB = ~40KB string vs ~6.7MB for a 5MB image).
+   *
+   * Falls back to the original file if canvas operations fail (e.g. SVG input).
+   */
+  const resizeImageFile = async (file: File, size = 256): Promise<File> => {
+    try {
+      if (!file.type.startsWith('image/')) return file;
+      // Skip resize for tiny images — already small enough.
+      if (file.size < 80 * 1024) return file;
+
+      const bitmap = await createImageBitmap(file);
+      // Square center-crop: take the smaller dimension and crop the rest.
+      const side = Math.min(bitmap.width, bitmap.height);
+      const sx = (bitmap.width - side) / 2;
+      const sy = (bitmap.height - side) / 2;
+
+      const canvas = document.createElement('canvas');
+      canvas.width = size;
+      canvas.height = size;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return file;
+      ctx.drawImage(bitmap, sx, sy, side, side, 0, 0, size, size);
+
+      const blob: Blob = await new Promise((resolve, reject) => {
+        canvas.toBlob(
+          (b) => (b ? resolve(b) : reject(new Error('toBlob returned null'))),
+          'image/jpeg',
+          0.85
+        );
+      });
+      bitmap.close?.();
+      return new File([blob], 'avatar.jpg', { type: 'image/jpeg' });
+    } catch (err) {
+      console.warn('[AVATAR] resize failed, uploading original:', err);
+      return file;
+    }
+  };
+
   const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -100,9 +161,13 @@ export default function SettingsPage() {
 
     setIsUploadingPhoto(true);
     try {
+      // Resize client-side FIRST. A 5MB phone photo becomes ~20KB at 256×256.
+      // This is what makes the upload fast (1-2 seconds instead of 10+ seconds).
+      const resizedFile = await resizeImageFile(file, 256);
+
       const apiUrl = getApiUrl();
       const formData = new FormData();
-      formData.append('avatar', file);
+      formData.append('avatar', resizedFile);
 
       const res = await fetch(`${apiUrl}/api/auth/upload-avatar`, {
         method: 'POST',
@@ -114,7 +179,7 @@ export default function SettingsPage() {
         const data = await res.json();
         // Prefer the server-returned avatar_url; fall back to a local object URL
         // only as a transient preview (not persisted across reloads).
-        const newAvatarUrl = data.avatar_url || URL.createObjectURL(file);
+        const newAvatarUrl = data.avatar_url || URL.createObjectURL(resizedFile);
         setAvatarUrl(newAvatarUrl);
         // CRITICAL: Update the user object in the store so the avatar
         // appears in the header/navigation immediately and persists.
