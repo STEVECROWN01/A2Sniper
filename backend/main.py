@@ -2420,12 +2420,15 @@ async def upload_avatar(request: Request, credentials: HTTPAuthorizationCredenti
             raise HTTPException(status_code=400, detail="Image too large (max 5MB)")
 
         import base64
+        import asyncio
         # Determine mime type
         content_type = getattr(file, 'content_type', 'image/jpeg') or 'image/jpeg'
         if content_type not in ('image/jpeg', 'image/png', 'image/webp', 'image/gif'):
             content_type = 'image/jpeg'
-        # Encode as base64 data URL
-        b64 = base64.b64encode(contents).decode('utf-8')
+        # Encode as base64 data URL — run sync base64 encode in a thread to avoid
+        # blocking the asyncio event loop for ~50-100ms on a 5MB image.
+        b64_bytes = await asyncio.to_thread(base64.b64encode, contents)
+        b64 = b64_bytes.decode('utf-8')
         avatar_data_url = f"data:{content_type};base64,{b64}"
 
         # Save to database
@@ -2437,6 +2440,7 @@ async def upload_avatar(request: Request, credentials: HTTPAuthorizationCredenti
             user.avatar = avatar_data_url
             await session.commit()
 
+        logger.info(f"[UPLOAD-AVATAR] Success for user {user_id}: {len(contents)} bytes -> {len(avatar_data_url)} chars")
         return {"status": "success", "avatar_url": avatar_data_url}
     except HTTPException:
         raise

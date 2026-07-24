@@ -146,11 +146,22 @@ export function Navigation() {
             {/* User Profile */}
             <div className="flex-shrink-0 flex border-t border-white/5 p-4 bg-[#050507]/40">
               <div className="flex items-center space-x-3 w-full">
-                <div className="w-10 h-10 bg-white/[0.02] border border-[#D4AF37]/20 rounded-full flex items-center justify-center flex-shrink-0 overflow-hidden">
-                  {user?.avatar ? (
-                    <img src={user.avatar} alt={user?.name || 'User'} className="w-full h-full object-cover" />
-                  ) : (
-                    <User className="w-5 h-5 text-[#D4AF37]" />
+                <div className="w-10 h-10 bg-white/[0.02] border border-[#D4AF37]/20 rounded-full flex items-center justify-center flex-shrink-0 overflow-hidden relative">
+                  {/* Fallback icon: always rendered as the background layer. */}
+                  {/* When the avatar img fails to load, it hides itself (onError) and this icon shows through. */}
+                  <User className="w-5 h-5 text-[#D4AF37] absolute inset-0 m-auto" />
+                  {user?.avatar && (
+                    <img
+                      src={user.avatar}
+                      alt={user?.name || 'User'}
+                      className="w-full h-full object-cover relative z-10"
+                      onError={(e) => {
+                        // Hide broken/corrupted avatar so the fallback User icon underneath
+                        // becomes visible. Without this, a corrupted data URL renders as a
+                        // broken-image icon instead of the gold User silhouette.
+                        (e.currentTarget as HTMLImageElement).style.display = 'none';
+                      }}
+                    />
                   )}
                 </div>
                 <div className="flex-1 min-w-0">
@@ -256,11 +267,20 @@ export function Navigation() {
               onClick={() => setShowUserMenu(!showUserMenu)}
               className="flex items-center p-1 border border-[#D4AF37]/20 rounded-full hover:bg-white/[0.03] transition-colors"
             >
-              <div className="w-7 h-7 bg-white/[0.02] rounded-full flex items-center justify-center overflow-hidden">
-                {user?.avatar ? (
-                  <img src={user.avatar} alt={user?.name || 'User'} className="w-full h-full object-cover" />
-                ) : (
-                  <User className="w-4 h-4 text-[#D4AF37]" />
+              <div className="w-7 h-7 bg-white/[0.02] rounded-full flex items-center justify-center overflow-hidden relative">
+                {/* Fallback icon: always rendered as the background layer. */}
+                <User className="w-4 h-4 text-[#D4AF37] absolute inset-0 m-auto" />
+                {user?.avatar && (
+                  <img
+                    src={user.avatar}
+                    alt={user?.name || 'User'}
+                    className="w-full h-full object-cover relative z-10"
+                    onError={(e) => {
+                      // Hide broken/corrupted avatar so the fallback User icon underneath
+                      // becomes visible.
+                      (e.currentTarget as HTMLImageElement).style.display = 'none';
+                    }}
+                  />
                 )}
               </div>
             </button>

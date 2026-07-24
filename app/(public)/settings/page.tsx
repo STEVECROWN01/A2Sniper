@@ -112,6 +112,8 @@ export default function SettingsPage() {
 
       if (res.ok) {
         const data = await res.json();
+        // Prefer the server-returned avatar_url; fall back to a local object URL
+        // only as a transient preview (not persisted across reloads).
         const newAvatarUrl = data.avatar_url || URL.createObjectURL(file);
         setAvatarUrl(newAvatarUrl);
         // CRITICAL: Update the user object in the store so the avatar
@@ -122,17 +124,23 @@ export default function SettingsPage() {
         }
         toast.success('Profile photo updated!');
       } else {
-        // Fallback: show preview locally even if API fails
-        setAvatarUrl(URL.createObjectURL(file));
-        toast.success('Photo updated locally (server unavailable).');
+        // Server returned an error — surface it to the user.
+        // Do NOT store a blob: URL — it won't survive reload and would mislead
+        // the user into thinking the upload succeeded.
+        let detail = 'Upload failed. Please try again.';
+        try {
+          const errData = await res.json();
+          if (errData?.detail) detail = String(errData.detail);
+        } catch { /* ignore JSON parse errors */ }
+        toast.error(detail);
       }
-    } catch {
-      // Show preview locally when API is unavailable
-      setAvatarUrl(URL.createObjectURL(file));
-      toast.success('Photo updated locally (server unavailable).');
+    } catch (err) {
+      // Network error — surface it, do not fake success with a blob: URL.
+      console.error('[AVATAR UPLOAD] Network error:', err);
+      toast.error('Network error — could not reach server. Please try again.');
     } finally {
       setIsUploadingPhoto(false);
-      // Reset file input
+      // Reset file input so the same file can be selected again
       if (fileInputRef.current) fileInputRef.current.value = '';
     }
   };
@@ -424,11 +432,18 @@ export default function SettingsPage() {
 
                     <div className="space-y-6">
                       <div className="flex items-center space-x-4 flex-wrap">
-                        <div className="w-16 h-16 bg-gradient-to-r from-[#D4AF37] to-[#C5A059] rounded-full flex items-center justify-center overflow-hidden">
-                          {avatarUrl ? (
-                            <img src={avatarUrl} alt="Avatar" className="w-full h-full object-cover" />
-                          ) : (
-                            <User className="w-8 h-8 text-black" />
+                        <div className="w-16 h-16 bg-gradient-to-r from-[#D4AF37] to-[#C5A059] rounded-full flex items-center justify-center overflow-hidden relative">
+                          {/* Fallback icon: always rendered as background layer */}
+                          <User className="w-8 h-8 text-black absolute inset-0 m-auto" />
+                          {avatarUrl && (
+                            <img
+                              src={avatarUrl}
+                              alt="Avatar"
+                              className="w-full h-full object-cover relative z-10"
+                              onError={(e) => {
+                                (e.currentTarget as HTMLImageElement).style.display = 'none';
+                              }}
+                            />
                           )}
                         </div>
                         <div>

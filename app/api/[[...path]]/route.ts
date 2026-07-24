@@ -249,21 +249,37 @@ async function proxyRequest(request: NextRequest, path?: string[]) {
 
     // Forward body for POST/PUT/PATCH
     if (request.method !== 'GET' && request.method !== 'HEAD') {
-      // Clone the request before reading body to avoid "body already consumed" errors
-      const bodyText = await request.clone().text();
-      if (bodyText) {
-        fetchOptions.body = bodyText;
-        // Ensure content-type is set (backend needs it to parse JSON)
-        if (!headers['content-type'] && !headers['Content-Type']) {
-          headers['content-type'] = 'application/json';
-        }
-        // Debug log for signal requests
-        if (endpoint === '/api/signals/request') {
-          console.log(`[PROXY] /api/signals/request body: ${bodyText.slice(0, 200)}`);
-          console.log(`[PROXY] headers:`, JSON.stringify(headers));
+      const requestContentType = (request.headers.get('content-type') || '').toLowerCase();
+      const isMultipart = requestContentType.includes('multipart/form-data');
+
+      if (isMultipart) {
+        // CRITICAL: stream the raw body untouched for multipart uploads.
+        // Reading as text() would UTF-8 decode the binary image bytes, corrupting them.
+        // Streaming preserves the exact bytes the browser sent.
+        fetchOptions.body = request.body;
+        // 'duplex: half' is required by the WHATWG fetch spec when streaming a request body.
+        (fetchOptions as any).duplex = 'half';
+        // Preserve the original Content-Type (multipart/form-data; boundary=...)
+        // so the backend can parse the multipart structure correctly.
+        if (requestContentType && !headers['content-type'] && !headers['Content-Type']) {
+          headers['content-type'] = requestContentType;
         }
       } else {
-        console.warn(`[PROXY] ${request.method} ${endpoint} — empty body!`);
+        // For JSON and other text bodies: read as text (safe — already UTF-8), forward as text.
+        const bodyText = await request.clone().text();
+        if (bodyText) {
+          fetchOptions.body = bodyText;
+          if (!headers['content-type'] && !headers['Content-Type']) {
+            headers['content-type'] = 'application/json';
+          }
+          // Debug log for signal requests
+          if (endpoint === '/api/signals/request') {
+            console.log(`[PROXY] /api/signals/request body: ${bodyText.slice(0, 200)}`);
+            console.log(`[PROXY] headers:`, JSON.stringify(headers));
+          }
+        } else {
+          console.warn(`[PROXY] ${request.method} ${endpoint} — empty body!`);
+        }
       }
     }
 
