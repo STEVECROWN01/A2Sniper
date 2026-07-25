@@ -65,10 +65,23 @@ const avatarCache = new Map<string, string>();
  */
 async function circularizeAndResizeAvatar(src: string, size = 256): Promise<string | null> {
   return new Promise<string | null>((resolve) => {
+    let settled = false;
+    const safeResolve = (val: string | null) => {
+      if (!settled) { settled = true; resolve(val); }
+    };
+
+    // Safety timeout: if the image doesn't load in 5s, give up and return null
+    // so the PDF export can proceed with the fallback letter avatar instead of
+    // hanging forever (which would leave the user staring at a spinner).
+    const timeoutId = setTimeout(() => {
+      safeResolve(null);
+    }, 5000);
+
     try {
       const img = new Image();
       img.crossOrigin = 'anonymous';
       img.onload = () => {
+        clearTimeout(timeoutId);
         try {
           // Square center-crop: take the smaller dimension
           const side = Math.min(img.width, img.height);
@@ -80,7 +93,7 @@ async function circularizeAndResizeAvatar(src: string, size = 256): Promise<stri
           canvas.height = size;
           const ctx = canvas.getContext('2d');
           if (!ctx) {
-            resolve(null);
+            safeResolve(null);
             return;
           }
 
@@ -98,15 +111,19 @@ async function circularizeAndResizeAvatar(src: string, size = 256): Promise<stri
 
           // Export as PNG (preserves transparency for the corners)
           const dataUrl = canvas.toDataURL('image/png');
-          resolve(dataUrl);
+          safeResolve(dataUrl);
         } catch {
-          resolve(null);
+          safeResolve(null);
         }
       };
-      img.onerror = () => resolve(null);
+      img.onerror = () => {
+        clearTimeout(timeoutId);
+        safeResolve(null);
+      };
       img.src = src;
     } catch {
-      resolve(null);
+      clearTimeout(timeoutId);
+      safeResolve(null);
     }
   });
 }

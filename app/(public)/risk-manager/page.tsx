@@ -729,62 +729,73 @@ export default function RiskManagerPage() {
   }, [showResetConfirm, showNewSessionModal, showCounterModal]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleExportPDF = async () => {
-    if (user?.avatar) { await fetchAvatarBase64(user.avatar); }
-    const pdfUser: PDFUserInfo = {
-      name: user?.name, email: user?.email, plan: user?.plan, userId: user?.id, avatarUrl: user?.avatar,
-    };
-    const doc = createBrandedPDF('Risk Manager', 'A2Sniper 3.0 Professional Capital Manager', pdfUser);
-    let y = 58;
-    y = drawUserInfoCard(doc, y, pdfUser);
-    y = drawSectionTitle(doc, 'Configuration', y);
-    y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Initial Capital', `$${initialCapital.toFixed(2)}`);
-    y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Market Payout', `${payout}%`, { valueColor: '#D4AF37' });
-    y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Session', `#${sessionCounter}`);
-    y += 2;
-    y = drawSectionTitle(doc, 'Risk Analysis', y);
-    const cardW = 42, gap = 3;
-    y = drawStatCard(doc, PAGE.marginL, y, cardW, 'Balance', `$${results.currentBalance.toFixed(2)}`);
-    y = drawStatCard(doc, PAGE.marginL + cardW + gap, y - 21, cardW, 'Net Profit', `${results.totalProfit >= 0 ? '+' : ''}$${results.totalProfit.toFixed(2)}`, { valueColor: results.totalProfit >= 0 ? '#22C55E' : '#EF4444' });
-    y = drawStatCard(doc, PAGE.marginL + (cardW + gap) * 2, y - 21, cardW, 'Win Rate', displayWinRate > 0 ? `${displayWinRate.toFixed(1)}%` : 'N/A', { valueColor: '#D4AF37' });
-    y = drawStatCard(doc, PAGE.marginL + (cardW + gap) * 3, y - 21, cardW, 'Gain', `${results.accountGain >= 0 ? '+' : ''}${results.accountGain.toFixed(2)}%`, { valueColor: results.accountGain >= 0 ? '#22C55E' : '#EF4444' });
-    y += 3;
-    y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Risk Level', '');
-    drawRiskBadge(doc, PAGE.marginL + 28, y - 1, riskLevel);
-    y += 6;
-    // Include ALL trades with a result (WIN or LOSS), even if amount is 0.
-    // Previous filter (t.result) was too loose — included empty strings.
-    // The t.result && t.amount > 0 filter was too strict — excluded empty-stake trades.
-    const validTrades = results.computedTrades.filter(t => t.result === 'WIN' || t.result === 'LOSS');
-    if (validTrades.length > 0) {
-      y = checkPageBreak(doc, y, 30);
-      y = drawSectionTitle(doc, 'Trading Journal', y);
-      const headers = [
-        { label: '#', width: 10 },
-        { label: 'Result', width: 18, align: 'center' as const },
-        { label: 'Stake ($)', width: 22, align: 'right' as const },
-        { label: 'Ret ($)', width: 22, align: 'right' as const },
-        { label: 'Bal ($)', width: 24, align: 'right' as const },
-        { label: 'Pay (%)', width: 18, align: 'center' as const },
-      ];
-      const rows = validTrades.map((t) => {
-        const origIdx = results.computedTrades.indexOf(t);
-        const rowPayout = (t.payout && t.payout > 0) ? t.payout : payout;
-        return [
-          `#${origIdx + 1}`,
-          t.result || '-',
-          t.amount && t.amount > 0 ? t.amount.toFixed(2) : '-',
-          t.result === 'WIN' ? `+${(t.return?.toFixed(2) || '0.00')}` : t.result === 'LOSS' ? `-${(t.amount?.toFixed(2) || '0.00')}` : '-',
-          t.balance === '-' ? '-' : `$${t.balance}`,
-          `${rowPayout}%`,
+    try {
+      // Pre-process avatar (circularize + resize) with a safety timeout.
+      // If this fails or times out, the PDF will use the letter fallback.
+      if (user?.avatar) {
+        try {
+          await fetchAvatarBase64(user.avatar);
+        } catch (avatarErr) {
+          console.warn('[PDF EXPORT] Avatar pre-processing failed, using fallback:', avatarErr);
+        }
+      }
+      const pdfUser: PDFUserInfo = {
+        name: user?.name, email: user?.email, plan: user?.plan, userId: user?.id, avatarUrl: user?.avatar,
+      };
+      const doc = createBrandedPDF('Risk Manager', 'A2Sniper 3.0 Professional Capital Manager', pdfUser);
+      let y = 58;
+      y = drawUserInfoCard(doc, y, pdfUser);
+      y = drawSectionTitle(doc, 'Configuration', y);
+      y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Initial Capital', `$${initialCapital.toFixed(2)}`);
+      y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Market Payout', `${payout}%`, { valueColor: '#D4AF37' });
+      y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Session', `#${sessionCounter}`);
+      y += 2;
+      y = drawSectionTitle(doc, 'Risk Analysis', y);
+      const cardW = 42, gap = 3;
+      y = drawStatCard(doc, PAGE.marginL, y, cardW, 'Balance', `$${results.currentBalance.toFixed(2)}`);
+      y = drawStatCard(doc, PAGE.marginL + cardW + gap, y - 21, cardW, 'Net Profit', `${results.totalProfit >= 0 ? '+' : ''}$${results.totalProfit.toFixed(2)}`, { valueColor: results.totalProfit >= 0 ? '#22C55E' : '#EF4444' });
+      y = drawStatCard(doc, PAGE.marginL + (cardW + gap) * 2, y - 21, cardW, 'Win Rate', displayWinRate > 0 ? `${displayWinRate.toFixed(1)}%` : 'N/A', { valueColor: '#D4AF37' });
+      y = drawStatCard(doc, PAGE.marginL + (cardW + gap) * 3, y - 21, cardW, 'Gain', `${results.accountGain >= 0 ? '+' : ''}${results.accountGain.toFixed(2)}%`, { valueColor: results.accountGain >= 0 ? '#22C55E' : '#EF4444' });
+      y += 3;
+      y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Risk Level', '');
+      drawRiskBadge(doc, PAGE.marginL + 28, y - 1, riskLevel);
+      y += 6;
+      // Include ALL trades with a result (WIN or LOSS), even if amount is 0.
+      const validTrades = results.computedTrades.filter(t => t.result === 'WIN' || t.result === 'LOSS');
+      if (validTrades.length > 0) {
+        y = checkPageBreak(doc, y, 30);
+        y = drawSectionTitle(doc, 'Trading Journal', y);
+        const headers = [
+          { label: '#', width: 10 },
+          { label: 'Result', width: 18, align: 'center' as const },
+          { label: 'Stake ($)', width: 22, align: 'right' as const },
+          { label: 'Ret ($)', width: 22, align: 'right' as const },
+          { label: 'Bal ($)', width: 24, align: 'right' as const },
+          { label: 'Pay (%)', width: 18, align: 'center' as const },
         ];
-      });
-      y = drawTable(doc, PAGE.marginL, y, headers, rows);
+        const rows = validTrades.map((t) => {
+          const origIdx = results.computedTrades.indexOf(t);
+          const rowPayout = (t.payout && t.payout > 0) ? t.payout : payout;
+          return [
+            `#${origIdx + 1}`,
+            t.result || '-',
+            t.amount && t.amount > 0 ? t.amount.toFixed(2) : '-',
+            t.result === 'WIN' ? `+${(t.return?.toFixed(2) || '0.00')}` : t.result === 'LOSS' ? `-${(t.amount?.toFixed(2) || '0.00')}` : '-',
+            t.balance === '-' ? '-' : `$${t.balance}`,
+            `${rowPayout}%`,
+          ];
+        });
+        y = drawTable(doc, PAGE.marginL, y, headers, rows);
+      }
+      const dateStr = new Date().toISOString().split('T')[0];
+      savePDF(doc, `a2sniper-risk-${dateStr}.pdf`, pdfUser);
+      setJustExported(true);
+      setTimeout(() => setJustExported(false), 2500);
+      toast.success('PDF report exported successfully!');
+    } catch (err) {
+      console.error('[PDF EXPORT] Failed:', err);
+      toast.error('PDF export failed. Please try again or contact support.');
     }
-    const dateStr = new Date().toISOString().split('T')[0];
-    savePDF(doc, `a2sniper-risk-${dateStr}.pdf`, pdfUser);
-    setJustExported(true);
-    setTimeout(() => setJustExported(false), 2500);
-    toast.success('PDF report exported successfully!');
   };
 
   return (

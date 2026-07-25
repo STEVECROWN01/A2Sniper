@@ -212,97 +212,106 @@ export default function TradingJournalPage() {
 
   // ── Export PDF ──
   const handleExportPDF = async () => {
-    if (!sessionData) return;
+    try {
+      if (!sessionData) return;
 
-    // Pre-load user avatar if available
-    if (user?.avatar) {
-      await fetchAvatarBase64(user.avatar);
-    }
+      // Pre-load user avatar if available (with safety timeout)
+      if (user?.avatar) {
+        try {
+          await fetchAvatarBase64(user.avatar);
+        } catch (avatarErr) {
+          console.warn('[PDF EXPORT] Avatar pre-processing failed, using fallback:', avatarErr);
+        }
+      }
 
-    const pdfUser: PDFUserInfo = {
-      name: user?.name,
-      email: user?.email,
-      plan: user?.plan,
-      userId: user?.id,
-      avatarUrl: user?.avatar,
-    };
+      const pdfUser: PDFUserInfo = {
+        name: user?.name,
+        email: user?.email,
+        plan: user?.plan,
+        userId: user?.id,
+        avatarUrl: user?.avatar,
+      };
 
-    const doc = createBrandedPDF('Trading Journal', 'Trading Journal et performances', pdfUser);
-    let y = 58;
+      const doc = createBrandedPDF('Trading Journal', 'Trading Journal et performances', pdfUser);
+      let y = 58;
 
-    // User info card
-    y = drawUserInfoCard(doc, y, pdfUser);
+      // User info card
+      y = drawUserInfoCard(doc, y, pdfUser);
 
-    // Session Info Section
-    y = drawSectionTitle(doc, 'Session Information', y);
-    y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Session', `#${sessionData.sessionCounter}`);
-    y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Initial Capital', `$${sessionData.initialCapital.toFixed(2)}`);
-    y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Payout', `${sessionData.payout}%`, { valueColor: '#D4AF37' });
-    y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Total Trades', `${stats.totalTrades}`);
-    if (sessionData.createdAt) {
-      y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Created at', new Date(sessionData.createdAt).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }));
-    }
-    if (sessionData.updatedAt && sessionData.updatedAt !== sessionData.createdAt) {
-      y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Updated', new Date(sessionData.updatedAt).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }), { valueColor: '#D4AF37' });
-    }
-    y += 2;
+      // Session Info Section
+      y = drawSectionTitle(doc, 'Session Information', y);
+      y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Session', `#${sessionData.sessionCounter}`);
+      y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Initial Capital', `$${sessionData.initialCapital.toFixed(2)}`);
+      y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Payout', `${sessionData.payout}%`, { valueColor: '#D4AF37' });
+      y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Total Trades', `${stats.totalTrades}`);
+      if (sessionData.createdAt) {
+        y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Created at', new Date(sessionData.createdAt).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }));
+      }
+      if (sessionData.updatedAt && sessionData.updatedAt !== sessionData.createdAt) {
+        y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Updated', new Date(sessionData.updatedAt).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }), { valueColor: '#D4AF37' });
+      }
+      y += 2;
 
-    // Performance Stats
-    y = drawSectionTitle(doc, 'Performances', y);
-    const cardW = 42;
-    const gap = 3;
-    y = drawStatCard(doc, PAGE.marginL, y, cardW, 'Initial Capital', `$${stats.capital.toFixed(2)}`);
-    y = drawStatCard(doc, PAGE.marginL + cardW + gap, y - 21, cardW, 'Current Balance', `$${stats.balance.toFixed(2)}`, { valueColor: '#D4AF37' });
-    y = drawStatCard(doc, PAGE.marginL + (cardW + gap) * 2, y - 21, cardW, 'Net Profit / Loss', `${stats.profit >= 0 ? '+' : ''}$${stats.profit.toFixed(2)}`, { valueColor: stats.profit >= 0 ? '#22C55E' : '#EF4444' });
-    y = drawStatCard(doc, PAGE.marginL + (cardW + gap) * 3, y - 21, cardW, 'Win Rate', `${stats.winRate.toFixed(1)}%`, { valueColor: '#D4AF37' });
-    y += 3;
+      // Performance Stats
+      y = drawSectionTitle(doc, 'Performances', y);
+      const cardW = 42;
+      const gap = 3;
+      y = drawStatCard(doc, PAGE.marginL, y, cardW, 'Initial Capital', `$${stats.capital.toFixed(2)}`);
+      y = drawStatCard(doc, PAGE.marginL + cardW + gap, y - 21, cardW, 'Current Balance', `$${stats.balance.toFixed(2)}`, { valueColor: '#D4AF37' });
+      y = drawStatCard(doc, PAGE.marginL + (cardW + gap) * 2, y - 21, cardW, 'Net Profit / Loss', `${stats.profit >= 0 ? '+' : ''}$${stats.profit.toFixed(2)}`, { valueColor: stats.profit >= 0 ? '#22C55E' : '#EF4444' });
+      y = drawStatCard(doc, PAGE.marginL + (cardW + gap) * 3, y - 21, cardW, 'Win Rate', `${stats.winRate.toFixed(1)}%`, { valueColor: '#D4AF37' });
+      y += 3;
 
-    // Win/Loss Breakdown
-    y = drawSectionTitle(doc, 'Trade Distribution', y);
-    y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Successful Trades (WIN)', `${stats.wins}`, { valueColor: '#22C55E' });
-    y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Lost Trades (LOSS)', `${stats.losses}`, { valueColor: '#EF4444' });
-    y += 2;
+      // Win/Loss Breakdown
+      y = drawSectionTitle(doc, 'Trade Distribution', y);
+      y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Successful Trades (WIN)', `${stats.wins}`, { valueColor: '#22C55E' });
+      y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Lost Trades (LOSS)', `${stats.losses}`, { valueColor: '#EF4444' });
+      y += 2;
 
-    // Risk Level
-    const riskLevel = stats.totalTrades < 5 ? 'Medium' : stats.profit < -sessionData.initialCapital * 0.2 ? 'Critical' : stats.profit < -sessionData.initialCapital * 0.1 || stats.winRate < 45 ? 'High' : stats.profit < 0 || stats.winRate < 55 ? 'Medium' : 'Low';
-    y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Niveau de Risque', '');
-    drawRiskBadge(doc, PAGE.marginL + 36, y - 1, riskLevel);
-    y += 6;
+      // Risk Level
+      const riskLevel = stats.totalTrades < 5 ? 'Medium' : stats.profit < -sessionData.initialCapital * 0.2 ? 'Critical' : stats.profit < -sessionData.initialCapital * 0.1 || stats.winRate < 45 ? 'High' : stats.profit < 0 || stats.winRate < 55 ? 'Medium' : 'Low';
+      y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Niveau de Risque', '');
+      drawRiskBadge(doc, PAGE.marginL + 36, y - 1, riskLevel);
+      y += 6;
 
-    // Trades Table
-    if (validTrades.length > 0) {
-      y = checkPageBreak(doc, y, 30);
-      y = drawSectionTitle(doc, 'Detailed Trade History', y);
+      // Trades Table
+      if (validTrades.length > 0) {
+        y = checkPageBreak(doc, y, 30);
+        y = drawSectionTitle(doc, 'Detailed Trade History', y);
 
-      const headers = [
-        { label: '#', width: 12 },
-        { label: 'Result', width: 22, align: 'center' as const },
-        { label: 'Stake ($)', width: 28, align: 'right' as const },
-        { label: 'Profit / Perte ($)', width: 35, align: 'right' as const },
-        { label: 'Cumul ($)', width: 28, align: 'right' as const },
-      ];
-
-      let runningProfit = 0;
-      const rows = validTrades.map((t: TradeEntry, i: number) => {
-        const rowPayout = (t.payout && t.payout > 0) ? t.payout : sessionData.payout;
-        const profitLoss = t.result === 'WIN' ? t.amount * (rowPayout / 100) : -t.amount;
-        runningProfit += profitLoss;
-        return [
-          `#${i + 1}`,
-          t.result,
-          t.amount.toFixed(2),
-          profitLoss >= 0 ? `+${profitLoss.toFixed(2)}` : `${profitLoss.toFixed(2)}`,
-          runningProfit >= 0 ? `+${runningProfit.toFixed(2)}` : `${runningProfit.toFixed(2)}`,
+        const headers = [
+          { label: '#', width: 12 },
+          { label: 'Result', width: 22, align: 'center' as const },
+          { label: 'Stake ($)', width: 28, align: 'right' as const },
+          { label: 'Profit / Perte ($)', width: 35, align: 'right' as const },
+          { label: 'Cumul ($)', width: 28, align: 'right' as const },
         ];
-      });
-      y = drawTable(doc, PAGE.marginL, y, headers, rows);
-    }
 
-    const dateStr = new Date().toISOString().split('T')[0];
-    savePDF(doc, `a2sniper-journal-${dateStr}.pdf`, pdfUser);
-    setJustExported(true);
-    setTimeout(() => setJustExported(false), 2500);
-    toast.success('Journal PDF report exported successfully!');
+        let runningProfit = 0;
+        const rows = validTrades.map((t: TradeEntry, i: number) => {
+          const rowPayout = (t.payout && t.payout > 0) ? t.payout : sessionData.payout;
+          const profitLoss = t.result === 'WIN' ? t.amount * (rowPayout / 100) : -t.amount;
+          runningProfit += profitLoss;
+          return [
+            `#${i + 1}`,
+            t.result,
+            t.amount.toFixed(2),
+            profitLoss >= 0 ? `+${profitLoss.toFixed(2)}` : `${profitLoss.toFixed(2)}`,
+            runningProfit >= 0 ? `+${runningProfit.toFixed(2)}` : `${runningProfit.toFixed(2)}`,
+          ];
+        });
+        y = drawTable(doc, PAGE.marginL, y, headers, rows);
+      }
+
+      const dateStr = new Date().toISOString().split('T')[0];
+      savePDF(doc, `a2sniper-journal-${dateStr}.pdf`, pdfUser);
+      setJustExported(true);
+      setTimeout(() => setJustExported(false), 2500);
+      toast.success('Journal PDF report exported successfully!');
+    } catch (err) {
+      console.error('[PDF EXPORT] Failed:', err);
+      toast.error('PDF export failed. Please try again or contact support.');
+    }
   };
 
   return (
