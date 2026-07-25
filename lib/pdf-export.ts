@@ -45,29 +45,102 @@ export interface PDFUserInfo {
 
 /**
  * Cache for fetched avatar base64 data to avoid re-fetching.
+ * Stores the CIRCULAR-CROPPED, RESIZED version ready for PDF embedding.
  */
 const avatarCache = new Map<string, string>();
 
 /**
- * Fetch a user avatar URL and convert it to base64 for jsPDF embedding.
- * Returns the base64 data URI or null if fetch fails.
+ * Take any image source (data URL or remote URL) and produce a
+ * circular-cropped, resized PNG data URL with transparent corners.
+ *
+ * Why: jsPDF's clip() does not reliably clip raster images across all
+ * PDF viewers (often renders as a square). By pre-cropping on a canvas:
+ *   - The image is genuinely circular (canvas does the clipping)
+ *   - The PNG has transparent corners, so jsPDF just embeds a normal image
+ *   - The result is a clean circle in every PDF viewer
+ *   - We also resize to max 256x256 to keep PDF file size small
+ *     (a 5MB phone photo becomes a ~20KB transparent PNG)
+ *
+ * Returns null if the image cannot be loaded/processed.
+ */
+async function circularizeAndResizeAvatar(src: string, size = 256): Promise<string | null> {
+  return new Promise<string | null>((resolve) => {
+    try {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => {
+        try {
+          // Square center-crop: take the smaller dimension
+          const side = Math.min(img.width, img.height);
+          const sx = (img.width - side) / 2;
+          const sy = (img.height - side) / 2;
+
+          const canvas = document.createElement('canvas');
+          canvas.width = size;
+          canvas.height = size;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            resolve(null);
+            return;
+          }
+
+          // Transparent background
+          ctx.clearRect(0, 0, size, size);
+
+          // Circular clip
+          ctx.beginPath();
+          ctx.arc(size / 2, size / 2, size / 2, 0, Math.PI * 2);
+          ctx.closePath();
+          ctx.clip();
+
+          // Draw the image filling the circle
+          ctx.drawImage(img, sx, sy, side, side, 0, 0, size, size);
+
+          // Export as PNG (preserves transparency for the corners)
+          const dataUrl = canvas.toDataURL('image/png');
+          resolve(dataUrl);
+        } catch {
+          resolve(null);
+        }
+      };
+      img.onerror = () => resolve(null);
+      img.src = src;
+    } catch {
+      resolve(null);
+    }
+  });
+}
+
+/**
+ * Fetch a user avatar URL, circular-crop + resize it on a canvas, and cache
+ * the result. Returns a PNG data URL with transparent corners ready for
+ * jsPDF embedding (no further clipping needed).
+ *
+ * Returns null if the avatar cannot be loaded or processed.
  */
 export async function fetchAvatarBase64(url: string): Promise<string | null> {
   if (avatarCache.has(url)) return avatarCache.get(url)!;
   try {
-    const res = await fetch(url);
-    if (!res.ok) return null;
-    const blob = await res.blob();
-    return new Promise<string | null>((resolve) => {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        const result = reader.result as string;
-        if (result) avatarCache.set(url, result);
-        resolve(result);
-      };
-      reader.onerror = () => resolve(null);
-      reader.readAsDataURL(blob);
-    });
+    // For data: URLs (which is what we store in the DB), we can pass directly
+    // to circularizeAndResizeAvatar without fetching first.
+    let imageSrc: string;
+    if (url.startsWith('data:')) {
+      imageSrc = url;
+    } else {
+      const res = await fetch(url);
+      if (!res.ok) return null;
+      const blob = await res.blob();
+      imageSrc = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+    }
+
+    const circular = await circularizeAndResizeAvatar(imageSrc, 256);
+    if (circular) avatarCache.set(url, circular);
+    return circular;
   } catch {
     return null;
   }
@@ -114,7 +187,13 @@ function drawHeaderLogo(doc: jsPDF): void {
 
 /**
  * Draw user avatar image in the header (next to user info) or in the user info card.
- * Uses jsPDF clipping to properly crop the image to a circle, fully filling it.
+ *
+ * The cached avatarBase64 is ALREADY a circular-cropped PNG with transparent
+ * corners (pre-processed by circularizeAndResizeAvatar). So we just embed it
+ * directly — no jsPDF clip() needed (which is unreliable for raster images
+ * across PDF viewers and was causing the avatar to render as a square).
+ *
+ * A gold border circle is drawn on top for branding.
  */
 function drawUserAvatar(doc: jsPDF, x: number, y: number, size: number, avatarBase64: string): void {
   try {
@@ -122,20 +201,16 @@ function drawUserAvatar(doc: jsPDF, x: number, y: number, size: number, avatarBa
     const cy = y + size / 2;
     const radius = size / 2;
 
-    // Save current graphics state
-    doc.saveGraphicsState();
+    // White circle background (in case the PNG has transparency issues)
+    doc.setFillColor(255, 255, 255);
+    doc.circle(cx, cy, radius, 'F');
 
-    // Define circular clipping path
-    doc.circle(cx, cy, radius);
-    doc.clip();
+    // Embed the pre-circularized PNG — no clip() needed
+    // Use 'PNG' format because circularizeAndResizeAvatar exports PNG
+    // (preserves transparency for the corners)
+    doc.addImage(avatarBase64, 'PNG', x, y, size, size);
 
-    // Draw the image filling the entire circle area (edge to edge, no padding)
-    doc.addImage(avatarBase64, 'JPEG', x, y, size, size);
-
-    // Restore graphics state (removes clipping)
-    doc.restoreGraphicsState();
-
-    // Gold border on top of the clipped image
+    // Gold border on top of the image
     doc.setDrawColor(212, 175, 55);
     doc.setLineWidth(0.5);
     doc.circle(cx, cy, radius + 0.3, 'S');
@@ -371,19 +446,21 @@ export function drawUserInfoCard(
     drawUserAvatarFallback(doc, avatarX, avatarY, avatarSize, (user.name || user.email || 'U').charAt(0));
   }
 
-  // Name
+  // Name + Email — vertically centered as a group in the card
   const textX = avatarX + avatarSize + 4;
+  // Name baseline at card vertical center - 1, email baseline at +3 → centered pair
+  const centerY = y + cardH / 2;
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(11);
   doc.setTextColor(31, 41, 55);
-  doc.text(user.name || user.email?.split('@')[0] || 'Utilisateur', textX, y + 9);
+  doc.text(user.name || user.email?.split('@')[0] || 'Utilisateur', textX, centerY - 1);
 
   // Email
   if (user.email) {
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(7);
     doc.setTextColor(107, 114, 128);
-    doc.text(user.email, textX, y + 14);
+    doc.text(user.email, textX, centerY + 3);
   }
 
   // Plan badge on the right
@@ -393,22 +470,19 @@ export function drawUserInfoCard(
 
     const planRgb = hexToRgb(BRAND.gold);
     doc.setFillColor(planRgb.r, planRgb.g, planRgb.b);
-    doc.roundedRect(PAGE.width - PAGE.marginR - planWidth - 4, y + 4, planWidth, 6, 1, 1, 'F');
+    // Vertically center the plan badge in the card
+    const badgeY = y + (cardH - 6) / 2;
+    doc.roundedRect(PAGE.width - PAGE.marginR - planWidth - 4, badgeY, planWidth, 6, 1, 1, 'F');
 
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(7);
     doc.setTextColor(10, 11, 14);
-    doc.text(planLabel, PAGE.width - PAGE.marginR - planWidth / 2 - 4, y + 8, { align: 'center' });
+    doc.text(planLabel, PAGE.width - PAGE.marginR - planWidth / 2 - 4, badgeY + 4, { align: 'center' });
   }
 
-  // User ID on the right
-  if (user.userId) {
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(5.5);
-    doc.setTextColor(156, 163, 175);
-    const shortId = user.userId.length > 12 ? user.userId.substring(0, 12) + '...' : user.userId;
-    doc.text(`ID: ${shortId}`, PAGE.width - PAGE.marginR - 4, y + 17, { align: 'right' });
-  }
+  // (Removed) User ID text — was floating awkwardly at the bottom of the card
+  // in a tiny 5.5pt gray font, looking like garbled text. The plan badge above
+  // and the name/email on the left are sufficient for identification.
 
   // Divider line
   doc.setDrawColor(212, 175, 55);
