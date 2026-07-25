@@ -2449,6 +2449,39 @@ async def upload_avatar(request: Request, credentials: HTTPAuthorizationCredenti
         raise HTTPException(status_code=500, detail=f"Failed to upload avatar: {str(e)}")
 
 
+@app.delete("/api/auth/avatar")
+async def delete_avatar(credentials: HTTPAuthorizationCredentials = Security(security)):
+    """Delete the authenticated user's profile picture.
+    Sets users.avatar to NULL in the database."""
+    payload = decode_access_token(credentials.credentials)
+    _jti = payload.get("jti")
+    if _jti and await is_token_revoked(_jti):
+        raise HTTPException(status_code=401, detail="Token has been revoked")
+
+    user_id = payload.get("sub")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    try:
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(select(User).where(User.id == user_id))
+            user = result.scalar_one_or_none()
+            if not user:
+                raise HTTPException(status_code=404, detail="User not found")
+            # No-op if already null — idempotent delete
+            previous_avatar = user.avatar
+            user.avatar = None
+            await session.commit()
+
+        logger.info(f"[DELETE-AVATAR] Success for user {user_id} (had avatar: {bool(previous_avatar)})")
+        return {"status": "success", "avatar": None}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[DELETE-AVATAR] Error: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to delete avatar: {str(e)}")
+
+
 @app.post("/api/auth/google")
 async def auth_google(request: Request):
     data = await request.json()

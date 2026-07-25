@@ -61,14 +61,13 @@ export default function SettingsPage() {
   //   4. Navbar re-renders with the avatar (reads user.avatar directly)
   //   5. But this component's local `avatarUrl` state stays null forever
   //      → avatar circle stays empty after reload, even though it shows in navbar.
-  // This effect re-syncs local state whenever the store's user.avatar updates.
+  // This effect re-syncs local state whenever the store's user.avatar updates —
+  // both when an avatar appears (login/reload) AND when it is cleared (delete).
   // We skip the sync only while a fresh upload is in progress, so we don't
   // clobber the optimistic preview with the stale store value.
   useEffect(() => {
     if (isUploadingPhoto) return;
-    if (user?.avatar) {
-      setAvatarUrl(user.avatar);
-    }
+    setAvatarUrl(user?.avatar || null);
   }, [user?.avatar, isUploadingPhoto]);
 
   // Delete account state
@@ -207,6 +206,48 @@ export default function SettingsPage() {
       setIsUploadingPhoto(false);
       // Reset file input so the same file can be selected again
       if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  const [isDeletingPhoto, setIsDeletingPhoto] = useState(false);
+
+  const handlePhotoDelete = async () => {
+    // Confirm before deleting — prevents accidental removal.
+    if (!window.confirm('Remove your profile picture?')) return;
+
+    setIsDeletingPhoto(true);
+    try {
+      const apiUrl = getApiUrl();
+      const res = await fetch(`${apiUrl}/api/auth/avatar`, {
+        method: 'DELETE',
+        credentials: 'include',
+      });
+
+      if (res.ok) {
+        // Clear local state — fallback User icon will show.
+        setAvatarUrl(null);
+        // Update the store so the navbar immediately drops the avatar too.
+        const store = useAppStore.getState();
+        if (store.user) {
+          // Destructure to drop the avatar field cleanly.
+          const { avatar: _drop, ...rest } = store.user;
+          void _drop;
+          store.setUser({ ...rest, avatar: undefined });
+        }
+        toast.success('Profile photo removed.');
+      } else {
+        let detail = 'Could not remove photo. Please try again.';
+        try {
+          const errData = await res.json();
+          if (errData?.detail) detail = String(errData.detail);
+        } catch { /* ignore JSON parse errors */ }
+        toast.error(detail);
+      }
+    } catch (err) {
+      console.error('[AVATAR DELETE] Network error:', err);
+      toast.error('Network error — could not reach server. Please try again.');
+    } finally {
+      setIsDeletingPhoto(false);
     }
   };
 
@@ -519,18 +560,36 @@ export default function SettingsPage() {
                             onChange={handlePhotoUpload}
                             className="hidden"
                           />
-                          <button
-                            onClick={() => fileInputRef.current?.click()}
-                            disabled={isUploadingPhoto}
-                            className="bg-[#D4AF37] text-black px-4 py-2 rounded-lg hover:bg-[#c5a059] transition-colors font-bold flex items-center gap-2 disabled:opacity-50"
-                          >
-                            {isUploadingPhoto ? (
-                              <Loader2 className="w-4 h-4 animate-spin" />
-                            ) : (
-                              <Camera className="w-4 h-4" />
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <button
+                              onClick={() => fileInputRef.current?.click()}
+                              disabled={isUploadingPhoto || isDeletingPhoto}
+                              className="bg-[#D4AF37] text-black px-4 py-2 rounded-lg hover:bg-[#c5a059] transition-colors font-bold flex items-center gap-2 disabled:opacity-50"
+                            >
+                              {isUploadingPhoto ? (
+                                <Loader2 className="w-4 h-4 animate-spin" />
+                              ) : (
+                                <Camera className="w-4 h-4" />
+                              )}
+                              {isUploadingPhoto ? 'Uploading...' : 'Change Photo'}
+                            </button>
+                            {/* Remove photo button — only shown when an avatar is present */}
+                            {avatarUrl && (
+                              <button
+                                onClick={handlePhotoDelete}
+                                disabled={isUploadingPhoto || isDeletingPhoto}
+                                className="bg-red-500/10 border border-red-500/30 text-red-400 px-4 py-2 rounded-lg hover:bg-red-500/20 transition-colors font-bold flex items-center gap-2 disabled:opacity-50"
+                                title="Remove profile picture"
+                              >
+                                {isDeletingPhoto ? (
+                                  <Loader2 className="w-4 h-4 animate-spin" />
+                                ) : (
+                                  <Trash2 className="w-4 h-4" />
+                                )}
+                                {isDeletingPhoto ? 'Removing...' : 'Remove'}
+                              </button>
                             )}
-                            {isUploadingPhoto ? 'Uploading...' : 'Change Photo'}
-                          </button>
+                          </div>
                           <p className="text-[10px] text-gray-500 mt-1">JPG, PNG — Max 5 MB</p>
                         </div>
                       </div>
