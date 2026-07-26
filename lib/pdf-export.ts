@@ -288,10 +288,11 @@ export function createBrandedPDF(title: string, subtitle?: string, user?: PDFUse
   doc.setTextColor(212, 175, 55);
   doc.text('A2SNIPER', PAGE.marginL + 2, 14);
 
-  // "3.0" version tag
+  // "v3.0" version tag — placed well to the right of "A2SNIPER" so it doesn't overlap.
+  // "A2SNIPER" at 18pt bold is ~38mm wide; v3.0 starts at +42mm to leave clear space.
   doc.setFontSize(9);
   doc.setTextColor(156, 163, 175);
-  doc.text('v3.0', PAGE.marginL + 30, 14);
+  doc.text('v3.0', PAGE.marginL + 42, 14);
 
   // Title
   doc.setFontSize(11);
@@ -305,63 +306,19 @@ export function createBrandedPDF(title: string, subtitle?: string, user?: PDFUse
     doc.text(subtitle, PAGE.marginL + 2, 30);
   }
 
-  // Export date on right
+  // Export date on right — vertically centered in the upper header area,
+  // aligned with the "A2SNIPER v3.0" branding text (baseline at y=14).
   doc.setFontSize(7);
   doc.setTextColor(156, 163, 175);
   const dateStr = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-  doc.text(`Export: ${dateStr}`, PAGE.width - PAGE.marginR - 18, 14, { align: 'right' });
+  doc.text(`Export: ${dateStr}`, PAGE.width - PAGE.marginR - 4, 14, { align: 'right' });
 
-  // ── User info section in header ──
-  if (user && (user.name || user.email)) {
-    const avatarY = 20;
-
-    // User avatar in header
-    if (user.avatarUrl) {
-      // We'll try to use the avatar - but since we can't do async in createBrandedPDF,
-      // we use a pre-loaded avatar from the cache if available
-      const cachedAvatar = avatarCache.get(user.avatarUrl);
-      if (cachedAvatar) {
-        drawUserAvatar(doc, PAGE.width - PAGE.marginR - 16, avatarY, 8, cachedAvatar);
-      } else {
-        drawUserAvatarFallback(doc, PAGE.width - PAGE.marginR - 16, avatarY, 8, (user.name || user.email || 'U').charAt(0));
-      }
-    }
-
-    // User name (right-aligned, below logo area)
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(8);
-    doc.setTextColor(212, 175, 55);
-    const displayName = user.name || user.email?.split('@')[0] || 'Utilisateur';
-    doc.text(displayName, PAGE.width - PAGE.marginR - 18, avatarY + 1, { align: 'right' });
-
-    // User email
-    if (user.email) {
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(6.5);
-      doc.setTextColor(156, 163, 175);
-      doc.text(user.email, PAGE.width - PAGE.marginR - 18, avatarY + 5, { align: 'right' });
-    }
-
-    // User plan badge
-    if (user.plan) {
-      const planLabel = user.plan.charAt(0).toUpperCase() + user.plan.slice(1).toLowerCase();
-      const planWidth = doc.getTextWidth(planLabel) + 6;
-
-      const planRgb = hexToRgb(BRAND.gold);
-      doc.setFillColor(planRgb.r, planRgb.g, planRgb.b);
-      doc.roundedRect(PAGE.width - PAGE.marginR - 18 - planWidth, avatarY + 7, planWidth, 5, 1, 1, 'F');
-
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(6);
-      doc.setTextColor(10, 11, 14);
-      doc.text(planLabel, PAGE.width - PAGE.marginR - 18 - planWidth / 2, avatarY + 10.5, { align: 'center' });
-    }
-
-    // Gold separator line between main header and user info
-    doc.setDrawColor(212, 175, 55);
-    doc.setLineWidth(0.15);
-    doc.line(PAGE.marginL, 34, PAGE.width - PAGE.marginR, 34);
-  }
+  // NOTE: User profile (avatar + name + email + plan badge) was previously
+  // rendered in the header band. Removed per user request — the user info
+  // card below the header already shows this info. Header now contains only:
+  //   Left:  A2SNIPER v3.0 + title + subtitle
+  //   Right: A2Sniper logo (in circle) + export date
+  // This keeps the header clean and consistent across all pages.
 
   // ── Footer function (called per page) ──
   const drawFooter = () => {
@@ -382,19 +339,29 @@ export function createBrandedPDF(title: string, subtitle?: string, user?: PDFUse
 
   drawFooter();
 
-  // Store footer drawer for subsequent pages
+  // Store footer drawer + title/subtitle for subsequent pages so
+  // addBrandedPage can reproduce the exact same header.
   (doc as any)._drawFooter = drawFooter;
+  (doc as any)._pdfTitle = title;
+  (doc as any)._pdfSubtitle = subtitle;
 
   return doc;
 }
 
 /**
- * Add a new page with header + footer branding + watermark.
+ * Add a new page with header + footer branding.
+ * Header matches the first page header exactly: A2SNIPER v3.0 + title + subtitle
+ * on the left, logo + export date on the right.
  */
-export function addBrandedPage(doc: jsPDF, title?: string): void {
+export function addBrandedPage(doc: jsPDF, title?: string, subtitle?: string): void {
   doc.addPage();
 
-  // Re-draw header
+  // Fall back to stored title/subtitle from createBrandedPDF so continued
+  // pages match the first page header exactly.
+  const effectiveTitle = title ?? (doc as any)._pdfTitle;
+  const effectiveSubtitle = subtitle ?? (doc as any)._pdfSubtitle;
+
+  // Re-draw header band (same as first page)
   doc.setFillColor(10, 11, 14);
   doc.rect(0, 0, PAGE.width, PAGE.headerH, 'F');
 
@@ -405,19 +372,41 @@ export function addBrandedPage(doc: jsPDF, title?: string): void {
   doc.setFillColor(212, 175, 55);
   doc.rect(0, 0, 3, PAGE.headerH, 'F');
 
-  // Logo in continued page header
+  // Logo in continued page header (right side, same as first page)
   drawHeaderLogo(doc);
 
+  // "A2Sniper" branding text — same position/size as first page
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(14);
+  doc.setFontSize(18);
   doc.setTextColor(212, 175, 55);
-  doc.text('A2SNIPER', PAGE.marginL + 2, 17);
+  doc.text('A2SNIPER', PAGE.marginL + 2, 14);
 
-  if (title) {
-    doc.setFontSize(9);
+  // "v3.0" version tag — same offset as first page (no overlap)
+  doc.setFontSize(9);
+  doc.setTextColor(156, 163, 175);
+  doc.text('v3.0', PAGE.marginL + 42, 14);
+
+  // Title — same position/size as first page
+  if (effectiveTitle) {
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(11);
     doc.setTextColor(255, 255, 255);
-    doc.text(title.toUpperCase(), PAGE.marginL + 2, 30);
+    doc.text(effectiveTitle.toUpperCase(), PAGE.marginL + 2, 24);
   }
+
+  // Subtitle — same position/size as first page
+  if (effectiveSubtitle) {
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7.5);
+    doc.setTextColor(156, 163, 175);
+    doc.text(effectiveSubtitle, PAGE.marginL + 2, 30);
+  }
+
+  // Export date on right — same as first page
+  doc.setFontSize(7);
+  doc.setTextColor(156, 163, 175);
+  const dateStr = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  doc.text(`Export: ${dateStr}`, PAGE.width - PAGE.marginR - 4, 14, { align: 'right' });
 
   // Draw footer
   const drawFooter = (doc as any)._drawFooter;
@@ -671,18 +660,30 @@ export function drawInfoRow(
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(8);
   doc.setTextColor(107, 114, 128);
-  doc.text(`${label}:`, x, y);
+  // When value is empty (e.g. "Risk Level" / "Niveau de Risque" rows where a
+  // badge is drawn separately as the value), skip the trailing colon so the
+  // label doesn't end with a dangling ":". The badge acts as the value.
+  if (value) {
+    doc.text(`${label}:`, x, y);
+  } else {
+    doc.text(label, x, y);
+  }
 
-  doc.setFont('helvetica', 'bold');
-  const rgb = hexToRgb(options?.valueColor || BRAND.gray900);
-  doc.setTextColor(rgb.r, rgb.g, rgb.b);
-  doc.text(value, x + 45, y);
+  if (value) {
+    doc.setFont('helvetica', 'bold');
+    const rgb = hexToRgb(options?.valueColor || BRAND.gray900);
+    doc.setTextColor(rgb.r, rgb.g, rgb.b);
+    doc.text(value, x + 45, y);
+  }
 
   return y + 5.5;
 }
 
 /**
  * Draw a risk level badge.
+ * The badge is vertically centered on the text baseline `y` so it aligns
+ * properly with label text drawn by drawInfoRow at the same `y` coordinate.
+ * Callers should pass the SAME `y` they pass to drawInfoRow (not y-1).
  */
 export function drawRiskBadge(
   doc: jsPDF,
@@ -698,15 +699,27 @@ export function drawRiskBadge(
   const info = levelMap[level] || levelMap['Medium'];
   const rgb = hexToRgb(info.color);
 
+  // Badge dimensions
+  const badgeH = 6;
+  const badgeW = 28;
+  // Vertically center the badge on the label text baseline `y`.
+  // For font-8 text (drawInfoRow), the visual center is ~1mm above the baseline.
+  // So the badge rectangle center should be at y - 1, meaning badge top = (y - 1) - badgeH/2.
+  const badgeCenterY = y - 1;
+  const badgeTopY = badgeCenterY - badgeH / 2;
+
   // Badge background
   doc.setFillColor(rgb.r, rgb.g, rgb.b);
-  doc.roundedRect(x, y - 3, 28, 6, 1, 1, 'F');
+  doc.roundedRect(x, badgeTopY, badgeW, badgeH, 1.5, 1.5, 'F');
 
-  // Badge text
+  // Badge text — vertically centered within the badge rectangle.
+  // For font-7 text, the visual center is ~1mm above the baseline, so to
+  // center the text in a rectangle whose center is at badgeCenterY, the
+  // text baseline should be at badgeCenterY + 1.
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(7);
   doc.setTextColor(255, 255, 255);
-  doc.text(info.label, x + 14, y + 0.5, { align: 'center' });
+  doc.text(info.label, x + badgeW / 2, badgeCenterY + 1, { align: 'center' });
 
   return y + 6;
 }

@@ -270,8 +270,9 @@ export default function TradingJournalPage() {
 
       // Risk Level
       const riskLevel = stats.totalTrades < 5 ? 'Medium' : stats.profit < -sessionData.initialCapital * 0.2 ? 'Critical' : stats.profit < -sessionData.initialCapital * 0.1 || stats.winRate < 45 ? 'High' : stats.profit < 0 || stats.winRate < 55 ? 'Medium' : 'Low';
+      const riskBadgeY = y; // capture baseline BEFORE drawInfoRow advances y
       y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Niveau de Risque', '');
-      drawRiskBadge(doc, PAGE.marginL + 36, y - 1, riskLevel);
+      drawRiskBadge(doc, PAGE.marginL + 50, riskBadgeY, riskLevel);
       y += 6;
 
       // Trades Table
