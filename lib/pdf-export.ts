@@ -165,13 +165,14 @@ export async function fetchAvatarBase64(url: string): Promise<string | null> {
 
 /**
  * Draw the A2Sniper logo in the header band.
- * The logo is placed on the right side of the header, inside a gold-bordered circle.
+ * The logo is placed on the right side, pushed down (y=8) to align with the
+ * pushed-down branding text. No gold border (removed per user request).
  */
 function drawHeaderLogo(doc: jsPDF): void {
   try {
     const logoSize = 14; // mm
     const logoX = PAGE.width - PAGE.marginR - logoSize - 2;
-    const logoY = 5;
+    const logoY = 8; // pushed down from 5 to 8
     const cx = logoX + logoSize / 2;
     const cy = logoY + logoSize / 2;
     const radius = logoSize / 2;
@@ -193,10 +194,7 @@ function drawHeaderLogo(doc: jsPDF): void {
     // Restore graphics state (removes clipping)
     doc.restoreGraphicsState();
 
-    // Gold border around circle (drawn after restoring, so it's not clipped)
-    doc.setDrawColor(212, 175, 55);
-    doc.setLineWidth(0.5);
-    doc.circle(cx, cy, radius + 0.3, 'S');
+    // NOTE: Gold circular border removed per user request.
   } catch {
     // If logo fails, just skip it - text branding is still there
   }
@@ -282,17 +280,13 @@ export function createBrandedPDF(title: string, subtitle?: string, user?: PDFUse
   // A2Sniper Logo in header (right side)
   drawHeaderLogo(doc);
 
-  // "A2Sniper" branding text
+  // "A2Sniper 3.0" branding text (replaces "A2SNIPER" + "v3.0")
+  // Pushed down to y=18 so the gap to the title (y=24) matches the gap
+  // between the title (y=24) and the subtitle (y=30) — both 6mm.
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(18);
   doc.setTextColor(212, 175, 55);
-  doc.text('A2SNIPER', PAGE.marginL + 2, 14);
-
-  // "v3.0" version tag — placed well to the right of "A2SNIPER" so it doesn't overlap.
-  // "A2SNIPER" at 18pt bold is ~38mm wide; v3.0 starts at +42mm to leave clear space.
-  doc.setFontSize(9);
-  doc.setTextColor(156, 163, 175);
-  doc.text('v3.0', PAGE.marginL + 42, 14);
+  doc.text('A2Sniper 3.0', PAGE.marginL + 2, 18);
 
   // Title
   doc.setFontSize(11);
@@ -306,13 +300,13 @@ export function createBrandedPDF(title: string, subtitle?: string, user?: PDFUse
     doc.text(subtitle, PAGE.marginL + 2, 30);
   }
 
-  // Export date on right — placed BELOW the logo with proper spacing.
-  // Logo spans y=5 to y=19 (14mm tall). Date baseline at y=24 gives a 5mm
-  // gap below the logo, and aligns horizontally with the title on the left.
+  // Export date on right — pushed down to y=27 (was y=24) to match the
+  // logo being pushed down. Logo now spans y=8 to y=22; date at y=27 gives
+  // a 5mm gap below the logo.
   doc.setFontSize(7);
   doc.setTextColor(156, 163, 175);
   const dateStr = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-  doc.text(`Export: ${dateStr}`, PAGE.width - PAGE.marginR - 4, 24, { align: 'right' });
+  doc.text(`Export: ${dateStr}`, PAGE.width - PAGE.marginR - 4, 27, { align: 'right' });
 
   // NOTE: User profile (avatar + name + email + plan badge) was previously
   // rendered in the header band. Removed per user request — the user info
@@ -376,16 +370,11 @@ export function addBrandedPage(doc: jsPDF, title?: string, subtitle?: string): v
   // Logo in continued page header (right side, same as first page)
   drawHeaderLogo(doc);
 
-  // "A2Sniper" branding text — same position/size as first page
+  // "A2Sniper 3.0" branding text — same position/size as first page
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(18);
   doc.setTextColor(212, 175, 55);
-  doc.text('A2SNIPER', PAGE.marginL + 2, 14);
-
-  // "v3.0" version tag — same offset as first page (no overlap)
-  doc.setFontSize(9);
-  doc.setTextColor(156, 163, 175);
-  doc.text('v3.0', PAGE.marginL + 42, 14);
+  doc.text('A2Sniper 3.0', PAGE.marginL + 2, 18);
 
   // Title — same position/size as first page
   if (effectiveTitle) {
@@ -403,11 +392,11 @@ export function addBrandedPage(doc: jsPDF, title?: string, subtitle?: string): v
     doc.text(effectiveSubtitle, PAGE.marginL + 2, 30);
   }
 
-  // Export date on right — same as first page (below the logo)
+  // Export date on right — same as first page (pushed down to y=27)
   doc.setFontSize(7);
   doc.setTextColor(156, 163, 175);
   const dateStr = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-  doc.text(`Export: ${dateStr}`, PAGE.width - PAGE.marginR - 4, 24, { align: 'right' });
+  doc.text(`Export: ${dateStr}`, PAGE.width - PAGE.marginR - 4, 27, { align: 'right' });
 
   // Draw footer
   const drawFooter = (doc as any)._drawFooter;

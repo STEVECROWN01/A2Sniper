@@ -282,7 +282,7 @@ export default function TradingJournalPage() {
       // Trades Table
       if (validTrades.length > 0) {
         y = checkPageBreak(doc, y, 30);
-        y = drawSectionTitle(doc, 'Trading Journal', y);
+        y = drawSectionTitle(doc, 'Detailed Trades History', y);
 
         // Table structure matches the Risk Manager PDF exactly:
         // 6 columns: #, Result, Stake ($), Ret ($), Bal ($), Pay (%)
