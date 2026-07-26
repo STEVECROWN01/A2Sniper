@@ -282,27 +282,33 @@ export default function TradingJournalPage() {
       // Trades Table
       if (validTrades.length > 0) {
         y = checkPageBreak(doc, y, 30);
-        y = drawSectionTitle(doc, 'Detailed Trade History', y);
+        y = drawSectionTitle(doc, 'Trading Journal', y);
 
+        // Table structure matches the Risk Manager PDF exactly:
+        // 6 columns: #, Result, Stake ($), Ret ($), Bal ($), Pay (%)
         const headers = [
-          { label: '#', width: 12 },
-          { label: 'Result', width: 22, align: 'center' as const },
-          { label: 'Stake ($)', width: 28, align: 'right' as const },
-          { label: 'Profit / Perte ($)', width: 35, align: 'right' as const },
-          { label: 'Cumul ($)', width: 28, align: 'right' as const },
+          { label: '#', width: 10 },
+          { label: 'Result', width: 18, align: 'center' as const },
+          { label: 'Stake ($)', width: 22, align: 'right' as const },
+          { label: 'Ret ($)', width: 22, align: 'right' as const },
+          { label: 'Bal ($)', width: 24, align: 'right' as const },
+          { label: 'Pay (%)', width: 18, align: 'center' as const },
         ];
 
-        let runningProfit = 0;
+        // Compute running balance starting from initial capital.
+        // Each WIN adds amount*payout/100; each LOSS subtracts amount.
+        let runningBalance = sessionData.initialCapital;
         const rows = validTrades.map((t: TradeEntry, i: number) => {
           const rowPayout = (t.payout && t.payout > 0) ? t.payout : sessionData.payout;
-          const profitLoss = t.result === 'WIN' ? t.amount * (rowPayout / 100) : -t.amount;
-          runningProfit += profitLoss;
+          const ret = t.result === 'WIN' ? t.amount * (rowPayout / 100) : -t.amount;
+          runningBalance += ret;
           return [
             `#${i + 1}`,
-            t.result,
-            t.amount.toFixed(2),
-            profitLoss >= 0 ? `+${profitLoss.toFixed(2)}` : `${profitLoss.toFixed(2)}`,
-            runningProfit >= 0 ? `+${runningProfit.toFixed(2)}` : `${runningProfit.toFixed(2)}`,
+            t.result || '-',
+            t.amount && t.amount > 0 ? t.amount.toFixed(2) : '-',
+            t.result === 'WIN' ? `+${(t.return?.toFixed(2) || Math.abs(ret).toFixed(2))}` : t.result === 'LOSS' ? `-${(t.amount?.toFixed(2) || '0.00')}` : '-',
+            `$${runningBalance.toFixed(2)}`,
+            `${rowPayout}%`,
           ];
         });
         y = drawTable(doc, PAGE.marginL, y, headers, rows);
