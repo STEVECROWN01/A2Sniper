@@ -215,21 +215,25 @@ export default function TradingJournalPage() {
     try {
       if (!sessionData) return;
 
+      // Read the LATEST user from the store directly (not from the React closure
+      // which may be stale if the component hasn't re-rendered after a store update).
+      const currentUser = useAppStore.getState().user;
+
       // Pre-load user avatar if available (with safety timeout)
-      if (user?.avatar) {
+      if (currentUser?.avatar) {
         try {
-          await fetchAvatarBase64(user.avatar);
+          await fetchAvatarBase64(currentUser.avatar);
         } catch (avatarErr) {
           console.warn('[PDF EXPORT] Avatar pre-processing failed, using fallback:', avatarErr);
         }
       }
 
       const pdfUser: PDFUserInfo = {
-        name: user?.name,
-        email: user?.email,
-        plan: user?.plan,
-        userId: user?.id,
-        avatarUrl: user?.avatar,
+        name: currentUser?.name || currentUser?.email?.split('@')[0] || 'User',
+        email: currentUser?.email || '',
+        plan: currentUser?.plan,
+        userId: currentUser?.id,
+        avatarUrl: currentUser?.avatar,
       };
 
       const doc = createBrandedPDF('Trading Journal', 'Trading Journal et performances', pdfUser);

@@ -424,7 +424,13 @@ export function drawUserInfoCard(
   y: number,
   user: PDFUserInfo
 ): number {
-  if (!user.name && !user.email) return y;
+  // ALWAYS render the card — even if user info is incomplete or null, show
+  // fallbacks. (Previously skipped if both name and email were missing, which
+  // caused the entire profile block to disappear from the PDF if the user
+  // object was stale/null at export time.)
+  const safeUser = user || {};
+  const displayName = safeUser.name || safeUser.email?.split('@')[0] || 'Utilisateur';
+  const displayEmail = safeUser.email || '';
 
   const cardH = 24;
 
@@ -442,15 +448,15 @@ export function drawUserInfoCard(
   const avatarY = y + (cardH - avatarSize) / 2;
 
   // Check for cached avatar
-  if (user.avatarUrl) {
-    const cachedAvatar = avatarCache.get(user.avatarUrl);
+  if (safeUser.avatarUrl) {
+    const cachedAvatar = avatarCache.get(safeUser.avatarUrl);
     if (cachedAvatar) {
       drawUserAvatar(doc, avatarX, avatarY, avatarSize, cachedAvatar);
     } else {
-      drawUserAvatarFallback(doc, avatarX, avatarY, avatarSize, (user.name || user.email || 'U').charAt(0));
+      drawUserAvatarFallback(doc, avatarX, avatarY, avatarSize, displayName.charAt(0));
     }
   } else {
-    drawUserAvatarFallback(doc, avatarX, avatarY, avatarSize, (user.name || user.email || 'U').charAt(0));
+    drawUserAvatarFallback(doc, avatarX, avatarY, avatarSize, displayName.charAt(0));
   }
 
   // Name + Email — vertically centered as a group in the card
@@ -460,19 +466,19 @@ export function drawUserInfoCard(
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(11);
   doc.setTextColor(31, 41, 55);
-  doc.text(user.name || user.email?.split('@')[0] || 'Utilisateur', textX, centerY - 1);
+  doc.text(displayName, textX, centerY - 1);
 
   // Email
-  if (user.email) {
+  if (displayEmail) {
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(7);
     doc.setTextColor(107, 114, 128);
-    doc.text(user.email, textX, centerY + 3);
+    doc.text(displayEmail, textX, centerY + 3);
   }
 
   // Plan badge on the right — with "Account Plan" label above it
-  if (user.plan) {
-    const planLabel = user.plan.charAt(0).toUpperCase() + user.plan.slice(1).toLowerCase();
+  if (safeUser.plan) {
+    const planLabel = safeUser.plan.charAt(0).toUpperCase() + safeUser.plan.slice(1).toLowerCase();
     const planWidth = doc.getTextWidth(planLabel) + 8;
 
     // "Account Plan" label above the badge (small gray uppercase text)
