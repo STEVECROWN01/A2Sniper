@@ -749,6 +749,7 @@ export default function RiskManagerPage() {
       y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Initial Capital', `$${initialCapital.toFixed(2)}`);
       y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Market Payout', `${payout}%`, { valueColor: '#D4AF37' });
       y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Session', `#${sessionCounter}`);
+      y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Total Trades', `${results.wins + results.losses}`);
       y += 2;
       y = drawSectionTitle(doc, 'Risk Analysis', y);
       const cardW = 42, gap = 3;

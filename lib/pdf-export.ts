@@ -306,12 +306,13 @@ export function createBrandedPDF(title: string, subtitle?: string, user?: PDFUse
     doc.text(subtitle, PAGE.marginL + 2, 30);
   }
 
-  // Export date on right — vertically centered in the upper header area,
-  // aligned with the "A2SNIPER v3.0" branding text (baseline at y=14).
+  // Export date on right — placed BELOW the logo with proper spacing.
+  // Logo spans y=5 to y=19 (14mm tall). Date baseline at y=24 gives a 5mm
+  // gap below the logo, and aligns horizontally with the title on the left.
   doc.setFontSize(7);
   doc.setTextColor(156, 163, 175);
   const dateStr = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-  doc.text(`Export: ${dateStr}`, PAGE.width - PAGE.marginR - 4, 14, { align: 'right' });
+  doc.text(`Export: ${dateStr}`, PAGE.width - PAGE.marginR - 4, 24, { align: 'right' });
 
   // NOTE: User profile (avatar + name + email + plan badge) was previously
   // rendered in the header band. Removed per user request — the user info
@@ -402,11 +403,11 @@ export function addBrandedPage(doc: jsPDF, title?: string, subtitle?: string): v
     doc.text(effectiveSubtitle, PAGE.marginL + 2, 30);
   }
 
-  // Export date on right — same as first page
+  // Export date on right — same as first page (below the logo)
   doc.setFontSize(7);
   doc.setTextColor(156, 163, 175);
   const dateStr = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-  doc.text(`Export: ${dateStr}`, PAGE.width - PAGE.marginR - 4, 14, { align: 'right' });
+  doc.text(`Export: ${dateStr}`, PAGE.width - PAGE.marginR - 4, 24, { align: 'right' });
 
   // Draw footer
   const drawFooter = (doc as any)._drawFooter;
@@ -469,15 +470,21 @@ export function drawUserInfoCard(
     doc.text(user.email, textX, centerY + 3);
   }
 
-  // Plan badge on the right
+  // Plan badge on the right — with "Account Plan" label above it
   if (user.plan) {
     const planLabel = user.plan.charAt(0).toUpperCase() + user.plan.slice(1).toLowerCase();
     const planWidth = doc.getTextWidth(planLabel) + 8;
 
+    // "Account Plan" label above the badge (small gray uppercase text)
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(5.5);
+    doc.setTextColor(107, 114, 128);
+    doc.text('ACCOUNT PLAN', PAGE.width - PAGE.marginR - 4, centerY - 5, { align: 'right' });
+
     const planRgb = hexToRgb(BRAND.gold);
     doc.setFillColor(planRgb.r, planRgb.g, planRgb.b);
-    // Vertically center the plan badge in the card
-    const badgeY = y + (cardH - 6) / 2;
+    // Badge positioned just below the label
+    const badgeY = centerY - 2;
     doc.roundedRect(PAGE.width - PAGE.marginR - planWidth - 4, badgeY, planWidth, 6, 1, 1, 'F');
 
     doc.setFont('helvetica', 'bold');
