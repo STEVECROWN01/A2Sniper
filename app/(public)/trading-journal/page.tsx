@@ -321,11 +321,20 @@ export default function TradingJournalPage() {
           const rowPayout = (t.payout && t.payout > 0) ? t.payout : sessionData.payout;
           const ret = t.result === 'WIN' ? t.amount * (rowPayout / 100) : -t.amount;
           runningBalance += ret;
+          // For the Ret column: use the stored t.return only if it's a positive
+          // number (WIN trades store the return amount). Otherwise use the
+          // computed ret value. Previously, t.return=0 (falsy-ish as "0.00"
+          // string) was being used, showing "+0.00" for every WIN trade.
+          const retDisplay = t.result === 'WIN'
+            ? `+${(t.return && t.return > 0 ? t.return : Math.abs(ret)).toFixed(2)}`
+            : t.result === 'LOSS'
+              ? `-${(t.amount || 0).toFixed(2)}`
+              : '-';
           return [
             `#${i + 1}`,
             t.result || '-',
             t.amount && t.amount > 0 ? t.amount.toFixed(2) : '-',
-            t.result === 'WIN' ? `+${(t.return?.toFixed(2) || Math.abs(ret).toFixed(2))}` : t.result === 'LOSS' ? `-${(t.amount?.toFixed(2) || '0.00')}` : '-',
+            retDisplay,
             `$${runningBalance.toFixed(2)}`,
             `${rowPayout}%`,
           ];

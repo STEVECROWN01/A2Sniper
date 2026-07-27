@@ -802,11 +802,20 @@ export default function RiskManagerPage() {
         const rows = validTrades.map((t) => {
           const origIdx = results.computedTrades.indexOf(t);
           const rowPayout = (t.payout && t.payout > 0) ? t.payout : payout;
+          // For the Ret column: use the stored t.return only if it's a positive
+          // number. Otherwise compute it from amount * payout/100 for WIN trades.
+          // Previously, t.return=0 showed "+0.00" due to the || fallback bug.
+          const computedReturn = t.amount * (rowPayout / 100);
+          const retDisplay = t.result === 'WIN'
+            ? `+${(t.return && t.return > 0 ? t.return : computedReturn).toFixed(2)}`
+            : t.result === 'LOSS'
+              ? `-${(t.amount || 0).toFixed(2)}`
+              : '-';
           return [
             `#${origIdx + 1}`,
             t.result || '-',
             t.amount && t.amount > 0 ? t.amount.toFixed(2) : '-',
-            t.result === 'WIN' ? `+${(t.return?.toFixed(2) || '0.00')}` : t.result === 'LOSS' ? `-${(t.amount?.toFixed(2) || '0.00')}` : '-',
+            retDisplay,
             t.balance === '-' ? '-' : `$${t.balance}`,
             `${rowPayout}%`,
           ];
