@@ -767,7 +767,7 @@ export default function RiskManagerPage() {
       y += 3;
       const riskBadgeY = y; // capture baseline BEFORE drawInfoRow advances y
       y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Risk Level', '');
-      drawRiskBadge(doc, PAGE.marginL + 50, riskBadgeY, riskLevel);
+      drawRiskBadge(doc, PAGE.marginL + 40, riskBadgeY, riskLevel);
       y += 6;
       // Include ALL trades with a result (WIN or LOSS), even if amount is 0.
       const validTrades = results.computedTrades.filter(t => t.result === 'WIN' || t.result === 'LOSS');
