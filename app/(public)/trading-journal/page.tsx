@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Calendar, BarChart3, Target, DollarSign, Info, Trash2, ArrowUpRight, ArrowDownRight, AlertTriangle, Loader2, Download, Check, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useAuth } from '@/hooks/use-auth';
 import { useAppStore } from '@/lib/store';
+import { getApiUrl } from '@/lib/api-config';
 import { toast } from 'sonner';
 import { createBrandedPDF, drawSectionTitle, drawStatCard, drawTable, drawInfoRow, drawUserInfoCard, drawRiskBadge, savePDF, PAGE, checkPageBreak, PDFUserInfo, fetchAvatarBase64 } from '@/lib/pdf-export';
 
@@ -217,7 +218,25 @@ export default function TradingJournalPage() {
 
       // Read the LATEST user from the store directly (not from the React closure
       // which may be stale if the component hasn't re-rendered after a store update).
-      const currentUser = useAppStore.getState().user;
+      let currentUser = useAppStore.getState().user;
+
+      // DEFENSIVE: If user is null or missing name/email, try to re-fetch /api/auth/me
+      // before falling back to "User". This handles the case where the store lost the
+      // user state (e.g. page was open in a background tab for a long time, or the
+      // store was re-initialized).
+      if (!currentUser?.name && !currentUser?.email) {
+        try {
+          const apiUrl = getApiUrl();
+          const meRes = await fetch(`${apiUrl}/api/auth/me`, { credentials: 'include' });
+          if (meRes.ok) {
+            currentUser = await meRes.json();
+            // Update the store so subsequent exports don't need to re-fetch
+            useAppStore.getState().setUser(currentUser);
+          }
+        } catch (meErr) {
+          console.warn('[PDF EXPORT] /api/auth/me re-fetch failed:', meErr);
+        }
+      }
 
       // Pre-load user avatar if available (with safety timeout)
       if (currentUser?.avatar) {

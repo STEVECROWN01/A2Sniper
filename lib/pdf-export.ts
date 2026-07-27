@@ -172,7 +172,7 @@ function drawHeaderLogo(doc: jsPDF): void {
   try {
     const logoSize = 14; // mm
     const logoX = PAGE.width - PAGE.marginR - logoSize - 2;
-    const logoY = 17; // logo spans y=17 to y=31, sits ABOVE the export date (y=34) with ~3mm gap
+    const logoY = 14; // logo spans y=14 to y=28, sits ABOVE the export date (y=34) with ~6mm gap
     const cx = logoX + logoSize / 2;
     const cy = logoY + logoSize / 2;
     const radius = logoSize / 2;

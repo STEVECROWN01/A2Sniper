@@ -732,7 +732,24 @@ export default function RiskManagerPage() {
     try {
       // Read the LATEST user from the store directly (not from the React closure
       // which may be stale if the component hasn't re-rendered after a store update).
-      const currentUser = useAppStore.getState().user;
+      let currentUser = useAppStore.getState().user;
+
+      // DEFENSIVE: If user is null or missing name/email, try to re-fetch /api/auth/me
+      // before falling back to "User". This handles the case where the store lost the
+      // user state (e.g. page was open in a background tab for a long time).
+      if (!currentUser?.name && !currentUser?.email) {
+        try {
+          const apiUrl = getApiUrl();
+          const meRes = await fetch(`${apiUrl}/api/auth/me`, { credentials: 'include' });
+          if (meRes.ok) {
+            currentUser = await meRes.json();
+            useAppStore.getState().setUser(currentUser);
+          }
+        } catch (meErr) {
+          console.warn('[PDF EXPORT] /api/auth/me re-fetch failed:', meErr);
+        }
+      }
+
       // Pre-process avatar (circularize + resize) with a safety timeout.
       // If this fails or times out, the PDF will use the letter fallback.
       if (currentUser?.avatar) {
