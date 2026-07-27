@@ -70,7 +70,7 @@ export default function RiskManagerPage() {
       const saved = localStorage.getItem('a2sniper_risk_trades');
       if (saved) { try { return JSON.parse(saved); } catch {} }
     }
-    return Array(10).fill({ result: '', amount: 0, return: 0, payout: 0 });
+    return Array(10).fill({ result: '', amount: 0, return: 0, payout: 0, pair: '', time: '' });
   });
 
   // Session counter — persisted to localStorage so it survives page navigation.
@@ -348,7 +348,7 @@ export default function RiskManagerPage() {
     const newTrades = trades.filter((_, i) => i !== idx);
     // Ensure at least 10 rows
     while (newTrades.length < 10) {
-      newTrades.push({ result: '', amount: 0, return: 0 });
+      newTrades.push({ result: '', amount: 0, return: 0, pair: '', time: '' });
     }
     setTrades(newTrades);
     localStorage.setItem('a2sniper_risk_trades', JSON.stringify(newTrades));
@@ -356,7 +356,7 @@ export default function RiskManagerPage() {
   };
 
   const addTradeRow = () => {
-    const newTrades = [...trades, { result: '', amount: 0, return: 0 }];
+    const newTrades = [...trades, { result: '', amount: 0, return: 0, pair: '', time: '' }];
     setTrades(newTrades);
     localStorage.setItem('a2sniper_risk_trades', JSON.stringify(newTrades));
   };
@@ -418,11 +418,11 @@ export default function RiskManagerPage() {
           if (!hasCurrentTrades) {
             setInitialCapital(last.initialCapital || 1000);
             setPayout(last.payout || 92);
-            setTrades(last.trades || Array(10).fill({ result: '', amount: 0, return: 0 }));
+            setTrades(last.trades || Array(10).fill({ result: '', amount: 0, return: 0, payout: 0, pair: '', time: '' }));
             setSessionCounter(Math.max(1, last.sessionCounter || 1));
             // Set snapshot so hasUnsavedChanges is FALSE (session is already saved)
             setSavedSnapshot(JSON.stringify({
-              trades: last.trades || Array(10).fill({ result: '', amount: 0, return: 0 }),
+              trades: last.trades || Array(10).fill({ result: '', amount: 0, return: 0, payout: 0, pair: '', time: '' }),
               initialCapital: last.initialCapital || 1000,
               payout: last.payout || 92,
               sessionCounter: last.sessionCounter || 1,
@@ -459,7 +459,7 @@ export default function RiskManagerPage() {
     // current view and starts a fresh empty session. Saved sessions in
     // allSessions are NEVER removed by Reset — only by an explicit Delete
     // action (which doesn't exist yet — sessions are permanent).
-    const emptyTrades = Array(10).fill({ result: '', amount: 0, return: 0 });
+    const emptyTrades = Array(10).fill({ result: '', amount: 0, return: 0, payout: 0, pair: '', time: '' });
     setTrades(emptyTrades);
     // Use the LATEST marketInfo from the store (not stale closure)
     const latestMarketInfo = useAppStore.getState().marketInfo;
@@ -551,7 +551,7 @@ export default function RiskManagerPage() {
     // Use the shared helper to fill the first empty trade's stake based on
     // the new balance. This works whether PO is connected or not — the stake
     // is calculated from whatever balance we have (live, saved, or $1000).
-    const emptyTrades = Array(10).fill({ result: '', amount: 0, return: 0 });
+    const emptyTrades = Array(10).fill({ result: '', amount: 0, return: 0, payout: 0, pair: '', time: '' });
     const filledTrades = fillFirstEmptyTradeStake(emptyTrades, poBalance, 0, 92);
     setTrades(filledTrades);
     localStorage.setItem('a2sniper_risk_trades', JSON.stringify(filledTrades));
@@ -595,12 +595,12 @@ export default function RiskManagerPage() {
     const s = allSessions[idx];
     setInitialCapital(s.initialCapital || 1000);
     setPayout(s.payout || 92);
-    setTrades(s.trades || Array(10).fill({ result: '', amount: 0, return: 0 }));
+    setTrades(s.trades || Array(10).fill({ result: '', amount: 0, return: 0, payout: 0, pair: '', time: '' }));
     setSessionCounter(Math.max(1, s.sessionCounter || 1));
     setCurrentEditingIdx(idx);
     setJustSaved(false);
     setSavedSnapshot(JSON.stringify({
-      trades: s.trades || Array(10).fill({ result: '', amount: 0, return: 0 }),
+      trades: s.trades || Array(10).fill({ result: '', amount: 0, return: 0, payout: 0, pair: '', time: '' }),
       initialCapital: s.initialCapital || 1000,
       payout: s.payout || 92,
       sessionCounter: s.sessionCounter || 1,
@@ -792,12 +792,14 @@ export default function RiskManagerPage() {
         y = checkPageBreak(doc, y, 30);
         y = drawSectionTitle(doc, 'Trading Journal', y);
         const headers = [
-          { label: '#', width: 10 },
-          { label: 'Result', width: 18, align: 'center' as const },
-          { label: 'Stake ($)', width: 22, align: 'right' as const },
-          { label: 'Ret ($)', width: 22, align: 'right' as const },
-          { label: 'Bal ($)', width: 24, align: 'right' as const },
-          { label: 'Pay (%)', width: 18, align: 'center' as const },
+          { label: '#', width: 8 },
+          { label: 'Pair', width: 18 },
+          { label: 'Time', width: 14, align: 'center' as const },
+          { label: 'Result', width: 14, align: 'center' as const },
+          { label: 'Stake ($)', width: 18, align: 'right' as const },
+          { label: 'Ret ($)', width: 18, align: 'right' as const },
+          { label: 'Bal ($)', width: 20, align: 'right' as const },
+          { label: 'Pay (%)', width: 14, align: 'center' as const },
         ];
         const rows = validTrades.map((t) => {
           const origIdx = results.computedTrades.indexOf(t);
@@ -813,6 +815,8 @@ export default function RiskManagerPage() {
               : '-';
           return [
             `#${origIdx + 1}`,
+            t.pair || '-',
+            t.time || '-',
             t.result || '-',
             t.amount && t.amount > 0 ? t.amount.toFixed(2) : '-',
             retDisplay,
@@ -977,16 +981,20 @@ export default function RiskManagerPage() {
             <div className="overflow-x-auto">
               <table className="w-full table-fixed border-collapse">
                 <colgroup>
-                  <col className="w-[5%]" />
-                  <col className="w-[26%]" />
-                  <col className="w-[15%]" />
-                  <col className="w-[17%]" />
-                  <col className="w-[19%]" />
+                  <col className="w-[4%]" />
+                  <col className="w-[14%]" />
+                  <col className="w-[12%]" />
                   <col className="w-[18%]" />
+                  <col className="w-[11%]" />
+                  <col className="w-[12%]" />
+                  <col className="w-[13%]" />
+                  <col className="w-[16%]" />
                 </colgroup>
                 <thead>
                   <tr className="bg-black/40 text-[10px] font-black text-gray-600 uppercase tracking-[0.1em] sm:tracking-[0.2em]">
                     <th className="px-2 sm:px-4 py-3 text-left">#</th>
+                    <th className="px-2 sm:px-4 py-3 text-left">Pair</th>
+                    <th className="px-2 sm:px-4 py-3 text-left">Time</th>
                     <th className="px-2 sm:px-4 py-3 text-left">Result</th>
                     <th className="px-2 sm:px-4 py-3 text-left">Stake ($)</th>
                     <th className="px-2 sm:px-4 py-3 text-right">Return ($)</th>
@@ -999,16 +1007,38 @@ export default function RiskManagerPage() {
                     <tr key={i} className="hover:bg-white/[0.02] transition-colors group">
                       <td className="px-2 sm:px-4 py-3 text-xs font-black text-gray-600">{i + 1}</td>
                       <td className="px-2 sm:px-4 py-3">
+                        <input
+                          type="text"
+                          value={trade.pair || ''}
+                          onChange={(e) => handleUpdateTrade(i, 'pair', e.target.value)}
+                          placeholder="EUR/USD"
+                          className={`w-full bg-black/40 border border-gray-800 rounded-lg px-2 py-1.5 text-[10px] font-black focus:border-[#D4AF37] outline-none ${
+                            trade.pair ? 'text-white' : 'text-gray-600'
+                          }`}
+                        />
+                      </td>
+                      <td className="px-2 sm:px-4 py-3">
+                        <input
+                          type="text"
+                          value={trade.time || ''}
+                          onChange={(e) => handleUpdateTrade(i, 'time', e.target.value)}
+                          placeholder="14:30"
+                          className={`w-full bg-black/40 border border-gray-800 rounded-lg px-2 py-1.5 text-[10px] font-black focus:border-[#D4AF37] outline-none ${
+                            trade.time ? 'text-white' : 'text-gray-600'
+                          }`}
+                        />
+                      </td>
+                      <td className="px-2 sm:px-4 py-3">
                         <div className="flex gap-2">
                           <button
                             onClick={() => handleUpdateTrade(i, 'result', 'WIN')}
-                            className={`flex-1 min-w-[50px] py-1.5 rounded-lg text-[10px] font-black transition-all ${trade.result === 'WIN' ? 'bg-green-500 text-white shadow-lg shadow-green-500/20' : 'bg-gray-800/50 text-gray-500 hover:text-gray-400'}`}
+                            className={`flex-1 min-w-[40px] py-1.5 rounded-lg text-[10px] font-black transition-all ${trade.result === 'WIN' ? 'bg-green-500 text-white shadow-lg shadow-green-500/20' : 'bg-gray-800/50 text-gray-500 hover:text-gray-400'}`}
                           >
                             WIN
                           </button>
                           <button
                             onClick={() => handleUpdateTrade(i, 'result', 'LOSS')}
-                            className={`flex-1 min-w-[50px] py-1.5 rounded-lg text-[10px] font-black transition-all ${trade.result === 'LOSS' ? 'bg-red-500 text-white shadow-lg shadow-red-500/20' : 'bg-gray-800/50 text-gray-500 hover:text-gray-400'}`}
+                            className={`flex-1 min-w-[40px] py-1.5 rounded-lg text-[10px] font-black transition-all ${trade.result === 'LOSS' ? 'bg-red-500 text-white shadow-lg shadow-red-500/20' : 'bg-gray-800/50 text-gray-500 hover:text-gray-400'}`}
                           >
                             LOSS
                           </button>
@@ -1042,7 +1072,7 @@ export default function RiskManagerPage() {
                             value={trade.payout || ''}
                             onChange={(e) => handleUpdateTrade(i, 'payout', Number(e.target.value))}
                             placeholder={String(payout)}
-                            className={`w-14 flex-shrink-0 bg-black/40 border border-gray-800 rounded-lg px-2 py-1.5 text-xs font-black text-center focus:border-[#D4AF37] outline-none ${
+                            className={`w-12 flex-shrink-0 bg-black/40 border border-gray-800 rounded-lg px-1 py-1.5 text-[10px] font-black text-center focus:border-[#D4AF37] outline-none ${
                               trade.payout > 0 ? 'text-white' : 'text-gray-600'
                             }`}
                           />

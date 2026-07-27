@@ -14,6 +14,8 @@ interface TradeEntry {
   amount: number;
   return: number;
   payout?: number;
+  pair?: string;
+  time?: string;
 }
 
 interface SessionData {
@@ -306,12 +308,14 @@ export default function TradingJournalPage() {
         // Table structure matches the Risk Manager PDF exactly:
         // 6 columns: #, Result, Stake ($), Ret ($), Bal ($), Pay (%)
         const headers = [
-          { label: '#', width: 10 },
-          { label: 'Result', width: 18, align: 'center' as const },
-          { label: 'Stake ($)', width: 22, align: 'right' as const },
-          { label: 'Ret ($)', width: 22, align: 'right' as const },
-          { label: 'Bal ($)', width: 24, align: 'right' as const },
-          { label: 'Pay (%)', width: 18, align: 'center' as const },
+          { label: '#', width: 8 },
+          { label: 'Pair', width: 18 },
+          { label: 'Time', width: 14, align: 'center' as const },
+          { label: 'Result', width: 14, align: 'center' as const },
+          { label: 'Stake ($)', width: 18, align: 'right' as const },
+          { label: 'Ret ($)', width: 18, align: 'right' as const },
+          { label: 'Bal ($)', width: 20, align: 'right' as const },
+          { label: 'Pay (%)', width: 14, align: 'center' as const },
         ];
 
         // Compute running balance starting from initial capital.
@@ -332,6 +336,8 @@ export default function TradingJournalPage() {
               : '-';
           return [
             `#${i + 1}`,
+            t.pair || '-',
+            t.time || '-',
             t.result || '-',
             t.amount && t.amount > 0 ? t.amount.toFixed(2) : '-',
             retDisplay,
@@ -532,6 +538,13 @@ export default function TradingJournalPage() {
                           <p className={`text-[9px] font-black uppercase tracking-wider ${isWin ? 'text-green-500' : 'text-red-500'}`}>
                             {t.result}
                           </p>
+                          {(t.pair || t.time) && (
+                            <p className="text-[9px] font-bold text-gray-500 mt-0.5">
+                              {t.pair && <span>{t.pair}</span>}
+                              {t.pair && t.time && <span className="mx-1">•</span>}
+                              {t.time && <span>{t.time}</span>}
+                            </p>
+                          )}
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
