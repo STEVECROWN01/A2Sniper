@@ -172,7 +172,7 @@ function drawHeaderLogo(doc: jsPDF): void {
   try {
     const logoSize = 14; // mm
     const logoX = PAGE.width - PAGE.marginR - logoSize - 2;
-    const logoY = 21; // pushed down to align with text block (spans y=21 to y=35, center y=28)
+    const logoY = 17; // logo spans y=17 to y=31, sits ABOVE the export date (y=34) with ~3mm gap
     const cx = logoX + logoSize / 2;
     const cy = logoY + logoSize / 2;
     const radius = logoSize / 2;
@@ -299,13 +299,13 @@ export function createBrandedPDF(title: string, subtitle?: string, user?: PDFUse
     doc.text(subtitle, PAGE.marginL + 2, 34);
   }
 
-  // Export date on right — at y=28, aligned with the title baseline.
-  // Logo spans y=21 to y=35 (center y=28), so the date sits at the same
-  // vertical level as the title, within the logo's vertical extent.
+  // Export date on right — at y=34, aligned with the subtitle baseline
+  // ("Trading Journal et performances" / "A2Sniper 3.0 Professional Capital Manager").
+  // Logo spans y=17 to y=31, so the date at y=34 sits BELOW the logo with a ~3mm gap.
   doc.setFontSize(7);
   doc.setTextColor(156, 163, 175);
   const dateStr = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-  doc.text(`Export: ${dateStr}`, PAGE.width - PAGE.marginR - 4, 28, { align: 'right' });
+  doc.text(`Export: ${dateStr}`, PAGE.width - PAGE.marginR - 4, 34, { align: 'right' });
 
   // NOTE: User profile (avatar + name + email + plan badge) was previously
   // rendered in the header band. Removed per user request — the user info
@@ -391,11 +391,11 @@ export function addBrandedPage(doc: jsPDF, title?: string, subtitle?: string): v
     doc.text(effectiveSubtitle, PAGE.marginL + 2, 34);
   }
 
-  // Export date on right — same as first page (y=28, aligned with title)
+  // Export date on right — same as first page (y=34, aligned with subtitle, below logo)
   doc.setFontSize(7);
   doc.setTextColor(156, 163, 175);
   const dateStr = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-  doc.text(`Export: ${dateStr}`, PAGE.width - PAGE.marginR - 4, 28, { align: 'right' });
+  doc.text(`Export: ${dateStr}`, PAGE.width - PAGE.marginR - 4, 34, { align: 'right' });
 
   // Draw footer
   const drawFooter = (doc as any)._drawFooter;
