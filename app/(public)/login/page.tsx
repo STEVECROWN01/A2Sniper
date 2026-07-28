@@ -88,6 +88,12 @@ export default function LoginPage() {
           if (meRes.ok) {
             const fullUser = await meRes.json();
             setUser(fullUser);
+            // Cache for instant display on next page reload
+            if (typeof window !== 'undefined') {
+              try {
+                localStorage.setItem('a2sniper_cached_user', JSON.stringify(fullUser));
+              } catch { /* ignore */ }
+            }
           } else {
             setUser(userData);
           }

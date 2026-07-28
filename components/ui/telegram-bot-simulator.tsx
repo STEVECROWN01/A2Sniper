@@ -632,9 +632,10 @@ Zero Simulation. 100% Real-Market.`;
     prevLiveStatusRef.current = liveStatus;
   }, [liveStatus]);
 
-  // Real-time market status + signals polling (every 1s — never miss an update)
-  // This ensures the pair list payouts and signal cards update in real-time
-  // as PO pushes new data via WebSocket.
+  // Real-time market status + signals polling (every 5s)
+  // Backend trading_loop scans every 5s, so polling faster than that just
+  // wastes resources. Was 1s — caused event-loop contention and duplicate
+  // sound notifications on every poll.
   useEffect(() => {
     const store = useAppStore.getState();
     if (store.fetchMarketStatus) store.fetchMarketStatus();
@@ -643,7 +644,7 @@ Zero Simulation. 100% Real-Market.`;
       const s = useAppStore.getState();
       if (s.fetchMarketStatus) s.fetchMarketStatus();
       if (s.fetchSignals) s.fetchSignals();
-    }, 1000);
+    }, 5000);
     return () => clearInterval(interval);
   }, []);
 

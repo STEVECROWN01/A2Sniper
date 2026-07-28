@@ -162,7 +162,19 @@ export const useAppStore = create<AppState>((set, get) => ({
   
   setAuthenticated: (auth) => set({ isAuthenticated: auth }),
   
-  setUser: (user) => set({ user }),
+  setUser: (user) => {
+    set({ user });
+    // Keep localStorage cache in sync so the profile appears instantly on reload
+    if (typeof window !== 'undefined') {
+      try {
+        if (user) {
+          localStorage.setItem('a2sniper_cached_user', JSON.stringify(user));
+        } else {
+          localStorage.removeItem('a2sniper_cached_user');
+        }
+      } catch { /* ignore quota errors */ }
+    }
+  },
   
   addSignal: (signal) => set((state) => ({
     signals: [signal, ...state.signals]
@@ -515,6 +527,20 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   initialize: async () => {
+    // ─── INSTANT DISPLAY: load cached user from localStorage ────────────
+    // This makes the profile picture + name appear INSTANTLY on page reload,
+    // before the /api/auth/me response arrives (which can take 500ms-2s).
+    // The cached user is overwritten with fresh data once /me returns.
+    if (typeof window !== 'undefined') {
+      try {
+        const cachedUser = localStorage.getItem('a2sniper_cached_user');
+        if (cachedUser) {
+          const parsed = JSON.parse(cachedUser);
+          set({ user: parsed, isAuthenticated: true });
+        }
+      } catch { /* ignore parse errors */ }
+    }
+
     // Check auth via httpOnly cookie — call /api/auth/me
     // The browser sends the cookie automatically with credentials: 'include'
     try {
@@ -523,9 +549,22 @@ export const useAppStore = create<AppState>((set, get) => ({
       if (res.ok) {
         const user = await res.json();
         set({ user, isAuthenticated: true, isInitialized: true });
-        await get().fetchSignals();
-        await get().fetchPerformance();
-        await get().fetchMarketStatus();
+
+        // Cache user data for instant display on next reload
+        if (typeof window !== 'undefined') {
+          try {
+            localStorage.setItem('a2sniper_cached_user', JSON.stringify(user));
+          } catch { /* ignore quota errors */ }
+        }
+
+        // Fire ALL 3 fetches in PARALLEL (was sequential — each awaited
+        // before the next started, tripling load time). Now they run
+        // concurrently, and we don't block isInitialized on them.
+        Promise.allSettled([
+          get().fetchSignals(),
+          get().fetchPerformance(),
+          get().fetchMarketStatus(),
+        ]).catch(() => { /* errors handled in each fetch */ });
 
         // NO auto-connect — connection ONLY happens on user's explicit click.
         // We still load the saved SSID into state so the user can quickly
@@ -536,7 +575,15 @@ export const useAppStore = create<AppState>((set, get) => ({
         }
         return;
       }
-      // If /api/auth/me returns 401, user is not authenticated — that's fine
+      // If /api/auth/me returns 401, user is not authenticated — clear cached user
+      if (typeof window !== 'undefined') {
+        localStorage.removeItem('a2sniper_cached_user');
+      }
+      // If we had a cached user from localStorage but /me returned non-OK,
+      // clear the stale user from state
+      if (get().user) {
+        set({ user: null, isAuthenticated: false });
+      }
     } catch (err) {
       console.error('Initialization failed', err);
     }
@@ -555,8 +602,11 @@ export const useAppStore = create<AppState>((set, get) => ({
     } catch (err) {
       console.error('Logout API call failed', err);
     }
-    // Clear frontend state
+    // Clear frontend state + cached user
     set({ user: null, isAuthenticated: false });
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('a2sniper_cached_user');
+    }
   }
 }));
 
