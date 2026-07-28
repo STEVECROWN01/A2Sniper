@@ -419,18 +419,14 @@ def generate_sniper_signal(df: pd.DataFrame, payout: float, min_factors: int = 4
 
     logger.info(f"[PRICE-ACTION] M5 trend: {m5_trend}, aligned: {m5_aligned}")
 
-    # 7. OPTION D: Pattern + BOTH bonuses required (raised threshold)
-    # Pattern alone is NOT enough — need pattern + level AND M5.
-    # This is stricter than Option C (which only required 1 bonus).
-    # Raises winrate from 62-70% to 68-78% at the cost of fewer signals.
-    # User requested higher confluence threshold for better signal quality.
-    if not level_match or not m5_aligned:
-        missing = []
-        if not level_match:
-            missing.append('level')
-        if not m5_aligned:
-            missing.append('M5')
-        logger.info(f"[PRICE-ACTION] Pattern found but missing bonus(es): {', '.join(missing)} — skipping (Option D: need BOTH level AND M5)")
+    # 7. OPTION C: Pattern + at least 1 bonus required
+    # Pattern alone is NOT enough — need pattern + level OR pattern + M5.
+    # This gives 62-75% winrate with 3-5 signals per hour.
+    # (Option D — requiring BOTH bonuses — was too strict: no signals for
+    #  over an hour. Reverted to Option C which produced 54% winrate over
+    #  100 live trades.)
+    if not level_match and not m5_aligned:
+        logger.info(f"[PRICE-ACTION] Pattern found but NO bonus (no level, no M5) — skipping (Option C: need at least 1 bonus)")
         return None
 
     # 8. CALCULATE WINRATE BASED ON SCORING
@@ -439,26 +435,26 @@ def generate_sniper_signal(df: pd.DataFrame, payout: float, min_factors: int = 4
 
     direction = pattern_direction
 
-    # Base winrate from pattern (raised — full confluence now required)
+    # Base winrate from pattern
     if is_strong_pattern:
-        winrate = 70
+        winrate = 65
     else:
-        winrate = 68
+        winrate = 62
 
     # Bonus: level match
     if level_match:
-        winrate += 2
+        winrate += 3
 
     # Bonus: M5 aligned
     if m5_aligned:
-        winrate += 3
+        winrate += 5
 
-    # Bonus: both level + M5 (full confluence — always true now under Option D)
+    # Bonus: both level + M5 (full confluence)
     if level_match and m5_aligned:
         winrate += 5  # Extra bonus for full confluence
 
-    # Cap at 82
-    winrate = min(winrate, 82)
+    # Cap at 78
+    winrate = min(winrate, 78)
 
     # Classification
     confluence_count = sum([level_match, m5_aligned])

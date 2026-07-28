@@ -20,8 +20,10 @@ import { NextRequest, NextResponse } from 'next/server';
 const BACKEND_URL = process.env.API_BACKEND_URL || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
 // Allowed origins for CORS — restrict to known domains
+// Includes production Vercel domain, Railway preview domains, and local dev.
 const ALLOWED_ORIGINS = [
   'https://a2sniper.vercel.app',
+  'https://a2sniper.up.railway.app',
   'http://localhost:3000',
   'http://localhost:3001',
 ];
