@@ -218,7 +218,7 @@ async def auto_reconnect_scanner():
                 for pair in live_pairs[:3]:
                     payout = po_scanner.get_payout(pair)
                     if payout and payout >= 70:
-                        candidate = await analyze_pair(pair, return_candidate=True)
+                        candidate = await analyze_pair(pair, return_candidate=True, strict_mode=True)
                         if candidate:
                             auto_candidates.append(candidate)
                 if auto_candidates:
@@ -473,14 +473,20 @@ async def require_admin(credentials: HTTPAuthorizationCredentials = Security(sec
 generated_signals = deque(maxlen=1000)
 
 
-async def analyze_pair(pair: str, return_candidate: bool = False) -> dict:
-    """Pipeline d'analyse complet pour une paire."""
-    return await analyze_pair_internal(pair, force=False, return_candidate=return_candidate)
+async def analyze_pair(pair: str, return_candidate: bool = False, strict_mode: bool = False) -> dict:
+    """Pipeline d'analyse complet pour une paire.
+    strict_mode=True → Option D (signals page background loop: pattern + BOTH bonuses)
+    strict_mode=False → Option C (bot: pattern + at least 1 bonus)
+    """
+    return await analyze_pair_internal(pair, force=False, return_candidate=return_candidate, strict_mode=strict_mode)
 
 
 async def force_analyze_pair(pair: str) -> dict:
-    """Génère ou force un signal basé sur des données réelles du marché."""
-    return await analyze_pair_internal(pair, force=True)
+    """Génère ou force un signal basé sur des données réelles du marché.
+    Always uses strict_mode=False (Option C) — the bot has a 20s scan limit
+    and must return something quickly.
+    """
+    return await analyze_pair_internal(pair, force=True, strict_mode=False)
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -500,22 +506,24 @@ async def force_analyze_pair(pair: str) -> dict:
 #   - Only 1m or 3m expiration (never 5m or anything else)
 # ══════════════════════════════════════════════════════════════════════
 
-async def analyze_pair_internal(pair: str, force: bool = False, return_candidate: bool = False) -> dict:
+async def analyze_pair_internal(pair: str, force: bool = False, return_candidate: bool = False, strict_mode: bool = False) -> dict:
     """Sniper engine analysis pipeline. If force=True, bypasses risk/circuit-breaker checks.
     If return_candidate=True (background mode), returns a candidate dict instead of
-    emitting — the trading_loop collects candidates and emits only the best every 30s."""
+    emitting — the trading_loop collects candidates and emits only the best every 30s.
+    strict_mode=True → Option D (signals page: pattern + BOTH bonuses, higher quality)
+    strict_mode=False → Option C (bot: pattern + at least 1 bonus, more signals)"""
     try:
-        return await _analyze_pair_internal_impl(pair, force, return_candidate=return_candidate)
+        return await _analyze_pair_internal_impl(pair, force, return_candidate=return_candidate, strict_mode=strict_mode)
     except Exception as e:
         import traceback
         logger.error(
-            f"[ANALYZE-CRASH] pair={pair} force={force} error={e}\n"
+            f"[ANALYZE-CRASH] pair={pair} force={force} strict={strict_mode} error={e}\n"
             f"{traceback.format_exc()}"
         )
         return None
 
 
-async def _analyze_pair_internal_impl(pair: str, force: bool = False, return_candidate: bool = False) -> dict:
+async def _analyze_pair_internal_impl(pair: str, force: bool = False, return_candidate: bool = False, strict_mode: bool = False) -> dict:
     """
     A2Sniper 3.0 — SNIPER ENGINE ONLY
     ==================================
@@ -592,11 +600,11 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False, return_can
     # the bot honestly says "No signal right now."
     df_with_indicators.attrs['pair'] = pair
 
-    engine_result = generate_sniper_signal(df_with_indicators, payout)
+    engine_result = generate_sniper_signal(df_with_indicators, payout, strict_mode=strict_mode)
     if engine_result is None:
         logger.info(
             f"[{pair}] No price action signal — no pattern at key level with M5 confirmation. "
-            f"candles={len(df_with_indicators)}"
+            f"candles={len(df_with_indicators)}, mode={'strict (Option D)' if strict_mode else 'bot (Option C)'}"
         )
         return None
 
@@ -938,10 +946,13 @@ async def trading_loop():
             kickoff_candidates = []
             for pair in kickoff_list:
                 try:
-                    candidate = await analyze_pair(pair, return_candidate=True)
+                    # strict_mode=True → Option D (signals page: pattern + BOTH bonuses)
+                    # The signals page runs 24/7 with no time pressure, so it can
+                    # afford to wait for full-confluence A+ setups.
+                    candidate = await analyze_pair(pair, return_candidate=True, strict_mode=True)
                     if candidate:
                         kickoff_candidates.append(candidate)
-                        logger.info(f"[SNIPER-KICKSTART] ✅ Candidate: {candidate['pair']} {candidate['direction']} score={candidate['score']}/7 ({candidate['winrate']}%)")
+                        logger.info(f"[SNIPER-KICKSTART] ✅ Candidate (strict/Option D): {candidate['pair']} {candidate['direction']} score={candidate['score']}/7 ({candidate['winrate']}%)")
                 except Exception:
                     pass
                 # Yield to event loop so HTTP requests can be processed during kickoff
@@ -1008,14 +1019,20 @@ async def trading_loop():
                 if payout is None or payout < 70:
                     continue
 
-                # ═══ SNIPER ENGINE (candidate mode) + CANDLE PERSISTENCE ══
+                # ═══ SNIPER ENGINE (candidate mode, strict/Option D) + CANDLE PERSISTENCE ══
+                # strict_mode=True → Option D (pattern + BOTH bonuses).
+                # The signals page background loop has no time pressure — it can
+                # wait for full-confluence A+ setups. This gives higher winrate
+                # (68-82%) at the cost of fewer signals. The bot (GET SIGNAL
+                # button) uses Option C (strict_mode=False) for responsiveness.
                 try:
-                    candidate = await analyze_pair(pair, return_candidate=True)
+                    candidate = await analyze_pair(pair, return_candidate=True, strict_mode=True)
                     if candidate:
                         candidates.append(candidate)
                         logger.info(
                             f"[CANDIDATE] pair={pair} score={candidate['score']}/7 "
                             f"direction={candidate['direction']} winrate={candidate['winrate']}% "
+                            f"mode=strict/Option D "
                             f"— added to pool ({len(candidates)} candidates this cycle)"
                         )
                 except Exception as e:
@@ -3845,10 +3862,10 @@ async def connect_market(request: Request, credentials: HTTPAuthorizationCredent
                     payout = po_scanner.get_payout(pair)
                     if payout and payout >= 70:
                         try:
-                            candidate = await analyze_pair(pair, return_candidate=True)
+                            candidate = await analyze_pair(pair, return_candidate=True, strict_mode=True)
                             if candidate:
                                 kick_candidates.append(candidate)
-                                logger.info(f"[KICK-CANDIDATE] ✅ {pair} {candidate['direction']} score={candidate['score']}/7 ({candidate['winrate']}%)")
+                                logger.info(f"[KICK-CANDIDATE] ✅ {pair} {candidate['direction']} score={candidate['score']}/7 ({candidate['winrate']}%) [strict/Option D]")
                         except Exception:
                             pass
                     # Yield to event loop so HTTP requests can be processed

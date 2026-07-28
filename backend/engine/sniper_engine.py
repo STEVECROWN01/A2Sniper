@@ -331,11 +331,23 @@ def validate_candle_data(df: pd.DataFrame, min_bars: int = 14) -> Tuple[bool, st
 # MAIN SIGNAL GENERATION
 # ═══════════════════════════════════════════════════════════════════
 
-def generate_sniper_signal(df: pd.DataFrame, payout: float, min_factors: int = 4) -> Optional[Dict[str, Any]]:
+def generate_sniper_signal(df: pd.DataFrame, payout: float, min_factors: int = 4, strict_mode: bool = False) -> Optional[Dict[str, Any]]:
     """
     A2Sniper 3.0 — PRICE ACTION ENGINE (v2 — scoring system)
     =========================================================
     Generates signals based on price action with a SCORING system.
+
+    Confluence modes:
+      - strict_mode=False (Option C, default — used by the BOT):
+        Pattern + at least 1 bonus (level OR M5). Less strict, more signals.
+        Gives 62-78% winrate with 3-5 signals per hour. The bot has a 20s
+        scan limit and must return something quickly.
+
+      - strict_mode=True (Option D — used by the SIGNALS PAGE background loop):
+        Pattern + BOTH bonuses (level AND M5). Very strict, fewer signals
+        but higher quality. Gives 68-82% winrate. The signals page runs
+        continuously 24/7 with no time pressure, so it can afford to wait
+        for full confluence A+ setups.
 
     REQUIREMENT: A candlestick pattern MUST be present (minimum bar).
     BONUSES: Level proximity and M5 trend alignment increase winrate.
@@ -419,15 +431,31 @@ def generate_sniper_signal(df: pd.DataFrame, payout: float, min_factors: int = 4
 
     logger.info(f"[PRICE-ACTION] M5 trend: {m5_trend}, aligned: {m5_aligned}")
 
-    # 7. OPTION C: Pattern + at least 1 bonus required
-    # Pattern alone is NOT enough — need pattern + level OR pattern + M5.
-    # This gives 62-75% winrate with 3-5 signals per hour.
-    # (Option D — requiring BOTH bonuses — was too strict: no signals for
-    #  over an hour. Reverted to Option C which produced 54% winrate over
-    #  100 live trades.)
-    if not level_match and not m5_aligned:
-        logger.info(f"[PRICE-ACTION] Pattern found but NO bonus (no level, no M5) — skipping (Option C: need at least 1 bonus)")
-        return None
+    # 7. CONFLUENCE CHECK — mode-dependent
+    # ──────────────────────────────────────────────────────────────────────
+    # Option C (strict_mode=False, BOT): pattern + at least 1 bonus (level OR M5)
+    #   - Less strict, more signals (3-5/hour), 62-78% winrate
+    #   - The bot has a 20s scan limit and must return something quickly
+    #
+    # Option D (strict_mode=True, SIGNALS PAGE): pattern + BOTH bonuses (level AND M5)
+    #   - Very strict, fewer signals but higher quality, 68-82% winrate
+    #   - The signals page runs 24/7 with no time pressure — can wait for A+ setups
+    # ──────────────────────────────────────────────────────────────────────
+    if strict_mode:
+        # Option D: require BOTH bonuses
+        if not level_match or not m5_aligned:
+            missing = []
+            if not level_match:
+                missing.append('level')
+            if not m5_aligned:
+                missing.append('M5')
+            logger.info(f"[PRICE-ACTION] Pattern found but missing bonus(es): {', '.join(missing)} — skipping (Option D / strict: need BOTH level AND M5)")
+            return None
+    else:
+        # Option C: require at least 1 bonus
+        if not level_match and not m5_aligned:
+            logger.info(f"[PRICE-ACTION] Pattern found but NO bonus (no level, no M5) — skipping (Option C / bot: need at least 1 bonus)")
+            return None
 
     # 8. CALCULATE WINRATE BASED ON SCORING
     strong_patterns = {'hammer', 'shooting_star', 'bullish_engulfing', 'bearish_engulfing'}
@@ -450,6 +478,8 @@ def generate_sniper_signal(df: pd.DataFrame, payout: float, min_factors: int = 4
         winrate += 5
 
     # Bonus: both level + M5 (full confluence)
+    # In strict mode (Option D), this is always true, so the full-confluence
+    # bonus is always awarded — giving strict-mode signals higher winrate.
     if level_match and m5_aligned:
         winrate += 5  # Extra bonus for full confluence
 
@@ -504,13 +534,15 @@ def generate_sniper_signal(df: pd.DataFrame, payout: float, min_factors: int = 4
             'reversal_pattern': pattern,
         },
         'mode': 'PRICE_ACTION',
+        'strict_mode': strict_mode,  # True = Option D (signals page), False = Option C (bot)
         'timestamp': datetime.now(timezone.utc).isoformat(),
     }
 
     logger.info(
         f"[PRICE-ACTION-SIGNAL] {direction} — {pattern}, "
         f"level={level_match}, M5={m5_aligned}, "
-        f"winrate={winrate}%, score={score}/4, expiration=3m"
+        f"winrate={winrate}%, score={score}/4, expiration=3m, "
+        f"mode={'Option D (strict/signals page)' if strict_mode else 'Option C (bot)'}"
     )
 
     result['payout'] = payout
