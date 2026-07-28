@@ -123,7 +123,9 @@ class User(Base):
     created_at = Column(DateTime(timezone=True))
     auth_provider = Column(String, default="email")  # "email" or "google" — tracks how the user signed up
     avatar = Column(Text, nullable=True)  # Base64-encoded profile picture
+    notification_sound = Column(String, default="bell")  # bell, chime, alert, coin, digital
     subscription = relationship("UserSubscription", back_populates="user", uselist=False, cascade="all, delete-orphan")
+    push_subscriptions = relationship("PushSubscription", back_populates="user", cascade="all, delete-orphan")
 
 class UserSubscription(Base):
     """Gestion des plans utilisateurs."""
@@ -221,6 +223,20 @@ class RateLimitEntry(Base):
     __table_args__ = (
         Index('ix_rate_limit_ip_timestamp', 'ip_address', 'timestamp'),
     )
+
+
+class PushSubscription(Base):
+    """Web Push notification subscriptions — one user can have multiple devices."""
+    __tablename__ = "push_subscriptions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(String, ForeignKey("users.id"), nullable=False, index=True)
+    endpoint = Column(Text, nullable=False)  # Push service endpoint URL
+    p256dh_key = Column(Text, nullable=False)  # ECDH public key (base64url)
+    auth_key = Column(Text, nullable=False)  # Authentication secret (base64url)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    user = relationship("User", back_populates="push_subscriptions")
 
 
 # OTP brute force tracking (in-memory, with DB fallback)
@@ -342,6 +358,47 @@ async def init_db():
                             logger.info("[DB] Migration: Added avatar column to users table")
                 except Exception as e:
                     logger.warning(f"[DB] Migration for users.avatar failed (non-fatal): {e}")
+
+                # Check users table has notification_sound column
+                try:
+                    result = await conn.execute(
+                        __import__('sqlalchemy').text(
+                            "SELECT column_name FROM information_schema.columns "
+                            "WHERE table_name='users' AND column_name='notification_sound'"
+                        )
+                    )
+                    if not result.fetchone():
+                        await conn.execute(__import__('sqlalchemy').text(
+                            "ALTER TABLE users ADD COLUMN notification_sound VARCHAR DEFAULT 'bell'"
+                        ))
+                        logger.info("[DB] Migration: Added notification_sound column to users table")
+                except Exception as e:
+                    logger.warning(f"[DB] Migration for users.notification_sound failed (non-fatal): {e}")
+
+                # Create push_subscriptions table if it doesn't exist
+                try:
+                    result = await conn.execute(
+                        __import__('sqlalchemy').text(
+                            "SELECT table_name FROM information_schema.tables WHERE table_name='push_subscriptions'"
+                        )
+                    )
+                    if not result.fetchone():
+                        await conn.execute(__import__('sqlalchemy').text("""
+                            CREATE TABLE push_subscriptions (
+                                id SERIAL PRIMARY KEY,
+                                user_id VARCHAR NOT NULL,
+                                endpoint TEXT NOT NULL,
+                                p256dh_key TEXT NOT NULL,
+                                auth_key TEXT NOT NULL,
+                                created_at TIMESTAMPTZ DEFAULT NOW()
+                            )
+                        """))
+                        await conn.execute(__import__('sqlalchemy').text(
+                            "CREATE INDEX ix_push_subscriptions_user_id ON push_subscriptions (user_id)"
+                        ))
+                        logger.info("[DB] Migration: Created push_subscriptions table")
+                except Exception as e:
+                    logger.warning(f"[DB] Migration for push_subscriptions table failed (non-fatal): {e}")
 
                 # Check subscriptions table has telegram_chat_id
                 result = await conn.execute(

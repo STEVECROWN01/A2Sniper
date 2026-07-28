@@ -77,6 +77,7 @@ interface AppState {
     email: string;
     name: string;
     avatar?: string;
+    notification_sound?: string;
     is_admin?: boolean;
     plan?: string;
     auth_provider?: string;
@@ -281,6 +282,32 @@ export const useAppStore = create<AppState>((set, get) => ({
             rsi_status: (s.rsi_status as string) || 'Neutral',
           } as Signal;
         });
+
+        // ─── NEW SIGNAL DETECTION + SOUND NOTIFICATION ──────────────
+        // Detect if there's a new signal (one whose ID isn't in the current list).
+        // If so, play the user's selected notification sound.
+        // This fires when the page is open and the backend emits a new signal.
+        // (When the page is closed, the service worker handles it via Web Push.)
+        const currentSignals = get().signals;
+        if (currentSignals.length > 0 && parsedSignals.length > 0) {
+          const currentIds = new Set(currentSignals.map(s => s.id));
+          const newSignals = parsedSignals.filter(s => !currentIds.has(s.id));
+          if (newSignals.length > 0) {
+            // New signal(s) detected — play sound
+            const sound = typeof window !== 'undefined'
+              ? localStorage.getItem('a2sniper_notification_sound') || 'bell'
+              : 'bell';
+            if (sound !== 'none' && sound !== 'disabled') {
+              try {
+                const { playNotificationSound } = await import('@/lib/notifications');
+                playNotificationSound(sound);
+              } catch {
+                // notifications module not loaded yet — skip sound
+              }
+            }
+          }
+        }
+
         set({
           signals: parsedSignals,
           // Capture aggregate counts from backend — these are SQL COUNT(*) results,

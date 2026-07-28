@@ -21,6 +21,9 @@ pocketoptionapi-async>=2.0.1
 PyJWT>=2.8.0
 passlib[bcrypt]>=1.7.4
 bcrypt>=4.1.2
+# Web Push notifications — sends push notifications to users' devices when
+# signals fire on the signals page. Works even when the browser is closed.
+pywebpush>=2.0.0
 # PyTorch REMOVED — the AI voting gate is disabled (ENABLE_AI_GATE = False).
 # torch was adding ~200MB to the Docker image and slowing startup by 30+ seconds.
 # The LSTM/Transformer/XGBoost models are not used in production.

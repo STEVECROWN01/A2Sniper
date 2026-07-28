@@ -4,12 +4,19 @@ import { getApiUrl } from '@/lib/api-config';
 
 import { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { User, Bell, Shield, Palette, Save, Check, Camera, Key, Globe, Clock, Trash2, Download, AlertTriangle, Loader2 } from 'lucide-react';
+import { User, Bell, Shield, Palette, Save, Check, Camera, Key, Globe, Clock, Trash2, Download, AlertTriangle, Loader2, Volume2 } from 'lucide-react';
 
 import { useAppStore } from '@/lib/store';
 import { useAuth } from '@/hooks/use-auth';
 import { toast } from 'sonner';
 import { createBrandedPDF, drawSectionTitle, drawInfoRow, drawUserInfoCard, savePDF, PAGE, PDFUserInfo, fetchAvatarBase64 } from '@/lib/pdf-export';
+import {
+  playNotificationSound,
+  subscribeToPushNotifications,
+  unsubscribeFromPushNotifications,
+  isSubscribedToPush,
+  notificationsSupported,
+} from '@/lib/notifications';
 
 export default function SettingsPage() {
   useAuth();
@@ -80,6 +87,30 @@ export default function SettingsPage() {
   // Export data state
   const [isExporting, setIsExporting] = useState(false);
   const [justExported, setJustExported] = useState(false);
+
+  // Notification sound + push notification state
+  const [selectedNotificationSound, setSelectedNotificationSound] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('a2sniper_notification_sound') || user?.notification_sound || 'bell';
+    }
+    return 'bell';
+  });
+  const [isPlayingSound, setIsPlayingSound] = useState(false);
+  const [pushEnabled, setPushEnabled] = useState(false);
+  const [isTogglingPush, setIsTogglingPush] = useState(false);
+
+  // Sync notification sound from user data when it loads
+  useEffect(() => {
+    if (user?.notification_sound && user.notification_sound !== selectedNotificationSound) {
+      setSelectedNotificationSound(user.notification_sound);
+    }
+  }, [user?.notification_sound]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Check push subscription status on mount
+  useEffect(() => {
+    if (!notificationsSupported()) return;
+    isSubscribedToPush().then(setPushEnabled);
+  }, []);
 
   // Save notification preferences to localStorage when changed
   useEffect(() => {
@@ -248,6 +279,63 @@ export default function SettingsPage() {
       toast.error('Network error — could not reach server. Please try again.');
     } finally {
       setIsDeletingPhoto(false);
+    }
+  };
+
+  // ─── NOTIFICATION SOUND + PUSH HANDLERS ─────────────────────────────
+
+  const handleNotificationSoundChange = async (sound: string) => {
+    setSelectedNotificationSound(sound);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('a2sniper_notification_sound', sound);
+    }
+    // Save to backend
+    try {
+      const apiUrl = getApiUrl();
+      await fetch(`${apiUrl}/api/notifications/sound`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ sound }),
+      });
+    } catch {
+      // Non-critical — the sound is saved in localStorage as fallback
+    }
+  };
+
+  const handleTestSound = () => {
+    if (selectedNotificationSound === 'none') return;
+    setIsPlayingSound(true);
+    playNotificationSound(selectedNotificationSound);
+    setTimeout(() => setIsPlayingSound(false), 1500);
+  };
+
+  const handlePushToggle = async () => {
+    setIsTogglingPush(true);
+    try {
+      if (pushEnabled) {
+        // Unsubscribe
+        const ok = await unsubscribeFromPushNotifications();
+        if (ok) {
+          setPushEnabled(false);
+          toast.success('Push notifications disabled.');
+        } else {
+          toast.error('Could not disable push notifications. Please try again.');
+        }
+      } else {
+        // Subscribe
+        const ok = await subscribeToPushNotifications();
+        if (ok) {
+          setPushEnabled(true);
+          toast.success('Push notifications enabled! You will be alerted when signals fire.');
+        } else {
+          toast.error('Could not enable push notifications. Please check your browser settings and try again.');
+        }
+      }
+    } catch {
+      toast.error('An error occurred. Please try again.');
+    } finally {
+      setIsTogglingPush(false);
     }
   };
 
@@ -800,6 +888,80 @@ export default function SettingsPage() {
                       </button>
                     </div>
                     ))}
+                  </div>
+
+                  {/* ─── SIGNAL NOTIFICATION SOUND + PUSH ─────────────────── */}
+                  <div className="mt-8 pt-8 border-t border-[#1a1a2e]">
+                    <h3 className="text-sm font-black text-[#D4AF37] uppercase tracking-wider mb-4 flex items-center gap-2">
+                      <Bell className="w-4 h-4" />
+                      Signal Notification Sound
+                    </h3>
+                    <p className="text-xs text-gray-500 mb-4">
+                      When a signal fires on the signals page, a notification sound will play on your device
+                      and a push notification will appear — even if your browser is closed.
+                    </p>
+
+                    {/* Sound selector */}
+                    <div className="mb-4">
+                      <label className="block text-sm font-medium text-gray-400 mb-2">
+                        Notification Sound
+                      </label>
+                      <div className="flex items-center gap-3 flex-wrap">
+                        <select
+                          value={selectedNotificationSound}
+                          onChange={(e) => handleNotificationSoundChange(e.target.value)}
+                          className="flex-1 min-w-[200px] bg-[#050507] border border-[#1a1a2e] rounded-lg px-4 py-2.5 text-sm font-bold text-white focus:border-[#D4AF37] focus:ring-2 focus:ring-[#D4AF37]/20 outline-none"
+                        >
+                          <option value="bell">🔔 Bell</option>
+                          <option value="chime">🎵 Chime</option>
+                          <option value="alert">⚠️ Alert</option>
+                          <option value="coin">🪙 Coin</option>
+                          <option value="digital">📟 Digital</option>
+                          <option value="none">🔇 None</option>
+                        </select>
+                        <button
+                          onClick={handleTestSound}
+                          disabled={selectedNotificationSound === 'none'}
+                          className="bg-[#D4AF37]/10 border border-[#D4AF37]/30 text-[#D4AF37] px-4 py-2.5 rounded-lg hover:bg-[#D4AF37]/20 transition-colors font-bold text-sm flex items-center gap-2 disabled:opacity-40"
+                        >
+                          {isPlayingSound ? <Loader2 className="w-4 h-4 animate-spin" /> : <Volume2 className="w-4 h-4" />}
+                          Test Sound
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Push notification toggle */}
+                    <div className="mt-6 p-4 bg-[#050507]/60 rounded-xl border border-[#1a1a2e]">
+                      <div className="flex items-center justify-between flex-wrap gap-3">
+                        <div className="flex-1 min-w-[200px]">
+                          <h3 className="font-bold text-white text-sm">Push Notifications</h3>
+                          <p className="text-xs text-gray-500 mt-1">
+                            Get notified on your device even when the browser is closed.
+                            {!notificationsSupported() && (
+                              <span className="block text-orange-400 mt-1">⚠️ Push notifications are not supported in this browser.</span>
+                            )}
+                          </p>
+                          {pushEnabled && (
+                            <p className="text-xs text-green-400 mt-1">✅ Push notifications are active on this device.</p>
+                          )}
+                        </div>
+                        <button
+                          onClick={handlePushToggle}
+                          disabled={!notificationsSupported() || isTogglingPush}
+                          className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors disabled:opacity-40 ${
+                            pushEnabled ? 'bg-[#D4AF37]' : 'bg-gray-700'
+                          }`}
+                        >
+                          {isTogglingPush ? (
+                            <Loader2 className="w-4 h-4 animate-spin text-white absolute left-1" />
+                          ) : (
+                            <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                              pushEnabled ? 'translate-x-6' : 'translate-x-1'
+                            }`} />
+                          )}
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 </motion.div>
               )}

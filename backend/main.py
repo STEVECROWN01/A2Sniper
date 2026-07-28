@@ -53,7 +53,24 @@ except ImportError:
 from engine.compliance import ComplianceManager, geographic_restriction_dependency
 from bot.telegram_bot import TelegramSignalBot
 from db import (init_db, SignalRecord, CandleRecord, AsyncSessionLocal, User, UserSubscription,
-                  PasswordResetOTP, SystemLog, RefreshToken, RevokedToken, RateLimitEntry)
+                  PasswordResetOTP, SystemLog, RefreshToken, RevokedToken, RateLimitEntry, PushSubscription)
+
+
+# ═══════════ WEB PUSH NOTIFICATION CONFIG ═══════════
+# VAPID keys for Web Push API. Generated once, reused forever.
+# These allow the backend to send push notifications to users' browsers/devices
+# even when the browser tab is closed. The public key is sent to the frontend
+# which uses it to subscribe via the Push API. The private key is used here
+# to sign push messages.
+VAPID_PRIVATE_KEY = os.environ.get(
+    "VAPID_PRIVATE_KEY",
+    "UNpdVEsyFQt6lDVaM6zNscnx4m_80u6Vm6gjNUfM77Y"
+)
+VAPID_PUBLIC_KEY = os.environ.get(
+    "VAPID_PUBLIC_KEY",
+    "BDHk8NGH6p1HyqKoupPWBwdsSHJX5c5hKfgV4NmJ-0X1pcl93dpIzcc4PcBsSIOx0ArM6pJSKRwo4iow8CpCbVM"
+)
+VAPID_CLAIMS = {"sub": "mailto:support@a2sniper.com"}
 
 
 # ═══════════ DB LOGGING HANDLER ═══════════
@@ -907,7 +924,101 @@ Zéro Simulation. 100% Real-Market."""
     except Exception as tg_err:
         logger.warning(f"[SIGNAL-TELEGRAM-ERROR] pair={pair} err={tg_err}")
 
+    # Web Push notification — fire-and-forget. Sends a push to ALL subscribed
+    # users' devices (browser/phone) so they get notified even if the tab is
+    # closed. The push payload includes pair, direction, expiration, and a
+    # URL to the signals page. The service worker on the client shows a
+    # notification with action buttons (Open PO, View Signal).
+    try:
+        asyncio.create_task(_send_push_notifications_for_signal(signal))
+    except Exception as push_err:
+        logger.warning(f"[SIGNAL-PUSH-ERROR] pair={pair} err={push_err}")
+
     return signal
+
+
+async def _send_push_notifications_for_signal(signal: dict):
+    """Send web push notifications to ALL users who have push subscriptions.
+    Called fire-and-forget from _emit_candidate so it doesn't block emission.
+    """
+    try:
+        from pywebpush import webpush, WebPushException
+        from sqlalchemy import delete as sql_delete
+    except ImportError:
+        logger.warning("[PUSH] pywebpush not installed — skipping push notifications")
+        return
+
+    # Build the push payload — the service worker uses this to show the notification
+    payload = json.dumps({
+        'title': f"🎯 {signal['pair']} — {signal['direction']}",
+        'body': f"⏱ {signal['expiration']}m expiry • {signal['payout']}% payout • {signal['winrate']}% winrate",
+        'pair': signal['pair'],
+        'direction': signal['direction'],
+        'expiration': signal['expiration'],
+        'payout': signal['payout'],
+        'winrate': signal['winrate'],
+        'signal_id': signal['id'],
+        'timestamp': signal['timestamp'],
+        'url': '/signals',  # A2Sniper signals page
+    })
+
+    # Fetch ALL push subscriptions (all users) — we notify everyone
+    try:
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                select(PushSubscription)
+            )
+            subs = result.scalars().all()
+    except Exception as db_err:
+        logger.warning(f"[PUSH] DB error fetching subscriptions: {db_err}")
+        return
+
+    if not subs:
+        return  # No subscriptions — nothing to send
+
+    logger.info(f"[PUSH] Sending push to {len(subs)} subscribed device(s) for signal {signal['id']}")
+
+    sent = 0
+    failed = 0
+    for sub in subs:
+        try:
+            webpush(
+                subscription_info={
+                    'endpoint': sub.endpoint,
+                    'keys': {
+                        'p256dh': sub.p256dh_key,
+                        'auth': sub.auth_key,
+                    },
+                },
+                data=payload,
+                vapid_private_key=VAPID_PRIVATE_KEY,
+                vapid_claims=VAPID_CLAIMS,
+            )
+            sent += 1
+        except WebPushException as e:
+            # 410 Gone / 404 = subscription expired or cancelled — remove it
+            status_code = getattr(e, 'response', None)
+            if status_code and hasattr(status_code, 'status_code'):
+                if status_code.status_code in (404, 410):
+                    logger.info(f"[PUSH] Subscription expired (HTTP {status_code.status_code}) — removing sub id={sub.id}")
+                    try:
+                        async with AsyncSessionLocal() as session:
+                            await session.execute(
+                                sql_delete(PushSubscription).where(PushSubscription.id == sub.id)
+                            )
+                            await session.commit()
+                    except Exception:
+                        pass
+                else:
+                    logger.warning(f"[PUSH] WebPushError for sub id={sub.id}: HTTP {status_code.status_code}")
+            else:
+                logger.warning(f"[PUSH] WebPushError for sub id={sub.id}: {e}")
+            failed += 1
+        except Exception as e:
+            logger.warning(f"[PUSH] Error for sub id={sub.id}: {e}")
+            failed += 1
+
+    logger.info(f"[PUSH] Done: {sent} sent, {failed} failed (of {len(subs)} total)")
 
 
 # ═══════════ MAIN TRADING LOOP ═══════════
@@ -2499,6 +2610,142 @@ async def delete_avatar(credentials: HTTPAuthorizationCredentials = Security(sec
         raise HTTPException(status_code=500, detail=f"Failed to delete avatar: {str(e)}")
 
 
+# ═══════════ NOTIFICATION SETTINGS + PUSH SUBSCRIPTION ═══════════
+
+@app.get("/api/notifications/vapid-public-key")
+async def get_vapid_public_key():
+    """Return the VAPID public key so the frontend can subscribe to push notifications."""
+    return {"public_key": VAPID_PUBLIC_KEY}
+
+
+@app.post("/api/notifications/subscribe")
+async def subscribe_to_push(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials = Security(security)
+):
+    """Save a web push subscription for the authenticated user.
+    Called by the frontend after the user grants notification permission
+    and the browser generates a push subscription."""
+    payload = decode_access_token(credentials.credentials)
+    _jti = payload.get("jti")
+    if _jti and await is_token_revoked(_jti):
+        raise HTTPException(status_code=401, detail="Token has been revoked")
+    user_id = payload.get("sub")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    try:
+        data = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    endpoint = data.get("endpoint")
+    keys = data.get("keys", {})
+    p256dh = keys.get("p256dh")
+    auth = keys.get("auth")
+
+    if not endpoint or not p256dh or not auth:
+        raise HTTPException(status_code=400, detail="Missing endpoint, p256dh, or auth keys")
+
+    # Check if this subscription already exists (dedup by endpoint)
+    async with AsyncSessionLocal() as session:
+        existing = await session.execute(
+            select(PushSubscription).where(
+                PushSubscription.endpoint == endpoint
+            )
+        )
+        existing_sub = existing.scalar_one_or_none()
+
+        if existing_sub:
+            # Update the user_id in case the subscription moved to a different user
+            existing_sub.user_id = user_id
+            existing_sub.p256dh_key = p256dh
+            existing_sub.auth_key = auth
+            await session.commit()
+            logger.info(f"[PUSH-SUB] Updated existing subscription for user {user_id}")
+            return {"status": "success", "message": "Subscription updated"}
+        else:
+            # Create new subscription
+            new_sub = PushSubscription(
+                user_id=user_id,
+                endpoint=endpoint,
+                p256dh_key=p256dh,
+                auth_key=auth,
+            )
+            session.add(new_sub)
+            await session.commit()
+            logger.info(f"[PUSH-SUB] New subscription saved for user {user_id}")
+            return {"status": "success", "message": "Subscription created"}
+
+
+@app.post("/api/notifications/unsubscribe")
+async def unsubscribe_from_push(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials = Security(security)
+):
+    """Remove a web push subscription (user disabled notifications)."""
+    payload = decode_access_token(credentials.credentials)
+    user_id = payload.get("sub")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    try:
+        data = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    endpoint = data.get("endpoint")
+    if not endpoint:
+        raise HTTPException(status_code=400, detail="Missing endpoint")
+
+    from sqlalchemy import delete as sql_delete
+    async with AsyncSessionLocal() as session:
+        await session.execute(
+            sql_delete(PushSubscription).where(
+                PushSubscription.endpoint == endpoint,
+                PushSubscription.user_id == user_id,
+            )
+        )
+        await session.commit()
+    logger.info(f"[PUSH-SUB] Removed subscription for user {user_id}")
+    return {"status": "success"}
+
+
+@app.post("/api/notifications/sound")
+async def set_notification_sound(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials = Security(security)
+):
+    """Save the user's preferred notification sound.
+    Sound options: bell, chime, alert, coin, digital
+    """
+    payload = decode_access_token(credentials.credentials)
+    user_id = payload.get("sub")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    try:
+        data = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    sound = data.get("sound")
+    valid_sounds = ["bell", "chime", "alert", "coin", "digital", "none"]
+    if sound not in valid_sounds:
+        raise HTTPException(status_code=400, detail=f"Invalid sound. Must be one of: {valid_sounds}")
+
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(select(User).where(User.id == user_id))
+        user = result.scalar_one_or_none()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        user.notification_sound = sound
+        await session.commit()
+
+    logger.info(f"[NOTIFICATION-SOUND] User {user_id} set sound to '{sound}'")
+    return {"status": "success", "sound": sound}
+
+
 @app.post("/api/auth/google")
 async def auth_google(request: Request):
     data = await request.json()
@@ -3025,7 +3272,8 @@ async def refresh_access_token(request: Request):
                 "is_admin": user.is_admin,
                 "plan": subscription.plan_name if subscription else "Free",
                 "auth_provider": getattr(user, 'auth_provider', 'email') or 'email',
-                "avatar": getattr(user, 'avatar', None)
+                "avatar": getattr(user, 'avatar', None),
+                "notification_sound": getattr(user, 'notification_sound', 'bell') or 'bell'
             }
         }
 
