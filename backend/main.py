@@ -514,7 +514,14 @@ async def force_analyze_pair(pair: str) -> dict:
 
 async def _safe_fetch_user(session, *, by_id: str = None, by_email: str = None):
     """Fetch a user, with fallback if notification_sound column is missing.
-    Pass by_id OR by_email (not both). Returns the User object or None."""
+    Pass by_id OR by_email (not both). Returns the User object or None.
+
+    If the ORM query fails because the notification_sound column doesn't exist,
+    rolls back the current session (to clear the aborted transaction state) and
+    opens a FRESH session for the raw SQL fallback. This is critical — PostgreSQL
+    aborts the entire transaction after an error, so any subsequent query in the
+    same session would fail with InFailedSQLTransactionError.
+    """
     try:
         if by_id:
             result = await session.execute(select(User).where(User.id == by_id))
@@ -524,19 +531,28 @@ async def _safe_fetch_user(session, *, by_id: str = None, by_email: str = None):
     except Exception as orm_err:
         err_str = str(orm_err).lower()
         if "notification_sound" in err_str or "does not exist" in err_str:
-            logger.warning(f"[USER-FETCH] ORM query failed (column missing?), using raw SQL fallback: {orm_err}")
+            logger.warning(f"[USER-FETCH] ORM query failed (column missing?), using fresh session for raw SQL fallback: {orm_err}")
+            # Roll back the failed session to clear the aborted transaction.
+            # Without this, the session is unusable for the rest of the request.
+            try:
+                await session.rollback()
+            except Exception:
+                pass
+            # Use a FRESH session for the fallback query — the original session's
+            # transaction is aborted and can't be used for any more queries.
             from sqlalchemy import text as sql_text
-            if by_id:
-                raw = await session.execute(
-                    sql_text("SELECT id, email, hashed_password, full_name, is_active, is_admin, created_at, auth_provider, avatar FROM users WHERE id = :uid"),
-                    {"uid": by_id}
-                )
-            else:
-                raw = await session.execute(
-                    sql_text("SELECT id, email, hashed_password, full_name, is_active, is_admin, created_at, auth_provider, avatar FROM users WHERE email = :email"),
-                    {"email": by_email}
-                )
-            row = raw.fetchone()
+            async with AsyncSessionLocal() as fresh_session:
+                if by_id:
+                    raw = await fresh_session.execute(
+                        sql_text("SELECT id, email, hashed_password, full_name, is_active, is_admin, created_at, auth_provider, avatar FROM users WHERE id = :uid"),
+                        {"uid": by_id}
+                    )
+                else:
+                    raw = await fresh_session.execute(
+                        sql_text("SELECT id, email, hashed_password, full_name, is_active, is_admin, created_at, auth_provider, avatar FROM users WHERE email = :email"),
+                        {"email": by_email}
+                    )
+                row = raw.fetchone()
             if not row:
                 return None
             # Build a namespace object that mimics the User model
@@ -2553,10 +2569,20 @@ async def login(request: Request):
         await store_refresh_token(user.id, refresh_token, request)
 
         # Get subscription info for the response
-        sub_result = await session.execute(
-            select(UserSubscription).where(UserSubscription.user_id == user.id)
-        )
-        subscription = sub_result.scalar_one_or_none()
+        # Use a fresh session in case the original session was rolled back
+        # by _safe_fetch_user (when the notification_sound column was missing).
+        try:
+            sub_result = await session.execute(
+                select(UserSubscription).where(UserSubscription.user_id == user.id)
+            )
+            subscription = sub_result.scalar_one_or_none()
+        except Exception:
+            # Session may be in aborted state — use a fresh session
+            async with AsyncSessionLocal() as fresh_session:
+                sub_result = await fresh_session.execute(
+                    select(UserSubscription).where(UserSubscription.user_id == user.id)
+                )
+                subscription = sub_result.scalar_one_or_none()
 
         return {
             "status": "success",
@@ -3379,10 +3405,18 @@ async def get_me(credentials: HTTPAuthorizationCredentials = Security(security))
             raise HTTPException(status_code=404, detail="User not found")
 
         # Eagerly load subscription to avoid lazy-load issues
-        sub_result = await session.execute(
-            select(UserSubscription).where(UserSubscription.user_id == user_id)
-        )
-        subscription = sub_result.scalar_one_or_none()
+        # Use a fresh session in case the original was rolled back by _safe_fetch_user
+        try:
+            sub_result = await session.execute(
+                select(UserSubscription).where(UserSubscription.user_id == user_id)
+            )
+            subscription = sub_result.scalar_one_or_none()
+        except Exception:
+            async with AsyncSessionLocal() as fresh_session:
+                sub_result = await fresh_session.execute(
+                    select(UserSubscription).where(UserSubscription.user_id == user_id)
+                )
+                subscription = sub_result.scalar_one_or_none()
 
         return {
             "id": user.id,

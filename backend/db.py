@@ -360,47 +360,52 @@ async def init_db():
                     logger.warning(f"[DB] Migration for users.avatar failed (non-fatal): {e}")
 
                 # Check users table has notification_sound column
+                # Uses a FRESH connection to avoid issues with the outer
+                # transaction being in an aborted state from prior migrations.
                 try:
-                    ns_result = await conn.execute(
-                        __import__('sqlalchemy').text(
-                            "SELECT column_name FROM information_schema.columns "
-                            "WHERE table_name='users' AND column_name='notification_sound'"
+                    async with engine.begin() as ns_conn:
+                        ns_result = await ns_conn.execute(
+                            __import__('sqlalchemy').text(
+                                "SELECT column_name FROM information_schema.columns "
+                                "WHERE table_name='users' AND column_name='notification_sound'"
+                            )
                         )
-                    )
-                    if not ns_result.fetchone():
-                        await conn.execute(__import__('sqlalchemy').text(
-                            "ALTER TABLE users ADD COLUMN notification_sound VARCHAR DEFAULT 'bell'"
-                        ))
-                        logger.info("[DB] Migration: Added notification_sound column to users table")
-                    else:
-                        logger.info("[DB] Migration: notification_sound column already exists")
+                        if not ns_result.fetchone():
+                            await ns_conn.execute(__import__('sqlalchemy').text(
+                                "ALTER TABLE users ADD COLUMN notification_sound VARCHAR DEFAULT 'bell'"
+                            ))
+                            logger.info("[DB] Migration: Added notification_sound column to users table")
+                        else:
+                            logger.info("[DB] Migration: notification_sound column already exists")
                 except Exception as e:
                     logger.error(f"[DB] Migration for users.notification_sound FAILED (CRITICAL): {e}")
 
                 # Create push_subscriptions table if it doesn't exist
+                # Also uses a fresh connection.
                 try:
-                    result = await conn.execute(
-                        __import__('sqlalchemy').text(
-                            "SELECT table_name FROM information_schema.tables WHERE table_name='push_subscriptions'"
-                        )
-                    )
-                    if not result.fetchone():
-                        await conn.execute(__import__('sqlalchemy').text("""
-                            CREATE TABLE push_subscriptions (
-                                id SERIAL PRIMARY KEY,
-                                user_id VARCHAR NOT NULL,
-                                endpoint TEXT NOT NULL,
-                                p256dh_key TEXT NOT NULL,
-                                auth_key TEXT NOT NULL,
-                                created_at TIMESTAMPTZ DEFAULT NOW()
+                    async with engine.begin() as ps_conn:
+                        ps_result = await ps_conn.execute(
+                            __import__('sqlalchemy').text(
+                                "SELECT table_name FROM information_schema.tables WHERE table_name='push_subscriptions'"
                             )
-                        """))
-                        await conn.execute(__import__('sqlalchemy').text(
-                            "CREATE INDEX ix_push_subscriptions_user_id ON push_subscriptions (user_id)"
-                        ))
-                        logger.info("[DB] Migration: Created push_subscriptions table")
+                        )
+                        if not ps_result.fetchone():
+                            await ps_conn.execute(__import__('sqlalchemy').text("""
+                                CREATE TABLE push_subscriptions (
+                                    id SERIAL PRIMARY KEY,
+                                    user_id VARCHAR NOT NULL,
+                                    endpoint TEXT NOT NULL,
+                                    p256dh_key TEXT NOT NULL,
+                                    auth_key TEXT NOT NULL,
+                                    created_at TIMESTAMPTZ DEFAULT NOW()
+                                )
+                            """))
+                            await ps_conn.execute(__import__('sqlalchemy').text(
+                                "CREATE INDEX ix_push_subscriptions_user_id ON push_subscriptions (user_id)"
+                            ))
+                            logger.info("[DB] Migration: Created push_subscriptions table")
                 except Exception as e:
-                    logger.warning(f"[DB] Migration for push_subscriptions table failed (non-fatal): {e}")
+                    logger.error(f"[DB] Migration for push_subscriptions table FAILED (CRITICAL): {e}")
 
                 # Check subscriptions table has telegram_chat_id
                 result = await conn.execute(
