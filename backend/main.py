@@ -506,6 +506,58 @@ async def force_analyze_pair(pair: str) -> dict:
     return await analyze_pair_internal(pair, force=True, strict_mode=False)
 
 
+# ═══════════ USER QUERY HELPER (migration-safe) ═══════════
+# Safely fetch a user by ID or email. If the notification_sound column
+# doesn't exist yet (migration hasn't run), falls back to raw SQL that
+# excludes the column. This prevents login/me/refresh from crashing
+# when the DB schema is out of sync with the ORM model.
+
+async def _safe_fetch_user(session, *, by_id: str = None, by_email: str = None):
+    """Fetch a user, with fallback if notification_sound column is missing.
+    Pass by_id OR by_email (not both). Returns the User object or None."""
+    try:
+        if by_id:
+            result = await session.execute(select(User).where(User.id == by_id))
+        else:
+            result = await session.execute(select(User).where(User.email == by_email))
+        return result.scalar_one_or_none()
+    except Exception as orm_err:
+        err_str = str(orm_err).lower()
+        if "notification_sound" in err_str or "does not exist" in err_str:
+            logger.warning(f"[USER-FETCH] ORM query failed (column missing?), using raw SQL fallback: {orm_err}")
+            from sqlalchemy import text as sql_text
+            if by_id:
+                raw = await session.execute(
+                    sql_text("SELECT id, email, hashed_password, full_name, is_active, is_admin, created_at, auth_provider, avatar FROM users WHERE id = :uid"),
+                    {"uid": by_id}
+                )
+            else:
+                raw = await session.execute(
+                    sql_text("SELECT id, email, hashed_password, full_name, is_active, is_admin, created_at, auth_provider, avatar FROM users WHERE email = :email"),
+                    {"email": by_email}
+                )
+            row = raw.fetchone()
+            if not row:
+                return None
+            # Build a namespace object that mimics the User model
+            class _UserRow:
+                pass
+            u = _UserRow()
+            u.id = row[0]
+            u.email = row[1]
+            u.hashed_password = row[2]
+            u.full_name = row[3]
+            u.is_active = row[4]
+            u.is_admin = row[5]
+            u.created_at = row[6]
+            u.auth_provider = row[7]
+            u.avatar = row[8]
+            u.notification_sound = 'bell'  # default fallback
+            return u
+        else:
+            raise
+
+
 # ══════════════════════════════════════════════════════════════════════
 # SNIPER ENGINE — The ONLY signal generator in the system
 # ══════════════════════════════════════════════════════════════════════
@@ -2453,9 +2505,8 @@ async def login(request: Request):
     password = data.get("password")
     
     async with AsyncSessionLocal() as session:
-        result = await session.execute(select(User).where(User.email == email))
-        user = result.scalar_one_or_none()
-        
+        user = await _safe_fetch_user(session, by_email=email)
+
         if not user or not verify_password(password, user.hashed_password):
             raise HTTPException(status_code=401, detail="Invalid email or password")
 
@@ -2487,9 +2538,8 @@ async def login(request: Request):
                 promoted = True
             if promoted:
                 await session.commit()
-                # Refresh user after commit
-                result = await session.execute(select(User).where(User.id == user.id))
-                user = result.scalar_one_or_none()
+                # Refresh user after commit (use safe fetch — column may be missing)
+                user = await _safe_fetch_user(session, by_id=user.id)
                 sub_result = await session.execute(
                     select(UserSubscription).where(UserSubscription.user_id == user.id)
                 )
@@ -2831,8 +2881,7 @@ async def auth_google(request: Request):
     for attempt in range(5):
         try:
             async with AsyncSessionLocal() as session:
-                result = await session.execute(select(User).where(User.email == email))
-                user = result.scalar_one_or_none()
+                user = await _safe_fetch_user(session, by_email=email)
                 break
         except Exception as db_conn_err:
             if attempt < 4:
@@ -2844,8 +2893,7 @@ async def auth_google(request: Request):
 
     try:
         async with AsyncSessionLocal() as session:
-            result = await session.execute(select(User).where(User.email == email))
-            user = result.scalar_one_or_none()
+            user = await _safe_fetch_user(session, by_email=email)
             
             if not user:
                 # Auto-register Google user
@@ -3228,9 +3276,8 @@ async def refresh_access_token(request: Request):
             await revoke_all_user_tokens(user_id, reason="refresh_token_reuse")
             raise HTTPException(status_code=401, detail="Refresh token has been revoked. Please log in again.")
 
-        # Verify user still exists
-        result = await session.execute(select(User).where(User.id == user_id))
-        user = result.scalar_one_or_none()
+        # Verify user still exists (use safe fetch — column may be missing)
+        user = await _safe_fetch_user(session, by_id=user_id)
         if not user:
             raise HTTPException(status_code=401, detail="User not found")
 
@@ -3323,21 +3370,20 @@ async def get_me(credentials: HTTPAuthorizationCredentials = Security(security))
         raise HTTPException(status_code=401, detail="Token has been revoked")
 
     user_id = payload.get("sub")
-    
+
     async with AsyncSessionLocal() as session:
-        result = await session.execute(
-            select(User).where(User.id == user_id)
-        )
-        user = result.scalar_one_or_none()
+        # Use safe fetch — falls back to raw SQL if notification_sound column is missing
+        user = await _safe_fetch_user(session, by_id=user_id)
+
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
-        
+
         # Eagerly load subscription to avoid lazy-load issues
         sub_result = await session.execute(
             select(UserSubscription).where(UserSubscription.user_id == user_id)
         )
         subscription = sub_result.scalar_one_or_none()
-            
+
         return {
             "id": user.id,
             "email": user.email,
@@ -3345,7 +3391,8 @@ async def get_me(credentials: HTTPAuthorizationCredentials = Security(security))
             "is_admin": user.is_admin,
             "plan": subscription.plan_name if subscription else "Free",
             "auth_provider": getattr(user, 'auth_provider', 'email') or 'email',
-            "avatar": getattr(user, 'avatar', None)
+            "avatar": getattr(user, 'avatar', None),
+            "notification_sound": getattr(user, 'notification_sound', 'bell') or 'bell'
         }
 
 

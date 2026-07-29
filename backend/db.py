@@ -361,19 +361,21 @@ async def init_db():
 
                 # Check users table has notification_sound column
                 try:
-                    result = await conn.execute(
+                    ns_result = await conn.execute(
                         __import__('sqlalchemy').text(
                             "SELECT column_name FROM information_schema.columns "
                             "WHERE table_name='users' AND column_name='notification_sound'"
                         )
                     )
-                    if not result.fetchone():
+                    if not ns_result.fetchone():
                         await conn.execute(__import__('sqlalchemy').text(
                             "ALTER TABLE users ADD COLUMN notification_sound VARCHAR DEFAULT 'bell'"
                         ))
                         logger.info("[DB] Migration: Added notification_sound column to users table")
+                    else:
+                        logger.info("[DB] Migration: notification_sound column already exists")
                 except Exception as e:
-                    logger.warning(f"[DB] Migration for users.notification_sound failed (non-fatal): {e}")
+                    logger.error(f"[DB] Migration for users.notification_sound FAILED (CRITICAL): {e}")
 
                 # Create push_subscriptions table if it doesn't exist
                 try:
