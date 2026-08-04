@@ -2211,17 +2211,35 @@ async def delete_all_signals(admin_payload = Depends(require_admin)):
     """Bulk delete ALL signals from the database.
 
     Used to clear old test/flood data so stats start fresh.
-    Candles table is NOT touched — momentum engine keeps full history.
-    Also clears the in-memory generated_signals deque.
+    Also clears candle records and the in-memory generated_signals deque
+    for a complete reset.
     """
     async with AsyncSessionLocal() as session:
-        from sqlalchemy import delete, func as sql_func
-        # Count first
+        from sqlalchemy import delete, func as sql_func, text as sql_text
+        # Count signals first
         count_result = await session.execute(select(sql_func.count(SignalRecord.id)))
-        count = count_result.scalar() or 0
-        # Delete all
+        signal_count = count_result.scalar() or 0
+        # Delete all signals
         await session.execute(delete(SignalRecord))
+
+        # Also delete all candle records (old cached market data)
+        candle_count = 0
+        try:
+            candle_count_result = await session.execute(sql_text("SELECT COUNT(*) FROM candle_records"))
+            candle_count = candle_count_result.scalar() or 0
+            if candle_count > 0:
+                await session.execute(sql_text("DELETE FROM candle_records"))
+        except Exception as ce:
+            logger.warning(f"[ADMIN] Could not wipe candle_records: {ce}")
+
+        # Reset the signal_records ID sequence so new signals start at 1
+        try:
+            await session.execute(sql_text("ALTER SEQUENCE signal_records_id_seq RESTART WITH 1"))
+        except Exception:
+            pass  # Sequence might not exist or have different name
+
         await session.commit()
+
     # Clear in-memory deque too
     generated_signals.clear()
     # Reset session trade counter so new emissions start at session 1
@@ -2229,8 +2247,8 @@ async def delete_all_signals(admin_payload = Depends(require_admin)):
     _session_state["current_id"] = f"SES-{datetime.now(timezone.utc).strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
     # Reset emission gate so next signal emits immediately
     _emission_gate["last_emission_ts"] = 0.0
-    logger.info(f"[ADMIN] Deleted {count} signals from database (candles preserved)")
-    return {"status": "success", "deleted": count}
+    logger.info(f"[ADMIN] Full reset: deleted {signal_count} signals + {candle_count} candle records")
+    return {"status": "success", "deleted_signals": signal_count, "deleted_candles": candle_count}
 
 
 @app.get("/api/admin/logs")
