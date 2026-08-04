@@ -302,8 +302,8 @@ export const useAppStore = create<AppState>((set, get) => ({
         // (When the page is closed, the service worker handles it via Web Push.)
         const currentSignals = get().signals;
         if (currentSignals.length > 0 && parsedSignals.length > 0) {
-          const currentIds = new Set(currentSignals.map(s => s.id));
-          const newSignals = parsedSignals.filter(s => !currentIds.has(s.id));
+          const currentIds = new Set(currentSignals.map((s: Signal) => s.id));
+          const newSignals = parsedSignals.filter((s: Signal) => !currentIds.has(s.id));
           if (newSignals.length > 0) {
             // New signal(s) detected — play sound
             const sound = typeof window !== 'undefined'
