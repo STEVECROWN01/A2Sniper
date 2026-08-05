@@ -518,6 +518,28 @@ export const useAppStore = create<AppState>((set, get) => ({
           }
         });
 
+        // Cache market status for instant display on next reload
+        // (prevents the "DISCONNECTED" flash on page refresh)
+        if (typeof window !== 'undefined') {
+          try {
+            localStorage.setItem('a2sniper_cached_market', JSON.stringify({
+              liveStatus: isNowLive ? 'LIVE' : 'DISCONNECTED',
+              marketInfo: {
+                isConnected: isNowLive,
+                payouts: mergedPayouts,
+                pair_status: pairStatus,
+                all_otc_pairs: allOtcPairs,
+                account_balance: data.account_balance ?? null,
+                is_demo: data.is_demo,
+                balance_source: data.balance_source ?? null,
+                balance_last_updated: data.balance_last_updated ?? null,
+                balance_event_is_demo: data.balance_event_is_demo ?? null,
+              },
+              timestamp: Date.now(),
+            }));
+          } catch { /* ignore quota errors */ }
+        }
+
         // NO auto-reconnect — connection ONLY happens on user's explicit click.
         // If the connection drops, the user must manually click "Connect" again.
       }
@@ -537,6 +559,24 @@ export const useAppStore = create<AppState>((set, get) => ({
         if (cachedUser) {
           const parsed = JSON.parse(cachedUser);
           set({ user: parsed, isAuthenticated: true });
+        }
+      } catch { /* ignore parse errors */ }
+
+      // ─── INSTANT DISPLAY: load cached market status ───────────────────
+      // Prevents the "DISCONNECTED" flash on page refresh. The cached status
+      // appears immediately, then gets refreshed when fetchMarketStatus returns.
+      try {
+        const cachedMarket = localStorage.getItem('a2sniper_cached_market');
+        if (cachedMarket) {
+          const parsed = JSON.parse(cachedMarket);
+          // Only use cache if it's less than 5 minutes old (connection state
+          // can change, so stale cache shouldn't persist too long)
+          if (parsed.timestamp && (Date.now() - parsed.timestamp) < 5 * 60 * 1000) {
+            set({
+              liveStatus: parsed.liveStatus || 'DISCONNECTED',
+              marketInfo: parsed.marketInfo || null,
+            });
+          }
         }
       } catch { /* ignore parse errors */ }
     }

@@ -479,8 +479,8 @@ async def require_admin(credentials: HTTPAuthorizationCredentials = Security(sec
 
     user_id = payload.get("sub")
     async with AsyncSessionLocal() as session:
-        result = await session.execute(select(User).where(User.id == user_id))
-        user = result.scalar_one_or_none()
+        # Use safe fetch — falls back to raw SQL if notification_sound column is missing
+        user = await _safe_fetch_user(session, by_id=user_id)
         if not user or not user.is_admin:
             raise HTTPException(status_code=403, detail="Admin access required")
     return payload
