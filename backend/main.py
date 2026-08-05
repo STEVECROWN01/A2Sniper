@@ -2096,57 +2096,16 @@ async def get_signals(pair: str = None, limit: int = 200, offset: int = 0, crede
                 }
                 output.append(d)
 
-        # If DB had signals, return them. If DB was empty, ALSO check the
-        # in-memory deque (signals may not have been saved to DB).
-        if not output:
-            logger.info("[SIGNALS-API] DB returned 0 signals — checking in-memory deque")
-            for s in reversed(generated_signals):
-                if pair and s['pair'] != pair:
-                    continue
-                sig_time = datetime.fromisoformat(s['timestamp']) if isinstance(s.get('timestamp'), str) else s.get('timestamp')
-                if sig_time and sig_time.tzinfo is None:
-                    sig_time = sig_time.replace(tzinfo=timezone.utc)
-                expiration_seconds = (s.get('expiration', 1)) * 60
-                age_seconds = (now - sig_time).total_seconds() if sig_time else 999
-
-                if s.get('is_win') is True:
-                    status = "WON"
-                elif s.get('is_win') is False:
-                    status = "LOST"
-                elif age_seconds < expiration_seconds:
-                    status = "ACTIVE"
-                else:
-                    status = "EXPIRED"
-
-                d = {
-                    "id": s['id'],
-                    "pair": s['pair'],
-                    "direction": s['direction'],
-                    "entry_price": float(s['entry_price']) if s['entry_price'] else 0,
-                    "expiration": s['expiration'],
-                    "winrate": s.get('winrate', 70) or 70,
-                    "score": s.get('score', 4),
-                    "payout": s.get('payout', 0),
-                    "classification": s.get('classification', 'SIGNAL'),
-                    "timestamp": s['timestamp'],
-                    "is_win": s.get('is_win'),
-                    "status": status,
-                    "hash_signature": s.get('hash_signature', ''),
-                    "session_id": s.get('session_id'),
-                    # Analysis fields from in-memory signal dict
-                    "smc_structure": s.get('smc_structure', 'Price Action'),
-                    "smc_zone": s.get('smc_zone', 'N/A'),
-                    "chart_pattern": s.get('chart_pattern', 'Momentum'),
-                    "fibonacci": s.get('fibonacci', 'N/A'),
-                    "rsi_status": s.get('rsi_status', 'N/A'),
-                }
-                output.append(d)
-                if len(output) >= limit:
-                    break
+        # DB is the single source of truth. No in-memory fallback — the
+        # generated_signals deque is only for the trading_loop's internal
+        # candidate selection, NOT for serving API responses. Previously,
+        # when the DB was empty (after admin wipe), the API fell back to
+        # the in-memory deque which still had old signals — causing wiped
+        # stats to reappear within seconds.
 
         return {
             "signals": output,
-            "total": total_in_db if total_in_db > 0 else len(output),
+            "total": total_in_db,
             "active_count": active_count,
             "won_count": won_count,
             "lost_count": lost_count,
@@ -2154,45 +2113,14 @@ async def get_signals(pair: str = None, limit: int = 200, offset: int = 0, crede
         }
 
     except Exception as db_err:
-        logger.warning(f"[SIGNALS-API] DB query failed, falling back to in-memory: {db_err}")
-        # Fall back to in-memory deque
-        for s in reversed(generated_signals):  # most recent first
-            if pair and s['pair'] != pair:
-                continue
-            sig_time = datetime.fromisoformat(s['timestamp']) if isinstance(s.get('timestamp'), str) else s.get('timestamp')
-            if sig_time and sig_time.tzinfo is None:
-                sig_time = sig_time.replace(tzinfo=timezone.utc)
-            expiration_seconds = (s.get('expiration', 5)) * 60
-            age_seconds = (now - sig_time).total_seconds() if sig_time else 999
-
-            if age_seconds < expiration_seconds:
-                status = "ACTIVE"
-            else:
-                status = "EXPIRED"
-
-            d = {
-                "id": s['id'],
-                "pair": s['pair'],
-                "direction": s['direction'],
-                "entry_price": s['entry_price'],
-                "expiration": s['expiration'],
-                "winrate": s['winrate'],
-                "score": s['score'],
-                "payout": s['payout'],
-                "classification": s.get('classification', 'N/A'),
-                "timestamp": s['timestamp'],
-                "is_win": None,
-                "status": status,
-                "hash_signature": s.get('hash_signature', ''),
-                "session_id": s.get('session_id')
-            }
-            output.append(d)
-            if len(output) >= limit:
-                break
-            
+        logger.warning(f"[SIGNALS-API] DB query failed: {db_err}")
+        # Return empty — do NOT fall back to in-memory deque (causes stale data)
         return {
-            "signals": output, 
-            "total": len(output),
+            "signals": [],
+            "total": 0,
+            "active_count": 0,
+            "won_count": 0,
+            "lost_count": 0,
             "live_status": "LIVE" if po_scanner.is_connected else "DISCONNECTED"
         }
 
