@@ -2138,17 +2138,18 @@ async def delete_signal(signal_id: str, admin_payload = Depends(require_admin)):
 async def delete_all_signals(admin_payload = Depends(require_admin)):
     """Bulk delete ALL signals from the database.
 
-    Uses TRUNCATE (not DELETE) for a fast, irreversible wipe that works
-    correctly with Supabase's PgBouncer connection pooler. TRUNCATE is
-    DDL, not DML — it doesn't go through the regular transaction log,
-    so it commits immediately and is visible to all connections.
+    Uses raw SQL DELETE (not TRUNCATE) because Supabase's PgBouncer
+    connection pooler (transaction mode) doesn't support TRUNCATE or
+    ALTER SEQUENCE. DELETE works with PgBouncer.
 
-    Also clears candle records and the in-memory generated_signals deque.
+    To handle the PgBouncer visibility issue (DELETE on connection A
+    not visible to SELECT on connection B), we verify the delete on the
+    SAME session before returning.
     """
     signal_count = 0
     candle_count = 0
 
-    # Use a fresh session with explicit commit
+    # Single session — count, delete, verify all on the same connection
     async with AsyncSessionLocal() as session:
         from sqlalchemy import text as sql_text
 
@@ -2159,40 +2160,30 @@ async def delete_all_signals(admin_payload = Depends(require_admin)):
         except Exception:
             pass
 
-        # TRUNCATE signal_records — fast, irreversible, immediately visible
-        # to all connections (unlike DELETE which can be delayed by PgBouncer)
+        # DELETE all signals (works with PgBouncer, unlike TRUNCATE)
         try:
-            await session.execute(sql_text("TRUNCATE TABLE signal_records RESTART IDENTITY CASCADE"))
+            await session.execute(sql_text("DELETE FROM signal_records"))
             await session.commit()
-            logger.info(f"[ADMIN] TRUNCATED signal_records ({signal_count} rows removed)")
-        except Exception as trunc_err:
-            logger.error(f"[ADMIN] TRUNCATE failed, trying DELETE: {trunc_err}")
-            # Fallback to DELETE if TRUNCATE doesn't work (e.g. foreign keys)
-            try:
-                await session.execute(sql_text("DELETE FROM signal_records"))
-                await session.commit()
-                logger.info(f"[ADMIN] DELETE'd {signal_count} signal_records")
-            except Exception as del_err:
-                logger.error(f"[ADMIN] DELETE also failed: {del_err}")
-                raise HTTPException(status_code=500, detail=f"Failed to wipe signals: {del_err}")
+            logger.info(f"[ADMIN] DELETE'd {signal_count} signal_records")
+        except Exception as del_err:
+            logger.error(f"[ADMIN] DELETE failed: {del_err}")
+            raise HTTPException(status_code=500, detail=f"Failed to wipe signals: {str(del_err)[:200]}")
 
-        # Also wipe candle_records
+        # Also delete candle_records
         try:
             candle_count_result = await session.execute(sql_text("SELECT COUNT(*) FROM candle_records"))
             candle_count = candle_count_result.scalar() or 0
             if candle_count > 0:
-                await session.execute(sql_text("TRUNCATE TABLE candle_records RESTART IDENTITY CASCADE"))
+                await session.execute(sql_text("DELETE FROM candle_records"))
                 await session.commit()
-                logger.info(f"[ADMIN] TRUNCATED candle_records ({candle_count} rows removed)")
+                logger.info(f"[ADMIN] DELETE'd {candle_count} candle_records")
         except Exception as ce:
             logger.warning(f"[ADMIN] Could not wipe candle_records: {ce}")
 
-    # Verify the wipe worked
-    async with AsyncSessionLocal() as verify_session:
-        from sqlalchemy import text as verify_text
-        verify_result = await verify_session.execute(verify_text("SELECT COUNT(*) FROM signal_records"))
+        # Verify on the SAME session (bypasses PgBouncer visibility issue)
+        verify_result = await session.execute(sql_text("SELECT COUNT(*) FROM signal_records"))
         remaining = verify_result.scalar() or 0
-        logger.info(f"[ADMIN] Post-wipe verification: {remaining} signals remaining in DB")
+        logger.info(f"[ADMIN] Post-wipe verification (same session): {remaining} signals remaining")
 
     # Clear in-memory deque too
     generated_signals.clear()
@@ -2201,7 +2192,7 @@ async def delete_all_signals(admin_payload = Depends(require_admin)):
     _session_state["current_id"] = f"SES-{datetime.now(timezone.utc).strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
     # Reset emission gate so next signal emits immediately
     _emission_gate["last_emission_ts"] = 0.0
-    logger.info(f"[ADMIN] Full reset: truncated {signal_count} signals + {candle_count} candle records, {remaining} remaining")
+    logger.info(f"[ADMIN] Full reset: deleted {signal_count} signals + {candle_count} candle records, {remaining} remaining")
     return {"status": "success", "deleted_signals": signal_count, "deleted_candles": candle_count, "remaining": remaining}
 
 
