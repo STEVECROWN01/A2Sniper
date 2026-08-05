@@ -2153,12 +2153,28 @@ async def delete_all_signals(admin_payload = Depends(require_admin)):
     async with AsyncSessionLocal() as session:
         from sqlalchemy import text as sql_text
 
+        # Roll back any aborted transaction state on this pooled connection.
+        # Supabase's PgBouncer reuses connections — if a previous request
+        # left the connection in an aborted state (e.g. from the
+        # notification_sound column error), this session inherits that
+        # state and ALL queries fail with InFailedSQLTransactionError.
+        try:
+            await session.rollback()
+        except Exception:
+            pass
+
         # Count first (for the response)
         try:
             count_result = await session.execute(sql_text("SELECT COUNT(*) FROM signal_records"))
             signal_count = count_result.scalar() or 0
-        except Exception:
-            pass
+        except Exception as count_err:
+            logger.warning(f"[ADMIN] Count failed (trying rollback+retry): {count_err}")
+            await session.rollback()
+            try:
+                count_result = await session.execute(sql_text("SELECT COUNT(*) FROM signal_records"))
+                signal_count = count_result.scalar() or 0
+            except Exception:
+                signal_count = -1  # unknown
 
         # DELETE all signals (works with PgBouncer, unlike TRUNCATE)
         try:
@@ -2166,8 +2182,15 @@ async def delete_all_signals(admin_payload = Depends(require_admin)):
             await session.commit()
             logger.info(f"[ADMIN] DELETE'd {signal_count} signal_records")
         except Exception as del_err:
-            logger.error(f"[ADMIN] DELETE failed: {del_err}")
-            raise HTTPException(status_code=500, detail=f"Failed to wipe signals: {str(del_err)[:200]}")
+            logger.warning(f"[ADMIN] DELETE failed (trying rollback+retry): {del_err}")
+            await session.rollback()
+            try:
+                await session.execute(sql_text("DELETE FROM signal_records"))
+                await session.commit()
+                logger.info(f"[ADMIN] DELETE'd signal_records (retry succeeded)")
+            except Exception as del_err2:
+                logger.error(f"[ADMIN] DELETE retry also failed: {del_err2}")
+                raise HTTPException(status_code=500, detail=f"Failed to wipe signals: {str(del_err2)[:200]}")
 
         # Also delete candle_records
         try:
