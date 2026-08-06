@@ -114,7 +114,7 @@ def _detect_reversal_candle(df: pd.DataFrame, direction: str) -> bool:
 
     if direction == 'CALL':
         # Bullish reversal: long lower wick (hammer) or bullish engulfing
-        if lower_wick >= 1.3 * body and body > 0:
+        if lower_wick >= 1.1 * body and body > 0:
             return True
         # Check bullish engulfing
         prev = df.iloc[-2]
@@ -122,7 +122,7 @@ def _detect_reversal_candle(df: pd.DataFrame, direction: str) -> bool:
             return True
     else:  # PUT
         # Bearish reversal: long upper wick (shooting star) or bearish engulfing
-        if upper_wick >= 1.3 * body and body > 0:
+        if upper_wick >= 1.1 * body and body > 0:
             return True
         # Check bearish engulfing
         prev = df.iloc[-2]
@@ -183,16 +183,16 @@ def generate_ace_signal(df: pd.DataFrame, payout: float) -> Optional[Dict[str, A
     )
 
     # ═══ REGIME DETECTION ═════════════════════════════════════════
-    # ADX > 25: strong trend → trade continuation
-    # ADX < 20: ranging → trade BB reversal
-    # ADX 20-25: transitional → NO SIGNAL (uncertain)
+    # ADX > 22: trend → trade continuation
+    # ADX < 18: ranging → trade BB reversal
+    # ADX 18-22: transitional → NO SIGNAL (uncertain)
 
-    if 20 <= adx <= 25:
+    if 18 <= adx <= 22:
         logger.info(f"[ACE] ADX={adx:.1f} — transitional market, skipping (no signal)")
         return None
 
-    # ═══ STRATEGY 1: TREND CONTINUATION (ADX > 25) ═══════════════
-    if adx > 25:
+    # ═══ STRATEGY 1: TREND CONTINUATION (ADX > 22) ═══════════════
+    if adx > 22:
         logger.info(f"[ACE] ADX={adx:.1f} → TRENDING market → checking EMA21 pullback continuation")
 
         # Determine trend direction from EMA9 vs EMA21
@@ -207,9 +207,8 @@ def generate_ace_signal(df: pd.DataFrame, payout: float) -> Optional[Dict[str, A
             return None
 
         # ─── PULLBACK CHECK ───────────────────────────────────────
-        # Price must have pulled back NEAR EMA21 (within 0.5 ATR)
-        # and then closed back on the trend side.
-        pullback_to_ema = ema21_dist_atr <= 0.5
+        # Price must be NEAR EMA21 (within 1.0 ATR — relaxed from 0.5)
+        pullback_to_ema = ema21_dist_atr <= 1.0
 
         if not pullback_to_ema:
             logger.info(f"[ACE] Price too far from EMA21 ({ema21_dist_atr:.2f} ATR) — waiting for pullback")
@@ -221,20 +220,33 @@ def generate_ace_signal(df: pd.DataFrame, payout: float) -> Optional[Dict[str, A
             if close <= ema21:
                 logger.info("[ACE] CALL: close not above EMA21 — no continuation confirmation")
                 return None
-            # Previous candle should have dipped below or near EMA21 (the pullback)
+            # Check if EITHER the current or previous candle dipped near EMA21
+            # (relaxed: was only previous candle, now checks last 3 candles)
             prev_low = float(prev['low'])
-            if prev_low > ema21 + atr * 0.3:
-                logger.info("[ACE] CALL: previous candle didn't dip to EMA21 — no real pullback")
+            prev2 = df.iloc[-3] if len(df) >= 3 else prev
+            prev2_low = float(prev2['low'])
+            curr_low = float(last['low'])
+            pulled_back = (prev_low <= ema21 + atr * 0.5) or \
+                          (prev2_low <= ema21 + atr * 0.5) or \
+                          (curr_low <= ema21 + atr * 0.5)
+            if not pulled_back:
+                logger.info("[ACE] CALL: no recent candle dipped to EMA21 — no real pullback")
                 return None
         else:  # PUT
             # Current candle closed below EMA21 (back in downtrend after pullback)
             if close >= ema21:
                 logger.info("[ACE] PUT: close not below EMA21 — no continuation confirmation")
                 return None
-            # Previous candle should have rallied above or near EMA21 (the pullback)
+            # Check if any of the last 3 candles rallied near EMA21 (relaxed)
             prev_high = float(prev['high'])
-            if prev_high < ema21 - atr * 0.3:
-                logger.info("[ACE] PUT: previous candle didn't rally to EMA21 — no real pullback")
+            prev2 = df.iloc[-3] if len(df) >= 3 else prev
+            prev2_high = float(prev2['high'])
+            curr_high = float(last['high'])
+            pulled_back = (prev_high >= ema21 - atr * 0.5) or \
+                          (prev2_high >= ema21 - atr * 0.5) or \
+                          (curr_high >= ema21 - atr * 0.5)
+            if not pulled_back:
+                logger.info("[ACE] PUT: no recent candle rallied to EMA21 — no real pullback")
                 return None
 
         # ─── M5 ALIGNMENT (bonus, not required) ───────────────────
@@ -308,8 +320,8 @@ def generate_ace_signal(df: pd.DataFrame, payout: float) -> Optional[Dict[str, A
         result['payout'] = payout
         return result
 
-    # ═══ STRATEGY 2: BOLLINGER BAND REVERSAL (ADX < 20) ══════════
-    if adx < 20:
+    # ═══ STRATEGY 2: BOLLINGER BAND REVERSAL (ADX < 18) ══════════
+    if adx < 18:
         logger.info(f"[ACE] ADX={adx:.1f} → RANGING market → checking BB reversal at extremes")
 
         # ─── CHECK BB PIERCE ──────────────────────────────────────
@@ -327,8 +339,8 @@ def generate_ace_signal(df: pd.DataFrame, payout: float) -> Optional[Dict[str, A
                 logger.info("[ACE] CALL: close still below BBL — no recovery, skipping")
                 return None
 
-            # RSI must be oversold (< 35)
-            if rsi >= 35:
+            # RSI must be oversold (< 40 — relaxed from 35)
+            if rsi >= 40:
                 logger.info(f"[ACE] CALL: RSI={rsi:.1f} not oversold (< 35 needed), skipping")
                 return None
 
@@ -411,8 +423,8 @@ def generate_ace_signal(df: pd.DataFrame, payout: float) -> Optional[Dict[str, A
                 logger.info("[ACE] PUT: close still above BBU — no recovery, skipping")
                 return None
 
-            # RSI must be overbought (> 65)
-            if rsi <= 65:
+            # RSI must be overbought (> 60 — relaxed from 65)
+            if rsi <= 60:
                 logger.info(f"[ACE] PUT: RSI={rsi:.1f} not overbought (> 65 needed), skipping")
                 return None
 
