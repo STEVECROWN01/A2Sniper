@@ -36,6 +36,16 @@ from engine.monitoring_engine import MonitoringEngine
 from engine.risk_manager import RiskManager
 from engine.sniper_engine import generate_sniper_signal, validate_candle_data
 
+# CSE Engine — Confluence Score Engine (6-factor weighted scoring).
+# NOT wired to the bot or signals page. Exists as a standalone module,
+# ready to be activated when the user requests the switch from Option C.
+# To activate: replace generate_sniper_signal() calls with generate_cse_signal().
+try:
+    from engine.cse_engine import generate_cse_signal
+    logger.info("[CSE] Confluence Score Engine loaded (standby — not active)")
+except ImportError as e:
+    logger.warning(f"[CSE] Could not import CSE engine: {e}")
+
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(name)s] %(levelname)s: %(message)s')
 logger = logging.getLogger('A2Sniper')
 
