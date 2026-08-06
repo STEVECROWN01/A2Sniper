@@ -702,14 +702,14 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False, return_can
     # generate_sniper_signal(df_with_indicators, payout, strict_mode=strict_mode)
     df_with_indicators.attrs['pair'] = pair
 
-    # CSE threshold: bot=25 (responsive, filters out weakest), signals page=45 (high quality)
+    # CSE threshold: bot=35 (moderate quality, 1-3 signals/hour), signals page=50 (high quality)
     # Typical signal scores: weak=10-20, moderate=25-40, strong=45-70, A+=70+
-    cse_threshold = 45 if strict_mode else 25
+    cse_threshold = 50 if strict_mode else 35
     engine_result = generate_cse_signal(df_with_indicators, payout, threshold=cse_threshold)
     if engine_result is None:
         logger.info(
             f"[{pair}] No CSE signal — score below threshold {cse_threshold}. "
-            f"candles={len(df_with_indicators)}, mode={'signals page (threshold=45)' if strict_mode else 'bot (threshold=25)'}"
+            f"candles={len(df_with_indicators)}, mode={'signals page (threshold=50)' if strict_mode else 'bot (threshold=35)'}"
         )
         return None
 
