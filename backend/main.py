@@ -36,18 +36,17 @@ from engine.monitoring_engine import MonitoringEngine
 from engine.risk_manager import RiskManager
 from engine.sniper_engine import generate_sniper_signal, validate_candle_data
 
-# CSE Engine — Confluence Score Engine (6-factor weighted scoring).
-# NOT wired to the bot or signals page. Exists as a standalone module,
-# ready to be activated when the user requests the switch from Option C.
-# To activate: replace generate_sniper_signal() calls with generate_cse_signal().
-try:
-    from engine.cse_engine import generate_cse_signal
-    logger.info("[CSE] Confluence Score Engine loaded (standby — not active)")
-except ImportError as e:
-    logger.warning(f"[CSE] Could not import CSE engine: {e}")
-
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(name)s] %(levelname)s: %(message)s')
 logger = logging.getLogger('A2Sniper')
+
+# CSE Engine — Confluence Score Engine (6-factor weighted scoring).
+# Now active: the bot uses CSE with threshold=50, signals page uses threshold=70.
+# To revert to Option C: replace generate_cse_signal() with generate_sniper_signal().
+try:
+    from engine.cse_engine import generate_cse_signal
+    logger.info("[CSE] Confluence Score Engine loaded and active")
+except ImportError as e:
+    logger.warning(f"[CSE] Could not import CSE engine: {e}")
 
 try:
     from engine.momentum_engine import generate_momentum_signal, validate_momentum_data
