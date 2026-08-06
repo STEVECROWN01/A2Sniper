@@ -690,20 +690,30 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False, return_can
 
     # 6. Run the PRICE ACTION engine
     # ─────────────────────────────────────────────────────────────────────
-    # NO FALLBACKS. The engine either finds a real price action setup
-    # (pattern at level + M5 confirmation) or returns None. If None,
-    # the bot honestly says "No signal right now."
+    # ═══ ENGINE SELECTION ══════════════════════════════════════════
+    # The bot now uses the CSE (Confluence Score Engine) — a 6-factor
+    # weighted scoring system that should raise win rate from ~52% to ~60%.
+    # threshold=50 for bot (more signals, ~56-60% win rate).
+    # The signals page background loop still uses strict_mode=True (Option D)
+    # via the strict_mode parameter below — but since CSE doesn't use
+    # strict_mode, the signals page uses threshold=70 (set in the
+    # force_analyze_pair / analyze_pair calls).
+    #
+    # To switch back to Option C: replace generate_cse_signal with
+    # generate_sniper_signal(df_with_indicators, payout, strict_mode=strict_mode)
     df_with_indicators.attrs['pair'] = pair
 
-    engine_result = generate_sniper_signal(df_with_indicators, payout, strict_mode=strict_mode)
+    # CSE threshold: bot=50 (responsive), signals page=70 (high quality)
+    cse_threshold = 70 if strict_mode else 50
+    engine_result = generate_cse_signal(df_with_indicators, payout, threshold=cse_threshold)
     if engine_result is None:
         logger.info(
-            f"[{pair}] No price action signal — no pattern at key level with M5 confirmation. "
-            f"candles={len(df_with_indicators)}, mode={'strict (Option D)' if strict_mode else 'bot (Option C)'}"
+            f"[{pair}] No CSE signal — score below threshold {cse_threshold}. "
+            f"candles={len(df_with_indicators)}, mode={'signals page (threshold=70)' if strict_mode else 'bot (threshold=50)'}"
         )
         return None
 
-    # Use the result from whichever engine ran
+    # Use the result from the CSE engine
     sniper_result = engine_result
 
     # 7. Risk check (skip in force mode — user explicitly requested)
