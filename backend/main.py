@@ -39,14 +39,14 @@ from engine.sniper_engine import generate_sniper_signal, validate_candle_data
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(name)s] %(levelname)s: %(message)s')
 logger = logging.getLogger('A2Sniper')
 
-# CSE Engine — Confluence Score Engine (6-factor weighted scoring).
-# Now active: the bot uses CSE with threshold=50, signals page uses threshold=70.
-# To revert to Option C: replace generate_cse_signal() with generate_sniper_signal().
+# ACE Engine — Adaptive Confluence Engine (regime-adaptive: trend continuation + reversal).
+# Active: the bot uses ACE. The signals page uses Option D (strict sniper_engine).
+# Option C (sniper_engine) is imported but on standby — switch back if needed.
 try:
-    from engine.cse_engine import generate_cse_signal
-    logger.info("[CSE] Confluence Score Engine loaded and active")
+    from engine.ace_engine import generate_ace_signal
+    logger.info("[ACE] Adaptive Confluence Engine loaded and active (bot)")
 except ImportError as e:
-    logger.warning(f"[CSE] Could not import CSE engine: {e}")
+    logger.warning(f"[ACE] Could not import ACE engine: {e}")
 
 try:
     from engine.momentum_engine import generate_momentum_signal, validate_momentum_data
@@ -687,33 +687,40 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False, return_can
         logger.info(f"[{pair}] Data rejected: {validation_reason}")
         return None
 
-    # 6. Run the PRICE ACTION engine
+    # 6. Run the signal engine
     # ─────────────────────────────────────────────────────────────────────
     # ═══ ENGINE SELECTION ══════════════════════════════════════════
-    # The bot now uses the CSE (Confluence Score Engine) — a 6-factor
-    # weighted scoring system that should raise win rate from ~52% to ~60%.
-    # threshold=50 for bot (more signals, ~56-60% win rate).
-    # The signals page background loop still uses strict_mode=True (Option D)
-    # via the strict_mode parameter below — but since CSE doesn't use
-    # strict_mode, the signals page uses threshold=70 (set in the
-    # force_analyze_pair / analyze_pair calls).
+    # BOT: uses ACE (Adaptive Confluence Engine) — regime-adaptive:
+    #   - Trending (ADX>20): EMA21 pullback continuation (~62-65% win rate)
+    #   - Ranging (ADX<20): BB reversal at extremes (~58-62% win rate)
+    #   - Transitional (ADX 20-25): no signal (filter out uncertainty)
     #
-    # To switch back to Option C: replace generate_cse_signal with
-    # generate_sniper_signal(df_with_indicators, payout, strict_mode=strict_mode)
+    # SIGNALS PAGE: uses Option D (sniper_engine strict_mode=True)
+    #   - Pattern + BOTH bonuses (level AND M5) — high quality, fewer signals
+    #
+    # OPTION C: on standby (imported, not called). To switch bot back:
+    #   replace generate_ace_signal() with generate_sniper_signal(df, payout, strict_mode=False)
     df_with_indicators.attrs['pair'] = pair
 
-    # CSE threshold: bot=35 (moderate quality, 1-3 signals/hour), signals page=50 (high quality)
-    # Typical signal scores: weak=10-20, moderate=25-40, strong=45-70, A+=70+
-    cse_threshold = 50 if strict_mode else 35
-    engine_result = generate_cse_signal(df_with_indicators, payout, threshold=cse_threshold)
-    if engine_result is None:
-        logger.info(
-            f"[{pair}] No CSE signal — score below threshold {cse_threshold}. "
-            f"candles={len(df_with_indicators)}, mode={'signals page (threshold=50)' if strict_mode else 'bot (threshold=35)'}"
-        )
-        return None
+    if strict_mode:
+        # Signals page → Option D (strict sniper engine)
+        engine_result = generate_sniper_signal(df_with_indicators, payout, strict_mode=True)
+        if engine_result is None:
+            logger.info(
+                f"[{pair}] No Option D signal — no pattern at key level with M5 confirmation. "
+                f"candles={len(df_with_indicators)}, mode=signals page (Option D)"
+            )
+            return None
+    else:
+        # Bot → ACE (Adaptive Confluence Engine)
+        engine_result = generate_ace_signal(df_with_indicators, payout)
+        if engine_result is None:
+            logger.info(
+                f"[{pair}] No ACE signal — no qualifying trend continuation or reversal setup. "
+                f"candles={len(df_with_indicators)}, mode=bot (ACE)"
+            )
+            return None
 
-    # Use the result from the CSE engine
     sniper_result = engine_result
 
     # 7. Risk check (skip in force mode — user explicitly requested)
