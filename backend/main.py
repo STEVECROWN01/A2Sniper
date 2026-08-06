@@ -40,11 +40,12 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(name)s] %(levelna
 logger = logging.getLogger('A2Sniper')
 
 # ACE Engine — Adaptive Confluence Engine (regime-adaptive: trend continuation + reversal).
-# Active: the bot uses ACE. The signals page uses Option D (strict sniper_engine).
+# Active: BOTH the bot AND the signals page use ACE.
 # Option C (sniper_engine) is imported but on standby — switch back if needed.
+# Option D (sniper_engine strict) is also on standby.
 try:
     from engine.ace_engine import generate_ace_signal
-    logger.info("[ACE] Adaptive Confluence Engine loaded and active (bot)")
+    logger.info("[ACE] Adaptive Confluence Engine loaded and active (bot + signals page)")
 except ImportError as e:
     logger.warning(f"[ACE] Could not import ACE engine: {e}")
 
@@ -703,12 +704,12 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False, return_can
     df_with_indicators.attrs['pair'] = pair
 
     if strict_mode:
-        # Signals page → Option D (strict sniper engine)
-        engine_result = generate_sniper_signal(df_with_indicators, payout, strict_mode=True)
+        # Signals page → ACE (Adaptive Confluence Engine)
+        engine_result = generate_ace_signal(df_with_indicators, payout)
         if engine_result is None:
             logger.info(
-                f"[{pair}] No Option D signal — no pattern at key level with M5 confirmation. "
-                f"candles={len(df_with_indicators)}, mode=signals page (Option D)"
+                f"[{pair}] No ACE signal — no qualifying trend continuation or reversal setup. "
+                f"candles={len(df_with_indicators)}, mode=signals page (ACE)"
             )
             return None
     else:
