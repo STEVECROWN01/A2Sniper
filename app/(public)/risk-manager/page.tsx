@@ -979,34 +979,34 @@ export default function RiskManagerPage() {
             </div>
 
             <div className="overflow-x-auto">
-              <table className="w-full table-auto border-collapse min-w-[900px]">
+              <table className="w-full table-auto border-collapse min-w-[700px]">
                 <colgroup>
-                  <col className="w-[50px]" />
-                  <col className="w-[120px]" />
-                  <col className="w-[100px]" />
-                  <col className="w-[160px]" />
-                  <col className="w-[120px]" />
-                  <col className="w-[120px]" />
+                  <col className="w-[40px]" />
+                  <col className="w-[90px]" />
+                  <col className="w-[70px]" />
                   <col className="w-[130px]" />
-                  <col className="w-[140px]" />
+                  <col className="w-[80px]" />
+                  <col className="w-[80px]" />
+                  <col className="w-[90px]" />
+                  <col className="w-[110px]" />
                 </colgroup>
                 <thead>
                   <tr className="bg-black/40 text-[10px] font-black text-gray-600 uppercase tracking-[0.1em] sm:tracking-[0.2em]">
-                    <th className="px-3 sm:px-5 py-4 text-left">#</th>
-                    <th className="px-3 sm:px-5 py-4 text-left">Pair</th>
-                    <th className="px-3 sm:px-5 py-4 text-left">Time</th>
-                    <th className="px-3 sm:px-5 py-4 text-left">Result</th>
-                    <th className="px-3 sm:px-5 py-4 text-left">Stake ($)</th>
-                    <th className="px-3 sm:px-5 py-4 text-right">Return ($)</th>
-                    <th className="px-3 sm:px-5 py-4 text-right">Balance ($)</th>
-                    <th className="px-3 sm:px-5 py-4 text-center">Payout (%)</th>
+                    <th className="px-2 sm:px-3 py-3.5 text-left">#</th>
+                    <th className="px-2 sm:px-3 py-3.5 text-left">Pair</th>
+                    <th className="px-2 sm:px-3 py-3.5 text-left">Time</th>
+                    <th className="px-2 sm:px-3 py-3.5 text-left">Result</th>
+                    <th className="px-2 sm:px-3 py-3.5 text-left">Stake ($)</th>
+                    <th className="px-2 sm:px-3 py-3.5 text-right">Return ($)</th>
+                    <th className="px-2 sm:px-3 py-3.5 text-right">Balance ($)</th>
+                    <th className="px-2 sm:px-3 py-3.5 text-center">Payout (%)</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-800/30">
                   {results.computedTrades.map((trade, i) => (
                     <tr key={i} className="hover:bg-white/[0.02] transition-colors group">
-                      <td className="px-3 sm:px-5 py-4 text-xs font-black text-gray-600">{i + 1}</td>
-                      <td className="px-3 sm:px-5 py-4">
+                      <td className="px-2 sm:px-3 py-3.5 text-xs font-black text-gray-600">{i + 1}</td>
+                      <td className="px-2 sm:px-3 py-3.5">
                         <input
                           type="text"
                           value={trade.pair || ''}
@@ -1017,7 +1017,7 @@ export default function RiskManagerPage() {
                           }`}
                         />
                       </td>
-                      <td className="px-3 sm:px-5 py-4">
+                      <td className="px-2 sm:px-3 py-3.5">
                         <input
                           type="text"
                           value={trade.time || ''}
@@ -1028,7 +1028,7 @@ export default function RiskManagerPage() {
                           }`}
                         />
                       </td>
-                      <td className="px-3 sm:px-5 py-4">
+                      <td className="px-2 sm:px-3 py-3.5">
                         <div className="flex gap-2">
                           <button
                             onClick={() => handleUpdateTrade(i, 'result', 'WIN')}
@@ -1044,7 +1044,7 @@ export default function RiskManagerPage() {
                           </button>
                         </div>
                       </td>
-                      <td className="px-3 sm:px-5 py-4">
+                      <td className="px-2 sm:px-3 py-3.5">
                         <input
                           type="number"
                           value={trade.amount || ''}
@@ -1055,17 +1055,17 @@ export default function RiskManagerPage() {
                           }`}
                         />
                       </td>
-                      <td className="px-3 sm:px-5 py-4 text-right font-black text-xs">
+                      <td className="px-2 sm:px-3 py-3.5 text-right font-black text-xs">
                         {trade.result === 'WIN' ? (
                           <span className="text-green-400">+{trade.return.toFixed(2)}</span>
                         ) : trade.result === 'LOSS' ? (
                           <span className="text-red-400">-{trade.amount.toFixed(2)}</span>
                         ) : '-'}
                       </td>
-                      <td className="px-3 sm:px-5 py-4 text-right font-black text-xs text-[#D4AF37]">
+                      <td className="px-2 sm:px-3 py-3.5 text-right font-black text-xs text-[#D4AF37]">
                         {trade.balance === '-' ? '-' : `$${trade.balance}`}
                       </td>
-                      <td className="px-3 sm:px-5 py-4 text-center">
+                      <td className="px-2 sm:px-3 py-3.5 text-center">
                         <div className="flex items-center">
                           <input
                             type="number"
