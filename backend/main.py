@@ -704,7 +704,7 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False, return_can
     df_with_indicators.attrs['pair'] = pair
 
     if strict_mode:
-        # Signals page → ACE (Adaptive Confluence Engine)
+        # Signals page → ACE (Adaptive Confluence Engine, full M5 analysis)
         engine_result = generate_ace_signal(df_with_indicators, payout)
         if engine_result is None:
             logger.info(
@@ -713,14 +713,22 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False, return_can
             )
             return None
     else:
-        # Bot → ACE (Adaptive Confluence Engine, fast_mode for SCAN_ALL speed)
+        # Bot → ACE first (fast_mode), then FALLBACK to Option C if ACE finds nothing.
+        # This ensures the bot always returns a signal when patterns exist,
+        # while ACE setups (higher win rate) take priority when available.
         engine_result = generate_ace_signal(df_with_indicators, payout, fast_mode=force)
-        if engine_result is None:
-            logger.info(
-                f"[{pair}] No ACE signal — no qualifying trend continuation or reversal setup. "
-                f"candles={len(df_with_indicators)}, mode=bot (ACE)"
-            )
-            return None
+        if engine_result is not None:
+            logger.info(f"[{pair}] ACE signal found — using ACE (higher win rate)")
+        else:
+            # ACE found nothing → fall back to Option C (pattern + 1 bonus)
+            logger.info(f"[{pair}] No ACE signal — falling back to Option C (pattern + 1 bonus)")
+            engine_result = generate_sniper_signal(df_with_indicators, payout, strict_mode=False)
+            if engine_result is None:
+                logger.info(
+                    f"[{pair}] No Option C signal either — no pattern at key level. "
+                    f"candles={len(df_with_indicators)}, mode=bot (ACE→Option C fallback)"
+                )
+                return None
 
     sniper_result = engine_result
 
