@@ -132,22 +132,14 @@ def _detect_reversal_candle(df: pd.DataFrame, direction: str) -> bool:
     return False
 
 
-def generate_ace_signal(df: pd.DataFrame, payout: float) -> Optional[Dict[str, Any]]:
+def generate_ace_signal(df: pd.DataFrame, payout: float, fast_mode: bool = False) -> Optional[Dict[str, Any]]:
     """
     Generate a signal using the Adaptive Confluence Engine.
 
-    Detects market regime via ADX and applies the appropriate strategy:
-    - ADX > 25 (trending): EMA21 pullback continuation
-    - ADX < 20 (ranging): Bollinger Band reversal at extremes
-    - ADX 20-25 (transitional): no signal
-
     Args:
-        df: DataFrame with OHLCV + indicators (ADX_14, EMA_21, EMA_9,
-            BBU_20_2.0, BBL_20_2.0, RSI_14, ATRr_14)
+        df: DataFrame with OHLCV + indicators
         payout: The pair's payout percentage
-
-    Returns:
-        Signal dict or None if no qualifying setup.
+        fast_mode: If True, skip M5 resampling (faster, used by bot SCAN_ALL)
     """
     if len(df) < 30:
         logger.info(f"[ACE] Not enough candles: {len(df)} < 30")
@@ -171,7 +163,7 @@ def generate_ace_signal(df: pd.DataFrame, payout: float) -> Optional[Dict[str, A
     bbl = float(last.get('BBL_20_2.0', 0)) if 'BBL_20_2.0' in df.columns else 0
     bbm = float(last.get('BBM_20_2.0', close)) if 'BBM_20_2.0' in df.columns else close
 
-    m5_trend = _get_m5_trend(df)
+    m5_trend = 'RANGE' if fast_mode else _get_m5_trend(df)
 
     # Distance from EMA21 in ATR units (for pullback detection)
     ema21_dist_atr = abs(close - ema21) / atr if atr > 0 else 0

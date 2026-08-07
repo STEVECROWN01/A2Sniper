@@ -713,8 +713,8 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False, return_can
             )
             return None
     else:
-        # Bot → ACE (Adaptive Confluence Engine)
-        engine_result = generate_ace_signal(df_with_indicators, payout)
+        # Bot → ACE (Adaptive Confluence Engine, fast_mode for SCAN_ALL speed)
+        engine_result = generate_ace_signal(df_with_indicators, payout, fast_mode=force)
         if engine_result is None:
             logger.info(
                 f"[{pair}] No ACE signal — no qualifying trend continuation or reversal setup. "
