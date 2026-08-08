@@ -704,14 +704,22 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False, return_can
     df_with_indicators.attrs['pair'] = pair
 
     if strict_mode:
-        # Signals page → ACE (Adaptive Confluence Engine, full M5 analysis)
+        # Signals page → ACE first, then Option D fallback
+        # ACE is strict (trend continuation / BB reversal) — may not find setups often.
+        # Fall back to Option D (pattern + BOTH bonuses) so the signals page still
+        # emits when ACE finds nothing but a good price action setup exists.
         engine_result = generate_ace_signal(df_with_indicators, payout)
-        if engine_result is None:
-            logger.info(
-                f"[{pair}] No ACE signal — no qualifying trend continuation or reversal setup. "
-                f"candles={len(df_with_indicators)}, mode=signals page (ACE)"
-            )
-            return None
+        if engine_result is not None:
+            logger.info(f"[{pair}] ACE signal found — using ACE (higher win rate)")
+        else:
+            logger.info(f"[{pair}] No ACE signal — falling back to Option D (pattern + BOTH bonuses)")
+            engine_result = generate_sniper_signal(df_with_indicators, payout, strict_mode=True)
+            if engine_result is None:
+                logger.info(
+                    f"[{pair}] No Option D signal either — no pattern at key level with M5. "
+                    f"candles={len(df_with_indicators)}, mode=signals page (ACE→Option D fallback)"
+                )
+                return None
     else:
         # Bot → ACE first (fast_mode), then FALLBACK to Option C if ACE finds nothing.
         # This ensures the bot always returns a signal when patterns exist,
