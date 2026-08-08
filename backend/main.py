@@ -775,8 +775,8 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False, return_can
             analyze_pair_internal._last_signal_time = {}
         last_time = analyze_pair_internal._last_signal_time.get(pair, 0)
         now_ts = datetime.now(timezone.utc).timestamp()
-        if (now_ts - last_time) < 60:
-            logger.debug(f"[{pair}] Background signal skipped — duplicate within 60s window")
+        if (now_ts - last_time) < 30:  # Reduced from 60s to 30s — same as emission gate
+            logger.debug(f"[{pair}] Background signal skipped — duplicate within 30s window")
             return None
 
     # ─── CANDIDATE MODE (background scanning) ───────────────────────────────
@@ -941,7 +941,7 @@ async def _emit_candidate(candidate: dict, force: bool = False) -> dict:
             analyze_pair_internal._last_signal_time = {}
         last_time = analyze_pair_internal._last_signal_time.get(pair, 0)
         now_ts_check = datetime.now(timezone.utc).timestamp()
-        if (now_ts_check - last_time) < 60:
+        if (now_ts_check - last_time) < 30:  # Reduced from 60s to 30s
             logger.info(
                 f"[EMIT-SKIP] {pair} — duplicate within 60s window "
                 f"(last={last_time:.0f}, now={now_ts_check:.0f}, "
@@ -1314,8 +1314,10 @@ async def trading_loop():
             await asyncio.sleep(5)
 
         except Exception as e:
-            logger.error("Erreur boucle principale", exc_info=True)
+            logger.error(f"Erreur boucle principale: {e}", exc_info=True)
             await asyncio.sleep(10)
+            # CRITICAL: the loop must continue even after an error.
+            # If it exits, no more signals will ever be emitted.
 
 async def resolution_loop():
     """Boucle de résolution RÉELLE des signaux expirés."""
