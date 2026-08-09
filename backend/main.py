@@ -1233,24 +1233,28 @@ async def trading_loop():
                 logger.info("[LOOP] No live FOREX pairs meet criteria (active + payout>=70%) — waiting for PO update")
                 pairs_to_scan = []
 
-            # ═══ COLLECT CANDIDATES (no emission) ═══════════════════════════
-            # ═══ CRITICAL: ROTATE changeSymbol ═══════════════════════════
-            # PO only pushes tick data for the LAST subscribed pair. Without
-            # rotating changeSymbol, only 1 pair gets fresh candle data.
-            # We send changeSymbol for ONE pair per cycle (rotating through
-            # all pairs). Over 30 pairs × 5s = 2.5 min to refresh all pairs.
-            # This is fire-and-forget — PO pushes new candles async.
-            if pairs_to_scan and po_scanner.is_connected and po_scanner._ws:
-                if not hasattr(trading_loop, '_subscribe_idx'):
-                    trading_loop._subscribe_idx = 0
-                sub_pair = pairs_to_scan[trading_loop._subscribe_idx % len(pairs_to_scan)]
-                trading_loop._subscribe_idx += 1
-                try:
-                    sub_asset = po_scanner.get_asset_symbol(sub_pair)
-                    await po_scanner._ws.send(f'42["changeSymbol",{{"asset":"{sub_asset}","period":60}}]')
-                    logger.info(f"[LOOP] Subscribed to {sub_pair} (changeSymbol #{trading_loop._subscribe_idx})")
-                except Exception:
-                    pass
+            # ═══ COLLECT CANDIDATES (no emission) ═══════════════════════
+            # ═══ CRITICAL: REFRESH ONE PAIR PER CYCLE ═══════════════════
+            # PO only pushes fresh candle data for pairs we explicitly request via
+            # changeSymbol + loadHistoryPeriod. Without this, the cache is frozen
+            # at connect time and the engine never sees new market data.
+            #
+            # Strategy: each 5s cycle, pick ONE pair, clear its cache, and let
+            # get_candles() fetch fresh data via WebSocket (2s timeout).
+            # Over 30 pairs × 5s = 150s (2.5 min) to refresh ALL pairs.
+            # The other 29 pairs use their existing cache (which may be up to
+            # 2.5 min old — acceptable for pattern detection).
+            if pairs_to_scan and po_scanner.is_connected:
+                if not hasattr(trading_loop, '_refresh_idx'):
+                    trading_loop._refresh_idx = 0
+                refresh_pair = pairs_to_scan[trading_loop._refresh_idx % len(pairs_to_scan)]
+                trading_loop._refresh_idx += 1
+                # Clear this pair's cache so get_candles() fetches fresh data
+                refresh_asset = po_scanner.get_asset_symbol(refresh_pair)
+                refresh_key = f"{refresh_asset}_1m"
+                if refresh_key in po_scanner._candles_cache:
+                    del po_scanner._candles_cache[refresh_key]
+                    logger.info(f"[LOOP] Cleared cache for {refresh_pair} — will fetch fresh data")
 
             candidates = []
             for pair in pairs_to_scan:
