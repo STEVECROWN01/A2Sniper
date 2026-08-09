@@ -2348,6 +2348,9 @@ class PocketOptionScanner:
         cache_key = f"{asset}_1m"
         cached_df = self._candles_cache.get(cache_key)
         if cached_df is not None and not cached_df.empty:
+            # Stamp the cache with a timestamp if it doesn't have one
+            if not hasattr(cached_df, 'attrs') or not cached_df.attrs.get('last_updated'):
+                cached_df.attrs['last_updated'] = datetime.now(timezone.utc).timestamp()
             logger.info(f"[SCANNER-CANDLE-HIT] asset={asset} tf={timeframe} bars={len(cached_df)} (REST cache)")
             return cached_df.copy()
 

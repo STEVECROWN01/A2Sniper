@@ -660,27 +660,25 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False, return_can
         return None
 
     # 3. Fetch 1-minute candles (need 25+ for Bollinger/RSI/Stoch/CCI)
-    # For background (non-force) mode, FORCE a fresh candle fetch by
-    # temporarily clearing the cache for this pair. This ensures the
-    # trading_loop always analyzes current market data, not stale candles
-    # from the initial connection prefetch.
-    if not force and not return_candidate:
-        pass  # Keep existing behavior for direct (non-candidate) background calls
-    elif not force and return_candidate:
-        # Background candidate scan — refresh candles by requesting changeSymbol
-        # This makes PO push fresh candle data for this pair.
-        # Only do this every 5 cycles (every ~25s) to avoid overloading PO.
-        if not hasattr(analyze_pair_internal, '_candle_refresh_counter'):
-            analyze_pair_internal._candle_refresh_counter = {}
-        counter = analyze_pair_internal._candle_refresh_counter.get(pair, 0)
-        analyze_pair_internal._candle_refresh_counter[pair] = counter + 1
-        if counter % 5 == 0:  # Every 5th scan (~25s)
-            asset = po_scanner.get_asset_symbol(pair)
-            try:
-                await po_scanner._ws.send(f'42["changeSymbol",{{"asset":"{asset}","period":60}}]')
-                await asyncio.sleep(0.1)  # Brief yield for PO to respond
-            except Exception:
-                pass
+    # For background scans, clear the cache for this pair FIRST so get_candles()
+    # is forced to request fresh data from PO via WebSocket changeSymbol.
+    # Without this, get_candles() returns stale cached candles from the initial
+    # connection prefetch — PO only pushes live ticks for the currently
+    # subscribed pair, so all other pairs' caches are frozen at connect time.
+    if not force:
+        asset = po_scanner.get_asset_symbol(pair)
+        cache_key = f"{asset}_1m"
+        if cache_key in po_scanner._candles_cache:
+            cached = po_scanner._candles_cache[cache_key]
+            # Only clear if cache is older than 60 seconds (don't clear every cycle)
+            if hasattr(cached, 'attrs') and cached.attrs.get('last_updated', 0):
+                cache_age = datetime.now(timezone.utc).timestamp() - cached.attrs.get('last_updated', 0)
+                if cache_age > 60:
+                    logger.info(f"[{pair}] Cache stale ({cache_age:.0f}s old) — clearing for fresh fetch")
+                    del po_scanner._candles_cache[cache_key]
+            else:
+                # No timestamp on cache — clear it (force fresh fetch)
+                del po_scanner._candles_cache[cache_key]
 
     df_m1 = await po_scanner.get_candles(pair, timeframe="1m", count=100)
     # Yield to event loop after the WebSocket candle fetch — allows pending
