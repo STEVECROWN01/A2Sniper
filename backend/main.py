@@ -1234,11 +1234,24 @@ async def trading_loop():
                 pairs_to_scan = []
 
             # ═══ COLLECT CANDIDATES (no emission) ═══════════════════════════
-            # Scan all pairs using return_candidate=True — this runs the full
-            # analysis (candles, indicators, momentum scoring, risk check,
-            # circuit breaker) but returns a candidate dict instead of emitting.
-            # At the end of the scan, we pick the highest-scoring candidate
-            # and emit ONLY that one — if the 30s gate allows.
+            # ═══ CRITICAL: ROTATE changeSymbol ═══════════════════════════
+            # PO only pushes tick data for the LAST subscribed pair. Without
+            # rotating changeSymbol, only 1 pair gets fresh candle data.
+            # We send changeSymbol for ONE pair per cycle (rotating through
+            # all pairs). Over 30 pairs × 5s = 2.5 min to refresh all pairs.
+            # This is fire-and-forget — PO pushes new candles async.
+            if pairs_to_scan and po_scanner.is_connected and po_scanner._ws:
+                if not hasattr(trading_loop, '_subscribe_idx'):
+                    trading_loop._subscribe_idx = 0
+                sub_pair = pairs_to_scan[trading_loop._subscribe_idx % len(pairs_to_scan)]
+                trading_loop._subscribe_idx += 1
+                try:
+                    sub_asset = po_scanner.get_asset_symbol(sub_pair)
+                    await po_scanner._ws.send(f'42["changeSymbol",{{"asset":"{sub_asset}","period":60}}]')
+                    logger.info(f"[LOOP] Subscribed to {sub_pair} (changeSymbol #{trading_loop._subscribe_idx})")
+                except Exception:
+                    pass
+
             candidates = []
             for pair in pairs_to_scan:
                 if not po_scanner.is_connected: break
