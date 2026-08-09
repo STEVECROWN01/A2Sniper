@@ -660,26 +660,11 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False, return_can
         return None
 
     # 3. Fetch 1-minute candles (need 25+ for Bollinger/RSI/Stoch/CCI)
-    # For background scans, clear the cache for this pair FIRST so get_candles()
-    # is forced to request fresh data from PO via WebSocket changeSymbol.
-    # Without this, get_candles() returns stale cached candles from the initial
-    # connection prefetch — PO only pushes live ticks for the currently
-    # subscribed pair, so all other pairs' caches are frozen at connect time.
-    if not force:
-        asset = po_scanner.get_asset_symbol(pair)
-        cache_key = f"{asset}_1m"
-        if cache_key in po_scanner._candles_cache:
-            cached = po_scanner._candles_cache[cache_key]
-            # Only clear if cache is older than 60 seconds (don't clear every cycle)
-            if hasattr(cached, 'attrs') and cached.attrs.get('last_updated', 0):
-                cache_age = datetime.now(timezone.utc).timestamp() - cached.attrs.get('last_updated', 0)
-                if cache_age > 60:
-                    logger.info(f"[{pair}] Cache stale ({cache_age:.0f}s old) — clearing for fresh fetch")
-                    del po_scanner._candles_cache[cache_key]
-            else:
-                # No timestamp on cache — clear it (force fresh fetch)
-                del po_scanner._candles_cache[cache_key]
-
+    # Use cached candles (from connect-time REST prefetch). The cache has 100
+    # candles which is enough for indicator calculation. PO only pushes live
+    # ticks for one pair at a time, so clearing the cache would force a slow
+    # WebSocket fetch (15s per pair × 30 pairs = 7+ minutes per cycle).
+    # Instead, use the cache and let the engine find patterns in the data.
     df_m1 = await po_scanner.get_candles(pair, timeframe="1m", count=100)
     # Yield to event loop after the WebSocket candle fetch — allows pending
     # HTTP requests to be processed between the slow WebSocket I/O and the
@@ -724,20 +709,20 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False, return_can
     df_with_indicators.attrs['pair'] = pair
 
     if strict_mode:
-        # Signals page → ACE first, then Option D fallback
-        # ACE is strict (trend continuation / BB reversal) — may not find setups often.
-        # Fall back to Option D (pattern + BOTH bonuses) so the signals page still
-        # emits when ACE finds nothing but a good price action setup exists.
+        # Signals page → ACE first, then Option C fallback (SAME as bot)
+        # Both paths now use the same engine: ACE → Option C fallback.
+        # This ensures the signals page finds the SAME signals as the bot,
+        # making them truly independent.
         engine_result = generate_ace_signal(df_with_indicators, payout)
         if engine_result is not None:
             logger.info(f"[{pair}] ACE signal found — using ACE (higher win rate)")
         else:
-            logger.info(f"[{pair}] No ACE signal — falling back to Option D (pattern + BOTH bonuses)")
-            engine_result = generate_sniper_signal(df_with_indicators, payout, strict_mode=True)
+            logger.info(f"[{pair}] No ACE signal — falling back to Option C (pattern + 1 bonus)")
+            engine_result = generate_sniper_signal(df_with_indicators, payout, strict_mode=False)
             if engine_result is None:
                 logger.info(
-                    f"[{pair}] No Option D signal either — no pattern at key level with M5. "
-                    f"candles={len(df_with_indicators)}, mode=signals page (ACE→Option D fallback)"
+                    f"[{pair}] No Option C signal either — no pattern at key level. "
+                    f"candles={len(df_with_indicators)}, mode=signals page (ACE→Option C fallback)"
                 )
                 return None
     else:
