@@ -1234,27 +1234,38 @@ async def trading_loop():
                 pairs_to_scan = []
 
             # ═══ COLLECT CANDIDATES (no emission) ═══════════════════════
-            # ═══ CRITICAL: REFRESH ONE PAIR PER CYCLE ═══════════════════
-            # PO only pushes fresh candle data for pairs we explicitly request via
-            # changeSymbol + loadHistoryPeriod. Without this, the cache is frozen
-            # at connect time and the engine never sees new market data.
-            #
-            # Strategy: each 5s cycle, pick ONE pair, clear its cache, and let
-            # get_candles() fetch fresh data via WebSocket (2s timeout).
-            # Over 30 pairs × 5s = 150s (2.5 min) to refresh ALL pairs.
-            # The other 29 pairs use their existing cache (which may be up to
-            # 2.5 min old — acceptable for pattern detection).
+            # ═══ REFRESH ALL CANDLES VIA REST EVERY 2 MINUTES ════════════
+            # PO only pushes fresh candle data for one pair at a time via WebSocket.
+            # Instead of clearing cache one-by-one (which blocks the loop for 2-9s
+            # per pair), we refresh ALL pairs via REST API every 2 minutes in a
+            # background task. This doesn't block the trading_loop.
             if pairs_to_scan and po_scanner.is_connected:
-                if not hasattr(trading_loop, '_refresh_idx'):
-                    trading_loop._refresh_idx = 0
-                refresh_pair = pairs_to_scan[trading_loop._refresh_idx % len(pairs_to_scan)]
-                trading_loop._refresh_idx += 1
-                # Clear this pair's cache so get_candles() fetches fresh data
-                refresh_asset = po_scanner.get_asset_symbol(refresh_pair)
-                refresh_key = f"{refresh_asset}_1m"
-                if refresh_key in po_scanner._candles_cache:
-                    del po_scanner._candles_cache[refresh_key]
-                    logger.info(f"[LOOP] Cleared cache for {refresh_pair} — will fetch fresh data")
+                if not hasattr(trading_loop, '_last_rest_refresh'):
+                    trading_loop._last_rest_refresh = 0
+                now_ts = datetime.now(timezone.utc).timestamp()
+                if now_ts - trading_loop._last_rest_refresh > 120:  # Every 2 minutes
+                    trading_loop._last_rest_refresh = now_ts
+                    # Fire-and-forget: refresh all pairs' candles via REST in background
+                    async def _refresh_all_candles_rest():
+                        try:
+                            forex_symbols = [
+                                po_scanner.get_asset_symbol(p) for p in pairs_to_scan
+                            ]
+                            logger.info(f"[LOOP] Refreshing {len(forex_symbols)} pairs via REST API (background)...")
+                            refreshed = 0
+                            for symbol in forex_symbols:
+                                try:
+                                    df = await po_scanner._fetch_candles_http(symbol, 60, 100)
+                                    if df is not None and not df.empty:
+                                        po_scanner._candles_cache[f"{symbol}_1m"] = df
+                                        refreshed += 1
+                                except Exception:
+                                    pass
+                                await asyncio.sleep(0)  # Yield between pairs
+                            logger.info(f"[LOOP] ✅ REST refresh complete: {refreshed}/{len(forex_symbols)} pairs updated")
+                        except Exception as e:
+                            logger.warning(f"[LOOP] REST refresh error: {e}")
+                    asyncio.create_task(_refresh_all_candles_rest())
 
             candidates = []
             for pair in pairs_to_scan:
