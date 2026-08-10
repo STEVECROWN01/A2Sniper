@@ -1243,7 +1243,7 @@ async def trading_loop():
                 if not hasattr(trading_loop, '_last_rest_refresh'):
                     trading_loop._last_rest_refresh = 0
                 now_ts = datetime.now(timezone.utc).timestamp()
-                if now_ts - trading_loop._last_rest_refresh > 120:  # Every 2 minutes
+                if now_ts - trading_loop._last_rest_refresh > 30:  # Every 30 seconds
                     trading_loop._last_rest_refresh = now_ts
                     # Fire-and-forget: refresh all pairs' candles via REST in background
                     async def _refresh_all_candles_rest():
@@ -1253,16 +1253,21 @@ async def trading_loop():
                             ]
                             logger.info(f"[LOOP] Refreshing {len(forex_symbols)} pairs via REST API (background)...")
                             refreshed = 0
+                            failed = 0
                             for symbol in forex_symbols:
                                 try:
                                     df = await po_scanner._fetch_candles_http(symbol, 60, 100)
                                     if df is not None and not df.empty:
                                         po_scanner._candles_cache[f"{symbol}_1m"] = df
                                         refreshed += 1
-                                except Exception:
-                                    pass
+                                    else:
+                                        failed += 1
+                                except Exception as e:
+                                    failed += 1
+                                    if failed <= 3:
+                                        logger.warning(f"[LOOP] REST refresh failed for {symbol}: {e}")
                                 await asyncio.sleep(0)  # Yield between pairs
-                            logger.info(f"[LOOP] ✅ REST refresh complete: {refreshed}/{len(forex_symbols)} pairs updated")
+                            logger.info(f"[LOOP] ✅ REST refresh complete: {refreshed} updated, {failed} failed (of {len(forex_symbols)} total)")
                         except Exception as e:
                             logger.warning(f"[LOOP] REST refresh error: {e}")
                     asyncio.create_task(_refresh_all_candles_rest())
