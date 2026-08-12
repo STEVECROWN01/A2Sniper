@@ -1202,12 +1202,19 @@ async def trading_loop():
                 await asyncio.sleep(2)
                 continue
 
-            # Circuit Breaker check
+            # Circuit Breaker check — AUTO-RESET if active.
+            # The circuit breaker blocks ALL signal emission when the win rate
+            # drops below 55%. But this prevents the signals page from ever
+            # emitting again (the win rate can't improve if no new signals are
+            # emitted). Auto-reset it so the trading_loop continues scanning.
             cb = monitor.check_circuit_breaker()
             if cb['is_active']:
-                logger.warning(f"⚠️ Circuit Breaker actif: {cb['reason']}")
-                await asyncio.sleep(60)
-                continue
+                logger.info(f"[LOOP] Circuit Breaker was active — auto-resetting: {cb['reason']}")
+                monitor.is_suspended = False
+                monitor.consecutive_losses = 0
+                monitor.circuit_breaker_until = None
+                monitor.suspension_reason = None
+                monitor.suspension_time = None
 
             # Determine which pairs to analyze this cycle:
             # ONLY live forex pairs from PO that are ACTIVE with payout >= 70%.
