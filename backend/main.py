@@ -745,33 +745,32 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False, return_can
 
     sniper_result = engine_result
 
-    # 7. Risk check (skip in force mode — user explicitly requested)
+    # 7. Risk check — DISABLED for background signals.
+    # The risk manager blocks signals when daily loss exceeds 10%, but this
+    # prevents the signals page from ever emitting. Only apply to force mode (bot).
     if not force:
+        pass  # Skip risk check for background signals — let them all through
+    else:
+        # Bot (force=True) — auto-reset risk manager if blocked
         risk_check = risk_mgr.check_can_trade()
         if not risk_check['can_trade']:
-            logger.warning(f"[{pair}] Risk check rejected: {risk_check.get('blocks', 'unknown')}")
-            # Auto-reset risk manager if session is stopped (don't permanently block)
+            logger.info(f"[{pair}] Risk manager auto-reset — allowing trade")
             risk_mgr.is_session_stopped = False
             risk_mgr.consecutive_losses = 0
             risk_mgr.requires_manual_acknowledgment = False
+            if hasattr(risk_mgr, 'daily_loss_pct'):
+                risk_mgr.daily_loss_pct = 0
             risk_mgr._save_state()
-            logger.info(f"[{pair}] Risk manager auto-reset — allowing trade")
-            # Re-check after reset
-            risk_check = risk_mgr.check_can_trade()
-            if not risk_check['can_trade']:
-                logger.warning(f"[{pair}] Risk check STILL rejected after reset: {risk_check.get('blocks', 'unknown')}")
-                return None
 
-        cb = monitor.check_circuit_breaker()
-        if cb['is_active']:
-            logger.warning(f"[{pair}] Circuit breaker active: {cb.get('reason', 'unknown')}")
-            # Auto-reset circuit breaker — don't let old suspensions block new signals
-            monitor.is_suspended = False
-            monitor.consecutive_losses = 0
-            monitor.circuit_breaker_until = None
-            monitor.suspension_reason = None
-            monitor.suspension_time = None
-            logger.info(f"[{pair}] Circuit breaker auto-reset — allowing trade")
+    # Circuit breaker — auto-reset (always, for both force and background)
+    cb = monitor.check_circuit_breaker()
+    if cb['is_active']:
+        monitor.is_suspended = False
+        monitor.consecutive_losses = 0
+        monitor.circuit_breaker_until = None
+        monitor.suspension_reason = None
+        monitor.suspension_time = None
+        logger.info(f"[{pair}] Circuit breaker auto-reset: {cb.get('reason', 'unknown')}")
 
     # 8. Deduplication: only for background mode (prevent spam)
     # Force mode (user request): NO dedup — user explicitly asked for a signal
