@@ -21,9 +21,13 @@ export default function AdminLoginPage() {
   const router = useRouter();
 
   // ─── Step 1: email + password login ────────────────────────────────────────
-  // Hits the regular /api/auth/login endpoint (proxied to the backend). The
-  // proxy sets the httpOnly a2sniper_at cookie. We then verify the user is
-  // actually an admin before advancing to 2FA.
+  // Hits POST /api/admin/login/initiate {email, password}. The backend verifies
+  // both against the ADMIN_EMAIL + ADMIN_PASSWORD env vars (constant-time). On
+  // match, it emails a 6-digit OTP. On mismatch, returns 401.
+  //
+  // Admin auth is fully decoupled from user accounts — there's no user lookup,
+  // no is_admin flag, no a2sniper_at cookie. The admin password lives ONLY in
+  // the ADMIN_PASSWORD env var on Railway.
   const handleLogin = async () => {
     if (!email || !password) {
       toast.error('Veuillez entrer vos identifiants administrateur.');
@@ -33,7 +37,7 @@ export default function AdminLoginPage() {
     setIsVerifying(true);
     try {
       const apiUrl = getApiUrl();
-      const res = await fetch(`${apiUrl}/api/auth/login`, {
+      const res = await fetch(`${apiUrl}/api/admin/login/initiate`, {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
@@ -43,57 +47,26 @@ export default function AdminLoginPage() {
       const data = await res.json().catch(() => ({}));
 
       if (res.ok) {
-        // Check if the user is actually an admin
-        if (!data.user?.is_admin) {
-          setIsVerifying(false);
-          toast.error('Access denied. Administrator privileges required.');
-          return;
-        }
-        // Token is managed via httpOnly cookie by the API proxy — no need to
-        // store it in React state. The cookie will be sent automatically on
-        // the /api/admin/login/initiate call below.
+        // Credentials matched — OTP has been emailed.
         setStep('2fa');
-        toast.success('Identity verified. Requesting 2FA code...');
-
-        // Immediately request the 2FA OTP be emailed to the admin user.
-        // This is a separate step so the user doesn't have to click an extra
-        // button — the OTP arrives seconds after they enter valid credentials.
-        try {
-          const otpRes = await fetch(`${apiUrl}/api/admin/login/initiate`, {
-            method: 'POST',
-            credentials: 'include',
-            headers: { 'Content-Type': 'application/json' },
-          });
-          if (!otpRes.ok) {
-            const otpData = await otpRes.json().catch(() => ({}));
-            toast.error(otpData.detail || 'Could not send 2FA code. Please try again.');
-            setIsVerifying(false);
-            setStep('login');
-            return;
-          }
-          toast.success('A 6-digit verification code has been sent to your email.');
-        } catch (err) {
-          toast.error('Network error while requesting 2FA code.');
-          setIsVerifying(false);
-          setStep('login');
-          return;
-        }
+        toast.success('Identity verified. A 6-digit code has been sent to your email.');
         setIsVerifying(false);
       } else {
         setIsVerifying(false);
-        toast.error(data.detail || 'Invalid credentials. Access denied.');
+        toast.error(data.detail || 'Invalid admin credentials. Access denied.');
       }
-    } catch (err) {
+    } catch {
       setIsVerifying(false);
       toast.error('Network error. Cannot verify credentials.');
     }
   };
 
   // ─── Step 2: verify the 6-digit email OTP ──────────────────────────────────
-  // Hits /api/admin/login/verify (proxied to the backend). On success, the
-  // backend returns a signed admin_token (JWT HS256, 10-min TTL). We then POST
-  // that token to the same-origin /api/admin-login route handler which sets it
-  // as an httpOnly cookie scoped to /admin-dawes-stevens-2026.
+  // Hits POST /api/admin/login/verify {email, password, otp_code}. The backend
+  // re-verifies credentials (defense in depth), validates the OTP, then issues
+  // a signed admin_token (JWT HS256, 10-min TTL). We POST that token to the
+  // same-origin /api/admin-login route handler which sets it as an httpOnly
+  // cookie scoped to /admin-dawes-stevens-2026.
   const handleVerify2FA = async () => {
     if (otp.length < 6) {
       toast.error('Veuillez saisir le code 2FA complet (6 chiffres).');
@@ -107,7 +80,7 @@ export default function AdminLoginPage() {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ otp_code: otp }),
+        body: JSON.stringify({ email, password, otp_code: otp }),
       });
 
       const data = await res.json().catch(() => ({}));
@@ -139,7 +112,7 @@ export default function AdminLoginPage() {
         setOtp('');
         toast.error(data.detail || 'Invalid 2FA code. Access denied.');
       }
-    } catch (err) {
+    } catch {
       setIsVerifying(false);
       setOtp('');
       toast.error('Network error. Cannot verify 2FA code.');
@@ -213,6 +186,7 @@ export default function AdminLoginPage() {
                     onChange={(e) => setEmail(e.target.value)}
                     placeholder="admin@a2sniper.ai"
                     className="w-full bg-black border border-gray-800 rounded-xl pl-10 pr-4 py-3 text-sm font-bold text-white outline-none focus:border-red-500 transition-colors"
+                    autoComplete="username"
                   />
                 </div>
               </div>
@@ -225,8 +199,10 @@ export default function AdminLoginPage() {
                     type={showPassword ? 'text' : 'password'}
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') handleLogin(); }}
                     placeholder="••••••••"
                     className="w-full bg-black border border-gray-800 rounded-xl pl-10 pr-10 py-3 text-sm font-bold text-white outline-none focus:border-red-500 transition-colors"
+                    autoComplete="current-password"
                   />
                   <button
                     type="button"
@@ -264,9 +240,11 @@ export default function AdminLoginPage() {
                 <p className="text-sm text-gray-400 mb-4">Enter the 6-digit code sent to your admin email.</p>
                 <input
                   type="text"
+                  inputMode="numeric"
                   maxLength={6}
                   value={otp}
                   onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                  onKeyDown={(e) => { if (e.key === 'Enter' && otp.length === 6) handleVerify2FA(); }}
                   disabled={isVerifying}
                   className="w-48 text-center text-2xl font-black tracking-[0.5em] bg-black border border-red-500/30 rounded-xl py-4 text-white outline-none focus:border-red-500 transition-colors"
                   placeholder="------"
@@ -281,6 +259,15 @@ export default function AdminLoginPage() {
               >
                 {isVerifying ? 'CODE VALIDATION...' : 'VERIFY IDENTITY'}
               </Button>
+
+              <button
+                type="button"
+                onClick={() => { setStep('login'); setOtp(''); }}
+                disabled={isVerifying}
+                className="text-[10px] text-gray-500 hover:text-gray-400 uppercase tracking-widest"
+              >
+                ← Back to login
+              </button>
             </motion.div>
           )}
 

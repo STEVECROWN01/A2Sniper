@@ -3403,12 +3403,21 @@ async def verify_2fa(request: Request):
     return {"status": "coming_soon", "message": "2FA verification will be available in a future update"}
 
 
-# ═══════════ ADMIN 2FA — EMAIL OTP + SIGNED ADMIN TOKEN ═══════════
-# Two-layer admin auth:
-#   Layer 1: regular user login (httpOnly a2sniper_at cookie, is_admin=true).
-#   Layer 2: 6-digit email OTP sent on every admin login attempt. On verify,
-#            backend issues a short-lived (10 min) signed admin token (JWT)
-#            that the frontend stores as the httpOnly admin_token cookie.
+# ═══════════ ADMIN 2FA — EMAIL/PASSWORD + EMAIL OTP + SIGNED ADMIN TOKEN ═══════════
+# Two-step admin auth (fully decoupled from user accounts):
+#
+#   Step 1 — POST /api/admin/login/initiate {email, password}
+#     Backend verifies email + password against the ADMIN_EMAIL and
+#     ADMIN_PASSWORD env vars (constant-time comparison). On match, generates
+#     a 6-digit OTP with purpose='admin_2fa', stores it in
+#     password_reset_otps (15-min TTL), emails it via Resend.
+#
+#   Step 2 — POST /api/admin/login/verify {email, password, otp_code}
+#     Backend re-verifies email + password (defense in depth — prevents a
+#     stolen OTP from being used without the password), validates the OTP,
+#     issues a short-lived (10 min) signed admin token (JWT HS256 with
+#     ADMIN_SECRET_TOKEN). The frontend stores it as the httpOnly
+#     admin_token cookie via the /api/admin-login Next.js route handler.
 #
 # The middleware (edge) verifies the admin_token JWT signature using Web Crypto
 # (crypto.subtle) — no DB lookup needed in the edge runtime.
@@ -3417,12 +3426,50 @@ async def verify_2fa(request: Request):
 # working Resend integration and the password_reset_otps table with brute-
 # force tracking. Email-based 2FA is appropriate for a single-founder admin
 # tool and avoids the complexity of TOTP secret provisioning + recovery codes.
+#
+# Required env vars on Railway:
+#   ADMIN_EMAIL         — the admin email address (where OTPs are sent)
+#   ADMIN_PASSWORD      — the admin password (>= 12 chars recommended)
+#   ADMIN_SECRET_TOKEN  — JWT signing secret (>= 16 chars)
+#   RESEND_API_KEY      — for email delivery
 
 ADMIN_TOKEN_TTL_SECONDS = 10 * 60  # 10 minutes
 ADMIN_OTP_PURPOSE = "admin_2fa"
 
 
-def _create_admin_token(user_id: str, user_email: str) -> str:
+def _constant_time_eq(a: str, b: str) -> bool:
+    """Constant-time string comparison to prevent timing attacks.
+
+    Uses hmac.compare_digest (which is constant-time for equal-length strings).
+    Pre-hashes both inputs with SHA-256 so the comparison time does not leak
+    the length of the secret.
+    """
+    import hmac, hashlib
+    if not isinstance(a, str) or not isinstance(b, str):
+        return False
+    a_hash = hashlib.sha256(a.encode('utf-8')).digest()
+    b_hash = hashlib.sha256(b.encode('utf-8')).digest()
+    return hmac.compare_digest(a_hash, b_hash)
+
+
+def _verify_admin_credentials(email: str, password: str) -> bool:
+    """Verify admin email + password against env vars (constant-time).
+
+    Returns True only if BOTH email and password match. If ADMIN_EMAIL or
+    ADMIN_PASSWORD env vars are unset, returns False (refuse all admin logins).
+    """
+    expected_email = os.environ.get("ADMIN_EMAIL", "").strip()
+    expected_password = os.environ.get("ADMIN_PASSWORD", "")
+    if not expected_email or not expected_password:
+        logger.error("[ADMIN-AUTH] ADMIN_EMAIL or ADMIN_PASSWORD env var not set — refusing admin login.")
+        return False
+    # Constant-time comparison on both fields (independent of each other's
+    # length, so an attacker can't infer whether the email or password was
+    # wrong based on response timing).
+    return _constant_time_eq(email, expected_email) and _constant_time_eq(password, expected_password)
+
+
+def _create_admin_token(admin_email: str) -> str:
     """Sign a short-lived admin token (JWT HS256) using ADMIN_SECRET_TOKEN.
 
     The middleware verifies this signature with crypto.subtle in the edge
@@ -3434,8 +3481,8 @@ def _create_admin_token(user_id: str, user_email: str) -> str:
         raise HTTPException(status_code=500, detail="ADMIN_SECRET_TOKEN not configured (must be >= 16 chars)")
     now = datetime.now(timezone.utc)
     payload = {
-        "sub": user_id,
-        "email": user_email,
+        "sub": "admin",
+        "email": admin_email,
         "purpose": "admin",
         "iat": int(now.timestamp()),
         "exp": int((now + timedelta(seconds=ADMIN_TOKEN_TTL_SECONDS)).timestamp()),
@@ -3444,28 +3491,48 @@ def _create_admin_token(user_id: str, user_email: str) -> str:
 
 
 @app.post("/api/admin/login/initiate")
-async def admin_login_initiate(admin_payload = Depends(require_admin)):
-    """Step 1 of admin 2FA: send a 6-digit OTP to the admin user's email.
+async def admin_login_initiate(request: Request):
+    """Step 1 of admin 2FA: verify admin email + password, send 6-digit OTP.
 
-    Requires a valid access token for an is_admin=true user (Layer 1).
-    Generates an OTP with purpose='admin_2fa', stores it in
-    password_reset_otps (15-min TTL), and emails it via Resend.
+    Body: {email, password}
+
+    On success (credentials match ADMIN_EMAIL + ADMIN_PASSWORD env vars),
+    generates an OTP with purpose='admin_2fa', stores it in
+    password_reset_otps (15-min TTL), emails it via Resend.
     """
-    user_id = admin_payload.get("sub")
-    user_email = admin_payload.get("email")
+    check_rate_limit(request, max_requests=5, window_seconds=60)  # 5/min — strict for admin login
 
+    try:
+        data = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid request body")
+
+    email = str(data.get("email", "")).strip().lower()
+    password = str(data.get("password", ""))
+
+    if not email or not password:
+        raise HTTPException(status_code=400, detail="Email and password are required")
+
+    if not _verify_admin_credentials(email, password):
+        # Log the attempt (without revealing which field was wrong) and return
+        # a generic error. Add a small delay to slow down brute-force attempts.
+        logger.warning(f"[ADMIN-AUTH] Failed initiate for email={email[:3]}*** (bad credentials)")
+        await asyncio.sleep(0.5)
+        raise HTTPException(status_code=401, detail="Invalid admin credentials")
+
+    # Credentials are valid — generate + email the OTP.
     async with AsyncSessionLocal() as session:
-        # Delete any previous unused admin_2fa OTPs for this user
+        # Delete any previous unused admin_2fa OTPs for this email
         await session.execute(
             __import__('sqlalchemy').text(
                 "DELETE FROM password_reset_otps WHERE email = :email AND purpose = :purpose"
             ),
-            {"email": user_email, "purpose": ADMIN_OTP_PURPOSE}
+            {"email": email, "purpose": ADMIN_OTP_PURPOSE}
         )
         otp_code = str(secrets.randbelow(900000) + 100000)
         new_otp = PasswordResetOTP(
             id=str(uuid.uuid4()),
-            email=user_email,
+            email=email,
             otp_code=otp_code,
             expires_at=datetime.now(timezone.utc) + timedelta(minutes=15),
             created_at=datetime.now(timezone.utc),
@@ -3474,49 +3541,62 @@ async def admin_login_initiate(admin_payload = Depends(require_admin)):
         session.add(new_otp)
         await session.commit()
 
-    email_sent = await send_otp_email(user_email, otp_code, purpose="admin_2fa")
+    email_sent = await send_otp_email(email, otp_code, purpose="admin_2fa")
     if not email_sent:
-        logger.error(f"[ADMIN-2FA] OTP email delivery FAILED for {user_email[:3]}*** — Resend misconfigured. OTP NOT logged.")
+        logger.error(f"[ADMIN-2FA] OTP email delivery FAILED for {email[:3]}*** — Resend misconfigured. OTP NOT logged.")
         raise HTTPException(
             status_code=503,
             detail="Could not send 2FA email. Please verify RESEND_API_KEY is set on the backend."
         )
 
-    logger.info(f"[ADMIN-2FA] OTP sent to {user_email[:3]}*** for admin login (user_id={user_id[:8]}...)")
+    logger.info(f"[ADMIN-2FA] OTP sent to {email[:3]}*** for admin login")
     return {"status": "otp_sent", "message": "A 6-digit verification code has been sent to your email."}
 
 
 @app.post("/api/admin/login/verify")
-async def admin_login_verify(request: Request, admin_payload = Depends(require_admin)):
-    """Step 2 of admin 2FA: verify the OTP and issue a signed admin token.
+async def admin_login_verify(request: Request):
+    """Step 2 of admin 2FA: re-verify credentials + verify OTP, issue admin token.
 
-    Requires Layer 1 (valid access token for is_admin user). On success,
-    returns a short-lived signed admin token (10-min TTL) that the frontend
-    will store as the httpOnly admin_token cookie via the /api/admin-login
-    Next.js route handler.
+    Body: {email, password, otp_code}
+
+    Re-verifies email + password (defense in depth — prevents a stolen OTP
+    from being used without the password), validates the OTP, then issues a
+    short-lived signed admin token (10-min TTL) that the frontend will store
+    as the httpOnly admin_token cookie via the /api/admin-login Next.js route
+    handler.
     """
-    user_id = admin_payload.get("sub")
-    user_email = admin_payload.get("email")
+    check_rate_limit(request, max_requests=10, window_seconds=60)  # 10/min
 
     try:
         data = await request.json()
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid request body")
 
+    email = str(data.get("email", "")).strip().lower()
+    password = str(data.get("password", ""))
     otp_code = str(data.get("otp_code", "")).strip()
+
+    if not email or not password:
+        raise HTTPException(status_code=400, detail="Email and password are required")
     if not otp_code or not otp_code.isdigit() or len(otp_code) != 6:
         raise HTTPException(status_code=400, detail="A 6-digit OTP code is required")
 
-    # Brute-force protection
-    check_otp_bruteforce(user_email)
+    # Re-verify credentials (defense in depth)
+    if not _verify_admin_credentials(email, password):
+        logger.warning(f"[ADMIN-AUTH] Failed verify (bad credentials) for email={email[:3]}***")
+        await asyncio.sleep(0.5)
+        raise HTTPException(status_code=401, detail="Invalid admin credentials")
+
+    # Brute-force protection on the OTP
+    check_otp_bruteforce(email)
 
     async with AsyncSessionLocal() as session:
-        # Fetch the most recent unused admin_2fa OTP for this user.
+        # Fetch the most recent unused admin_2fa OTP for this email.
         # NOTE: password_reset_otps has no `used` column — we delete rows
         # on successful verification instead, so any existing row is unused.
         result = await session.execute(
             select(PasswordResetOTP).where(
-                PasswordResetOTP.email == user_email,
+                PasswordResetOTP.email == email,
                 PasswordResetOTP.purpose == ADMIN_OTP_PURPOSE,
             ).order_by(PasswordResetOTP.created_at.desc()).limit(1)
         )
@@ -3529,8 +3609,8 @@ async def admin_login_verify(request: Request, admin_payload = Depends(require_a
         )
 
         if not is_valid:
-            record_otp_attempt(user_email, success=False)
-            logger.warning(f"[ADMIN-2FA] Failed verify for {user_email[:3]}*** (user_id={user_id[:8]}...)")
+            record_otp_attempt(email, success=False)
+            logger.warning(f"[ADMIN-2FA] Failed OTP verify for {email[:3]}***")
             raise HTTPException(status_code=401, detail="Invalid or expired verification code")
 
         # Delete the OTP row (matches the existing password_reset_otps usage pattern —
@@ -3543,10 +3623,10 @@ async def admin_login_verify(request: Request, admin_payload = Depends(require_a
         )
         await session.commit()
 
-    record_otp_attempt(user_email, success=True)
-    admin_token = _create_admin_token(user_id, user_email)
+    record_otp_attempt(email, success=True)
+    admin_token = _create_admin_token(email)
     expires_at = datetime.now(timezone.utc) + timedelta(seconds=ADMIN_TOKEN_TTL_SECONDS)
-    logger.info(f"[ADMIN-2FA] Admin token issued for {user_email[:3]}*** (user_id={user_id[:8]}..., ttl={ADMIN_TOKEN_TTL_SECONDS}s)")
+    logger.info(f"[ADMIN-2FA] Admin token issued for {email[:3]}*** (ttl={ADMIN_TOKEN_TTL_SECONDS}s)")
 
     return {
         "status": "success",
