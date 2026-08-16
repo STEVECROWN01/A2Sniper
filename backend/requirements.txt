@@ -8,8 +8,6 @@ python-multipart>=0.0.6
 pandas>=2.2.0
 numpy>=1.26.2
 scipy>=1.12.0
-scikit-learn>=1.4.0
-xgboost>=2.0.2
 python-telegram-bot>=20.7
 sqlalchemy>=2.0.23
 asyncpg>=0.29.0
@@ -24,7 +22,11 @@ bcrypt>=4.1.2
 # Web Push notifications — sends push notifications to users' devices when
 # signals fire on the signals page. Works even when the browser is closed.
 pywebpush>=2.0.0
-# PyTorch REMOVED — the AI voting gate is disabled (ENABLE_AI_GATE = False).
-# torch was adding ~200MB to the Docker image and slowing startup by 30+ seconds.
-# The LSTM/Transformer/XGBoost models are not used in production.
-# Re-add torch>=2.2.0 if you re-enable the AI voting gate.
+# AI/ML dependencies REMOVED (scikit-learn, xgboost, torch) — the neural_models
+# package (LSTM, Transformer, XGBoost voting classifier) was dead code:
+# voting_model.predict() was never called, model weights were never trained,
+# and PyTorch was not in requirements. The package has been deleted.
+# Re-add these if you build a real AI layer:
+#   scikit-learn>=1.4.0
+#   xgboost>=2.0.2
+#   torch>=2.2.0  # ~200MB, slows startup by 30s
