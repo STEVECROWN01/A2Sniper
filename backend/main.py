@@ -778,34 +778,36 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False, return_can
 
     sniper_result = engine_result
 
-    # 7. Risk check.
-    # Background signals: skip (the auto-emission gate already prevents floods,
-    # and the risk manager tracks resolved trade outcomes, not emissions).
-    # Force signals (user explicitly requested): HONOR the risk manager.
-    # If the risk manager blocks (3 consecutive losses or daily risk exceeded),
-    # the user gets a 429 with the reason — they must acknowledge the session
-    # stop via /api/risk/settings or wait for the auto-cooldown.
+    # 7. Risk check — ADVISORY ONLY.
+    # The risk manager tracks consecutive losses, daily risk used, and session
+    # state. It NEVER blocks a user-requested (force) signal — the trader is
+    # the decision-maker and is free to trade as much as they want.
+    #
+    # What it does:
+    #   - Tracks every resolved trade outcome (win/loss) via record_trade_result
+    #     in the resolution loop (see ~line 1500).
+    #   - Exposes metrics via /api/status and /api/risk/settings so the frontend
+    #     can display warnings like "⚠️ 3 consecutive losses — consider pausing".
+    #   - Logs an advisory warning here when thresholds are crossed, so the
+    #     operator can see risky activity in the logs.
+    #
+    # What it does NOT do:
+    #   - Block signals. Not background, not force. The user is always free
+    #     to request another signal.
+    #
     # The previous code auto-reset the risk manager on every force signal,
-    # which made the entire risk subsystem decorative.
+    # which wiped consecutive_losses and daily_risk_used — making the metrics
+    # useless. That auto-reset has been removed so metrics now persist correctly.
     if force:
         risk_check = risk_mgr.check_can_trade()
         if not risk_check['can_trade']:
-            logger.warning(
-                f"[{pair}] Risk manager BLOCKED force signal — "
-                f"reasons: {risk_check.get('blocks', [])} "
+            # Advisory only — log the warning but DO NOT block the signal.
+            # The trader decides whether to act on the warning.
+            logger.info(
+                f"[{pair}] Risk advisory (signal still emitted — trader's choice): "
+                f"blocks={risk_check.get('blocks', [])} "
                 f"(consecutive_losses={risk_check.get('consecutive_losses')}, "
                 f"daily_risk_used={risk_check.get('daily_risk_used')}%)"
-            )
-            raise HTTPException(
-                status_code=429,
-                detail={
-                    "error": "risk_manager_blocked",
-                    "blocks": risk_check.get('blocks', []),
-                    "consecutive_losses": risk_check.get('consecutive_losses', 0),
-                    "daily_risk_used": risk_check.get('daily_risk_used', 0),
-                    "is_session_stopped": risk_check.get('is_session_stopped', False),
-                    "requires_manual_acknowledgment": risk_check.get('requires_manual_acknowledgment', False),
-                }
             )
 
     # Circuit breaker — auto-reset (always, for both force and background)
