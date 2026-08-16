@@ -414,15 +414,27 @@ def validate_email(email: str) -> bool:
 
 
 async def is_token_revoked(token_jti: str) -> bool:
-    """Check if a token's JTI is in the revocation blacklist."""
+    """Check if a token's JTI is in the revocation blacklist.
+
+    SECURITY: fails CLOSED on DB error — if we cannot verify whether a token
+    was revoked, we treat it as revoked and reject the request. This prevents
+    an attacker who can disrupt the DB (e.g. saturate the pool) from bypassing
+    logout/revocation. The user will get a 401 and must re-authenticate.
+    """
     try:
         async with AsyncSessionLocal() as session:
             result = await session.execute(
                 select(RevokedToken).where(RevokedToken.token_jti == token_jti)
             )
             return result.scalar_one_or_none() is not None
-    except Exception:
-        return False  # If DB check fails, allow the token (fail open)
+    except Exception as e:
+        # Fail CLOSED: treat as revoked when DB is unreachable.
+        # The caller (require_admin / get_current_user) raises 401, forcing
+        # the user to log in again. This is the safe choice for a revoked-token
+        # check — the alternative (allowing the token) would let a stolen token
+        # remain valid after the user clicks "Logout" if the DB hiccups.
+        logger.error(f"[SECURITY] is_token_revoked DB check failed; failing CLOSED for jti={token_jti[:8]}...: {e}")
+        return True
 
 
 async def revoke_token(token_jti: str, token_type: str, user_id: str,
@@ -766,22 +778,35 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False, return_can
 
     sniper_result = engine_result
 
-    # 7. Risk check — DISABLED for background signals.
-    # The risk manager blocks signals when daily loss exceeds 10%, but this
-    # prevents the signals page from ever emitting. Only apply to force mode (bot).
-    if not force:
-        pass  # Skip risk check for background signals — let them all through
-    else:
-        # Bot (force=True) — auto-reset risk manager if blocked
+    # 7. Risk check.
+    # Background signals: skip (the auto-emission gate already prevents floods,
+    # and the risk manager tracks resolved trade outcomes, not emissions).
+    # Force signals (user explicitly requested): HONOR the risk manager.
+    # If the risk manager blocks (3 consecutive losses or daily risk exceeded),
+    # the user gets a 429 with the reason — they must acknowledge the session
+    # stop via /api/risk/settings or wait for the auto-cooldown.
+    # The previous code auto-reset the risk manager on every force signal,
+    # which made the entire risk subsystem decorative.
+    if force:
         risk_check = risk_mgr.check_can_trade()
         if not risk_check['can_trade']:
-            logger.info(f"[{pair}] Risk manager auto-reset — allowing trade")
-            risk_mgr.is_session_stopped = False
-            risk_mgr.consecutive_losses = 0
-            risk_mgr.requires_manual_acknowledgment = False
-            if hasattr(risk_mgr, 'daily_loss_pct'):
-                risk_mgr.daily_loss_pct = 0
-            risk_mgr._save_state()
+            logger.warning(
+                f"[{pair}] Risk manager BLOCKED force signal — "
+                f"reasons: {risk_check.get('blocks', [])} "
+                f"(consecutive_losses={risk_check.get('consecutive_losses')}, "
+                f"daily_risk_used={risk_check.get('daily_risk_used')}%)"
+            )
+            raise HTTPException(
+                status_code=429,
+                detail={
+                    "error": "risk_manager_blocked",
+                    "blocks": risk_check.get('blocks', []),
+                    "consecutive_losses": risk_check.get('consecutive_losses', 0),
+                    "daily_risk_used": risk_check.get('daily_risk_used', 0),
+                    "is_session_stopped": risk_check.get('is_session_stopped', False),
+                    "requires_manual_acknowledgment": risk_check.get('requires_manual_acknowledgment', False),
+                }
+            )
 
     # Circuit breaker — auto-reset (always, for both force and background)
     cb = monitor.check_circuit_breaker()
@@ -847,6 +872,10 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False, return_can
                 'cci': sniper_result['factors'].get('cci'),
                 'adx': sniper_result['factors'].get('adx'),
                 'atr': sniper_result['factors'].get('atr'),
+                # Persist stake as a percentage so the resolver can convert to a
+                # 0-1 fraction for risk_mgr.record_trade_result(). See resolution
+                # loop comment for why this must live inside analysis_details.
+                'recommended_stake_pct': 10,
             },
             '_evaluated_at': now_ts,
         }
@@ -896,6 +925,9 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False, return_can
             'cci': sniper_result['factors'].get('cci'),
             'adx': sniper_result['factors'].get('adx'),
             'atr': sniper_result['factors'].get('atr'),
+            # Persist stake as a percentage (10 = 10% of capital) so the
+            # resolution loop can convert to a 0-1 fraction for risk_mgr.
+            'recommended_stake_pct': 10,
         },
     }
 
@@ -1459,16 +1491,24 @@ async def resolution_loop():
                                 continue
                             s.is_win = is_win
 
-                            # Record result in monitoring engine and risk manager
+                            # Record result in monitoring engine and risk manager.
+                            # BUGFIX: previously read s.analysis_details.get('recommended_stake')
+                            # which was always None (recommended_stake is set at the top level of
+                            # the signal dict, not inside analysis_details). The fallback stake_val=1.0
+                            # was treated as 100% capital risk per trade, instantly hitting the 10%
+                            # daily cap. Combined with the auto-reset on every force signal, this made
+                            # the risk manager completely non-functional.
+                            #
+                            # FIX: read the recommended stake from the persisted analysis_details
+                            # (we now persist it there at signal build time). The value is a percentage
+                            # (e.g. 10 means 10%); convert to a 0-1 fraction for record_trade_result.
                             monitor.record_result(s.id, is_win)
-                            stake_val = 1.0
-                            if s.analysis_details and s.analysis_details.get('recommended_stake'):
-                                try:
-                                    stake_str = str(s.analysis_details['recommended_stake']).replace('% du capital', '').replace('%', '').strip()
-                                    stake_val = float(stake_str) if stake_str else 1.0
-                                except (ValueError, TypeError):
-                                    stake_val = 1.0
-                            risk_mgr.record_trade_result(is_win, stake_val)
+                            stake_pct = 0.0
+                            if s.analysis_details and isinstance(s.analysis_details, dict):
+                                stake_pct = s.analysis_details.get('recommended_stake_pct', 0) or 0
+                            # Defensive: clamp to [0, 1] — never exceed 100% risk on a single trade.
+                            stake_fraction = max(0.0, min(1.0, float(stake_pct) / 100.0)) if stake_pct else 0.0
+                            risk_mgr.record_trade_result(is_win, stake_fraction)
 
                             logger.info(
                                 f"🏁 SIGNAL RESOLVED: {s.id} ({s.pair}) -> "
@@ -2276,46 +2316,46 @@ async def delete_all_signals(admin_payload = Depends(require_admin)):
 
         # Count first (for the response)
         try:
-            count_result = await session.execute(sql_text("SELECT COUNT(*) FROM signal_records"))
+            count_result = await session.execute(sql_text("SELECT COUNT(*) FROM signals"))
             signal_count = count_result.scalar() or 0
         except Exception as count_err:
             logger.warning(f"[ADMIN] Count failed (trying rollback+retry): {count_err}")
             await session.rollback()
             try:
-                count_result = await session.execute(sql_text("SELECT COUNT(*) FROM signal_records"))
+                count_result = await session.execute(sql_text("SELECT COUNT(*) FROM signals"))
                 signal_count = count_result.scalar() or 0
             except Exception:
                 signal_count = -1  # unknown
 
         # DELETE all signals (works with PgBouncer, unlike TRUNCATE)
         try:
-            await session.execute(sql_text("DELETE FROM signal_records"))
+            await session.execute(sql_text("DELETE FROM signals"))
             await session.commit()
-            logger.info(f"[ADMIN] DELETE'd {signal_count} signal_records")
+            logger.info(f"[ADMIN] DELETE'd {signal_count} signals")
         except Exception as del_err:
             logger.warning(f"[ADMIN] DELETE failed (trying rollback+retry): {del_err}")
             await session.rollback()
             try:
-                await session.execute(sql_text("DELETE FROM signal_records"))
+                await session.execute(sql_text("DELETE FROM signals"))
                 await session.commit()
-                logger.info(f"[ADMIN] DELETE'd signal_records (retry succeeded)")
+                logger.info(f"[ADMIN] DELETE'd signals (retry succeeded)")
             except Exception as del_err2:
                 logger.error(f"[ADMIN] DELETE retry also failed: {del_err2}")
                 raise HTTPException(status_code=500, detail=f"Failed to wipe signals: {str(del_err2)[:200]}")
 
-        # Also delete candle_records
+        # Also delete candles
         try:
-            candle_count_result = await session.execute(sql_text("SELECT COUNT(*) FROM candle_records"))
+            candle_count_result = await session.execute(sql_text("SELECT COUNT(*) FROM candles"))
             candle_count = candle_count_result.scalar() or 0
             if candle_count > 0:
-                await session.execute(sql_text("DELETE FROM candle_records"))
+                await session.execute(sql_text("DELETE FROM candles"))
                 await session.commit()
-                logger.info(f"[ADMIN] DELETE'd {candle_count} candle_records")
+                logger.info(f"[ADMIN] DELETE'd {candle_count} candles")
         except Exception as ce:
-            logger.warning(f"[ADMIN] Could not wipe candle_records: {ce}")
+            logger.warning(f"[ADMIN] Could not wipe candles: {ce}")
 
         # Verify on the SAME session (bypasses PgBouncer visibility issue)
-        verify_result = await session.execute(sql_text("SELECT COUNT(*) FROM signal_records"))
+        verify_result = await session.execute(sql_text("SELECT COUNT(*) FROM signals"))
         remaining = verify_result.scalar() or 0
         logger.info(f"[ADMIN] Post-wipe verification (same session): {remaining} signals remaining")
 
@@ -2442,9 +2482,11 @@ async def register_send_otp(request: Request):
         email_sent = False
 
     if not email_sent:
-        logger.warning(f"[Register] OTP generated for {email} but email could not be sent.")
-        # Log OTP server-side only for dev debugging — NEVER return in API response
-        logger.info(f"[Register] DEV OTP for {email}: {otp_code}")
+        # SECURITY: do NOT log the OTP value — Railway logs are accessible to
+        # anyone with dashboard access, and a leaked OTP enables account takeover.
+        # The OTP remains stored in the password_reset_otps table; the user must
+        # fix their RESEND_API_KEY config and retry registration.
+        logger.error(f"[Register] OTP email delivery FAILED for {email[:3]}*** — Resend API misconfigured or down. OTP NOT logged.")
     else:
         logger.info(f"[Register] Verification OTP sent to {email[:3]}***")
 
@@ -3575,9 +3617,8 @@ async def delete_account_send_otp(credentials: HTTPAuthorizationCredentials = Se
     email_sent = await send_otp_email(user_email, otp_code, purpose="account_deletion")
 
     if not email_sent:
-        logger.warning(f"[Delete] Deletion OTP generated for {user_email} but email could not be sent.")
-        # Log OTP server-side only — NEVER return in API response
-        logger.info(f"[Delete] DEV OTP for {user_email}: {otp_code}")
+        # SECURITY: do NOT log the OTP value (same rationale as register flow).
+        logger.error(f"[Delete] Deletion OTP email delivery FAILED for {user_email[:3]}*** — Resend API misconfigured or down. OTP NOT logged.")
     else:
         logger.info(f"[Delete] Deletion OTP sent to {user_email[:3]}***")
 
@@ -4963,11 +5004,15 @@ async def rate_limit_middleware(request, call_next):
     return response
 
 
-# ═══════════ TEMPORARY DIAGNOSTIC ENDPOINT (REMOVE AFTER DEBUG) ═══════════
+# ═══════════ DIAGNOSTIC ENDPOINT (admin-only) ═══════════
+# Was previously public (no auth) — exposed DB schema (table names + column
+# types for password_reset_otps and the full public table list) to anyone.
+# Now requires admin auth. Safe to keep for debugging schema-migration issues.
 @app.get("/api/debug/schema")
-async def debug_schema():
-    """Public diagnostic — returns the actual columns of password_reset_otps.
-    Temporary: delete after diagnosis is complete.
+async def debug_schema(admin_payload = Depends(require_admin)):
+    """Admin-only diagnostic — returns the actual columns of password_reset_otps
+    and the list of all public tables. Used for diagnosing schema-migration
+    issues (e.g. missing `purpose` column on Supabase PgBouncer).
     """
     try:
         async with AsyncSessionLocal() as session:
