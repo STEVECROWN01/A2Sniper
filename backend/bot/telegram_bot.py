@@ -8,7 +8,7 @@ import re
 import json
 import logging
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from collections import deque
 from dotenv import load_dotenv
 
@@ -59,6 +59,8 @@ class TelegramSignalBot:
             '/risk': self.cmd_risk_manager,
             '/journal': self.cmd_trading_journal,
             '/unsubscribe': self.cmd_unsubscribe,
+            '/link': self.cmd_link,
+            '/unlink': self.cmd_unlink,
         }
         # H16 Fix: Bounded signal history to prevent unbounded memory growth
         self.signal_history = deque(maxlen=1000)
@@ -114,9 +116,14 @@ class TelegramSignalBot:
     # ═══════════ ACL ═══════════
     async def _check_access(self, user_id: str, required_plan: str = 'Standard') -> bool:
         """Check access level - syncs with database.
-        Also verifies the user is in subscribed_chats for premium commands.
-        NOTE: Proper authentication requires linking Telegram ID to user account in the database.
-        Currently, subscribed_chats is populated when a user runs /start, which is a basic check.
+
+        Two-step check:
+          1. User must have run /start (user_id in subscribed_chats).
+          2. User's Telegram chat_id must be linked to a DB subscription
+             (subscriptions.telegram_chat_id == user_id). The linked
+             subscription's plan_name determines access.
+        Unlinked users get 'Standard' (free tier) — they can use Standard
+        commands but Premium/Pro commands return False.
         """
         # First check if user is subscribed (has run /start)
         if user_id not in self.subscribed_chats:
@@ -127,17 +134,41 @@ class TelegramSignalBot:
         return plan_hierarchy.get(plan, 0) >= plan_hierarchy.get(required_plan, 0)
 
     async def _sync_user_plan(self, user_id: str):
-        """Sync user plan from database."""
+        """Sync user plan from database via the telegram_chat_id link.
+
+        Queries subscriptions.telegram_chat_id == user_id (the Telegram
+        chat_id). If a subscription row is found, its plan_name is cached
+        in self.user_plans. If not found (user hasn't linked their Telegram),
+        defaults to 'Standard'.
+
+        BUGFIX: the previous version queried UserSubscription.user_id == user_id,
+        but user_id here is the Telegram chat_id (e.g. "123456789"), NOT the
+        DB user UUID. The query never matched, so all users were always
+        'Standard' — paid Premium/Pro subscribers got Standard access only.
+        """
         try:
             from db import AsyncSessionLocal, UserSubscription
             from sqlalchemy import select
             async with AsyncSessionLocal() as session:
+                # Look up the subscription row linked to this Telegram chat_id.
+                # subscriptions.telegram_chat_id is set by the /link command
+                # (see cmd_link below).
                 result = await session.execute(
-                    select(UserSubscription).where(UserSubscription.user_id == user_id)
+                    select(UserSubscription).where(UserSubscription.telegram_chat_id == str(user_id))
                 )
                 sub = result.scalar_one_or_none()
                 if sub:
-                    self.user_plans[user_id] = sub.plan_name
+                    # Check if subscription is still active (not expired)
+                    from datetime import datetime, timezone
+                    if sub.active_until and sub.active_until < datetime.now(timezone.utc):
+                        # Expired — downgrade to Standard
+                        self.user_plans[user_id] = 'Standard'
+                    else:
+                        self.user_plans[user_id] = sub.plan_name
+                    self._save_state()
+                else:
+                    # Not linked — default to Standard
+                    self.user_plans[user_id] = 'Standard'
                     self._save_state()
         except Exception as e:
             logger.warning(f"[TELEGRAM] Could not sync plan for {user_id}: {e}")
@@ -198,7 +229,21 @@ class TelegramSignalBot:
             'enabled_sessions': {'LONDON': True, 'NY': True, 'ASIAN': True},
         })
         self._save_state()
-        return """🎯 Bienvenue sur A2Sniper 3.0
+
+        # Check if this Telegram chat is linked to a subscription
+        plan = await self._get_plan(user_id)
+        is_linked = plan != 'Standard'
+
+        link_hint = ""
+        if not is_linked:
+            link_hint = (
+                "\n\n🔗 <b>LINK YOUR ACCOUNT</b>\n"
+                "You're currently on the <b>Standard (free)</b> plan.\n"
+                "If you have a Premium or Pro subscription, link it to unlock /analyse, /structure, /backtesting.\n"
+                "→ Go to <b>a2sniper.vercel.app/settings</b> → <b>Link Telegram Account</b> → generate a code → send <code>/link &lt;code&gt;</code> here."
+            )
+
+        return f"""🎯 Bienvenue sur A2Sniper 3.0
 
 🏆 Système d'Analyse Marché Réel 100% Intègre.
 📊 Winrate Dynamique | Sniper Entry System (SES)
@@ -207,7 +252,7 @@ Pour commencer :
 1️⃣ /plan — Voir votre abonnement
 2️⃣ /paires — Choisir vos paires
 3️⃣ /live — Activer les signaux temps réel (Data Live)
-4️⃣ /help — Guide complet
+4️⃣ /help — Guide complet{link_hint}
 
 ⚠️ SÉCURITÉ : Ne partagez JAMAIS votre SSID dans ce chat.
 Utilisez la méthode de connexion sécurisée dans le dashboard web.
@@ -687,31 +732,40 @@ Pour modifier : /timeframe M1 | /paires EUR/USD OTC | /session LONDON"""
     async def cmd_plan(self, user_id: str, args: list = None) -> str:
         """13. /plan — Afficher plan actuel et upgrade (reads from database)"""
         plan = await self._get_plan(user_id)
-        
-        # Try to get additional plan details from database
+
+        # Try to get additional plan details from database (via telegram_chat_id link)
         plan_details = {}
+        is_linked = False
         try:
             from db import AsyncSessionLocal, UserSubscription
             from sqlalchemy import select
             async with AsyncSessionLocal() as session:
+                # Query by telegram_chat_id (not user_id — that was the old bug)
                 result = await session.execute(
-                    select(UserSubscription).where(UserSubscription.user_id == user_id)
+                    select(UserSubscription).where(UserSubscription.telegram_chat_id == str(user_id))
                 )
                 sub = result.scalar_one_or_none()
                 if sub:
+                    is_linked = True
                     plan_details = {
                         'expires_at': sub.active_until.strftime('%Y-%m-%d') if hasattr(sub, 'active_until') and sub.active_until else 'N/A',
                         'is_active': getattr(sub, 'is_active', True),
                     }
         except Exception as e:
             logger.warning(f"Could not fetch plan details: {e}")
-        
+
         expiry_line = f"\n📅 Expiration    : {plan_details.get('expires_at', 'N/A')}" if plan_details else ''
         active_line = f"\n🟢 Statut       : {'Actif' if plan_details.get('is_active', True) else 'Expiré'}" if plan_details else ''
-        
+
+        link_status_line = (
+            "\n✅ Telegram lié à votre compte A2Sniper"
+            if is_linked else
+            "\n⚠️ Telegram NON lié — utilisez /link pour débloquer Premium/Pro"
+        )
+
         return f"""👤 VOTRE ABONNEMENT
 ━━━━━━━━━━━━━━━━━━━━━
-📋 Plan actuel : {plan}{expiry_line}{active_line}
+📋 Plan actuel : {plan}{expiry_line}{active_line}{link_status_line}
 
 📊 PLANS DISPONIBLES :
 ▶ Standard (198$/mois) — 20 signaux/jour
@@ -1022,6 +1076,175 @@ Le trading sur options binaires et Forex comporte un niveau de risque très éle
             return await self.cmd_signal_on_demand(user_id, pair)
 
         return None
+
+    # ═══════════ TELEGRAM ACCOUNT LINKING ═══════════
+    # /link <code> — verify the 6-digit code (emailed to the user by the web app)
+    #                and link this Telegram chat_id to the user's subscription.
+    # /unlink      — clear the telegram_chat_id on the user's subscription.
+
+    async def cmd_link(self, user_id: str, args: list = None) -> str:
+        """Link this Telegram chat to a user's A2Sniper subscription.
+
+        Usage: /link <6-digit-code>
+
+        The user generates the code on the web app (Settings → Link Telegram
+        Account). The code is emailed to them via Resend with purpose=
+        'telegram_link' (10-min TTL). When they send `/link <code>` here,
+        we verify the code, fetch the user's email, find their subscription,
+        and set subscriptions.telegram_chat_id = chat_id.
+
+        After linking, _sync_user_plan queries by telegram_chat_id and
+        correctly returns the user's paid plan (Premium/Pro).
+        """
+        if not args or len(args) < 1:
+            return (
+                "🔗 <b>LINK TELEGRAM ACCOUNT</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━━\n"
+                "To link your Telegram to your A2Sniper subscription:\n\n"
+                "1️⃣ Log in to your A2Sniper web dashboard\n"
+                "2️⃣ Go to <b>Settings → Link Telegram Account</b>\n"
+                "3️⃣ Click <b>Generate Linking Code</b> — a 6-digit code will be emailed to you\n"
+                "4️⃣ Come back here and send: <code>/link 123456</code>\n\n"
+                "Once linked, your Premium/Pro plan unlocks /analyse, /structure, /backtesting."
+            )
+
+        code = str(args[0]).strip()
+        if not code.isdigit() or len(code) != 6:
+            return "❌ Invalid code format. The linking code must be exactly 6 digits. Example: <code>/link 123456</code>"
+
+        try:
+            from db import AsyncSessionLocal, PasswordResetOTP, UserSubscription, User
+            from sqlalchemy import select
+            async with AsyncSessionLocal() as session:
+                # Find the most recent unused telegram_link OTP matching this code.
+                # Note: password_reset_otps has no `used` column — we delete on success.
+                result = await session.execute(
+                    select(PasswordResetOTP).where(
+                        PasswordResetOTP.otp_code == code,
+                        PasswordResetOTP.purpose == "telegram_link",
+                    ).order_by(PasswordResetOTP.created_at.desc()).limit(1)
+                )
+                otp_row = result.scalar_one_or_none()
+
+                is_valid = (
+                    otp_row is not None
+                    and otp_row.expires_at > datetime.now(timezone.utc)
+                )
+
+                if not is_valid:
+                    return (
+                        "❌ <b>Invalid or expired linking code</b>\n"
+                        "━━━━━━━━━━━━━━━━━━━━━\n"
+                        "The code you entered is incorrect or has expired (10-minute TTL).\n"
+                        "Please generate a new code on the web app and try again."
+                    )
+
+                # Look up the user by email, then their subscription
+                user_result = await session.execute(
+                    select(User).where(User.email == otp_row.email)
+                )
+                user = user_result.scalar_one_or_none()
+                if not user:
+                    return "❌ No A2Sniper account found for that email. Please sign up at a2sniper.vercel.app first."
+
+                sub_result = await session.execute(
+                    select(UserSubscription).where(UserSubscription.user_id == user.id)
+                )
+                sub = sub_result.scalar_one_or_none()
+                if not sub:
+                    # Auto-create a Standard subscription so we can attach the chat_id
+                    sub = UserSubscription(
+                        user_id=user.id,
+                        plan_name="Standard",
+                        active_until=datetime.now(timezone.utc) + timedelta(days=3650),
+                    )
+                    session.add(sub)
+                    await session.flush()
+
+                # Check if this chat_id is already linked to a different user
+                existing_result = await session.execute(
+                    select(UserSubscription).where(
+                        UserSubscription.telegram_chat_id == str(user_id),
+                        UserSubscription.user_id != user.id,
+                    )
+                )
+                existing = existing_result.scalar_one_or_none()
+                if existing:
+                    # Unlink the previous account (the user is relinking to a new account)
+                    existing.telegram_chat_id = None
+
+                # Link this chat_id to the user's subscription
+                sub.telegram_chat_id = str(user_id)
+
+                # Delete the used OTP
+                await session.execute(
+                    __import__('sqlalchemy').text(
+                        "DELETE FROM password_reset_otps WHERE id = :otp_id"
+                    ),
+                    {"otp_id": otp_row.id}
+                )
+                await session.commit()
+
+                # Update in-memory plan cache
+                self.user_plans[user_id] = sub.plan_name
+                self._save_state()
+
+                logger.info(
+                    f"[TELEGRAM-LINK] Linked chat_id={user_id} to user_id={user.id[:8]}... "
+                    f"(email={user.email[:3]}***, plan={sub.plan_name})"
+                )
+
+                plan_emoji = "🏆" if sub.plan_name == "Pro" else "⚡" if sub.plan_name == "Premium" else "✅"
+                return (
+                    f"{plan_emoji} <b>TELEGRAM ACCOUNT LINKED</b>\n"
+                    "━━━━━━━━━━━━━━━━━━━━━\n"
+                    f"👤 Account: {user.email}\n"
+                    f"📋 Plan: <b>{sub.plan_name}</b>\n\n"
+                    "Your Premium/Pro commands are now unlocked:\n"
+                    "• <code>/analyse</code> — On-demand signal analysis\n"
+                    "• <code>/structure</code> — Smart Money Concepts structure\n"
+                    "• <code>/timeframe</code> — Multi-timeframe analysis\n"
+                    f"{'• <code>/backtesting</code> — Backtest engine (Pro only)' if sub.plan_name == 'Pro' else ''}\n\n"
+                    "Welcome aboard, Sniper. 🎯"
+                )
+        except Exception as e:
+            logger.error(f"[TELEGRAM-LINK] Error linking chat_id={user_id}: {e}", exc_info=True)
+            return "❌ An error occurred while linking your account. Please try again or contact support."
+
+    async def cmd_unlink(self, user_id: str, args: list = None) -> str:
+        """Unlink this Telegram chat from any A2Sniper subscription."""
+        try:
+            from db import AsyncSessionLocal, UserSubscription
+            from sqlalchemy import select
+            async with AsyncSessionLocal() as session:
+                result = await session.execute(
+                    select(UserSubscription).where(UserSubscription.telegram_chat_id == str(user_id))
+                )
+                sub = result.scalar_one_or_none()
+                if not sub:
+                    return (
+                        "ℹ️ <b>This Telegram account is not linked</b>\n"
+                        "━━━━━━━━━━━━━━━━━━━━━\n"
+                        "There's no A2Sniper subscription linked to this Telegram chat.\n"
+                        "Use /link to link your account."
+                    )
+                sub.telegram_chat_id = None
+                await session.commit()
+
+                # Clear in-memory plan cache — user reverts to Standard
+                self.user_plans[user_id] = 'Standard'
+                self._save_state()
+
+                logger.info(f"[TELEGRAM-LINK] Unlinked chat_id={user_id} from user_id={sub.user_id[:8]}...")
+                return (
+                    "✅ <b>TELEGRAM ACCOUNT UNLINKED</b>\n"
+                    "━━━━━━━━━━━━━━━━━━━━━\n"
+                    "Your Telegram is no longer linked to your A2Sniper subscription.\n"
+                    "You now have Standard (free) access. Use /link to relink."
+                )
+        except Exception as e:
+            logger.error(f"[TELEGRAM-LINK] Error unlinking chat_id={user_id}: {e}", exc_info=True)
+            return "❌ An error occurred while unlinking your account. Please try again."
 
     # H17 Note: Custom polling is used instead of python-telegram-bot's built-in event loop
     # because it provides more control over reconnection behavior, timeout handling,

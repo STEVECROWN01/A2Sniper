@@ -4,7 +4,7 @@ import { getApiUrl } from '@/lib/api-config';
 
 import { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { User, Bell, Shield, Palette, Save, Check, Camera, Key, Globe, Clock, Trash2, Download, AlertTriangle, Loader2, Volume2 } from 'lucide-react';
+import { User, Bell, Shield, Palette, Save, Check, Camera, Key, Globe, Clock, Trash2, Download, AlertTriangle, Loader2, Volume2, Send, Link2, Unlink } from 'lucide-react';
 
 import { useAppStore } from '@/lib/store';
 import { useAuth } from '@/hooks/use-auth';
@@ -99,6 +99,12 @@ export default function SettingsPage() {
   const [pushEnabled, setPushEnabled] = useState(false);
   const [isTogglingPush, setIsTogglingPush] = useState(false);
 
+  // Telegram account linking state
+  const [telegramLinked, setTelegramLinked] = useState<boolean | null>(null);
+  const [telegramChatId, setTelegramChatId] = useState<string | null>(null);
+  const [isGeneratingLinkCode, setIsGeneratingLinkCode] = useState(false);
+  const [isUnlinkingTelegram, setIsUnlinkingTelegram] = useState(false);
+
   // Sync notification sound from user data when it loads
   useEffect(() => {
     if (user?.notification_sound && user.notification_sound !== selectedNotificationSound) {
@@ -111,6 +117,68 @@ export default function SettingsPage() {
     if (!notificationsSupported()) return;
     isSubscribedToPush().then(setPushEnabled);
   }, []);
+
+  // Check Telegram link status on mount
+  const refreshTelegramStatus = async () => {
+    try {
+      const apiUrl = getApiUrl();
+      const res = await fetch(`${apiUrl}/api/auth/telegram/status`, { credentials: 'include' });
+      if (res.ok) {
+        const data = await res.json();
+        setTelegramLinked(data.linked === true);
+        setTelegramChatId(data.telegram_chat_id ?? null);
+      } else {
+        setTelegramLinked(false);
+      }
+    } catch {
+      setTelegramLinked(false);
+    }
+  };
+  useEffect(() => {
+    refreshTelegramStatus();
+  }, []);
+
+  const handleGenerateLinkCode = async () => {
+    setIsGeneratingLinkCode(true);
+    try {
+      const apiUrl = getApiUrl();
+      const res = await fetch(`${apiUrl}/api/auth/telegram/link-code`, {
+        method: 'POST',
+        credentials: 'include',
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        toast.success(`Linking code sent to your email. TTL: ${data.ttl_minutes} min. Open Telegram and send /link <code> to the A2Sniper bot.`);
+      } else {
+        toast.error(data.detail || 'Failed to send linking code.');
+      }
+    } catch {
+      toast.error('Network error while sending linking code.');
+    } finally {
+      setIsGeneratingLinkCode(false);
+    }
+  };
+
+  const handleUnlinkTelegram = async () => {
+    setIsUnlinkingTelegram(true);
+    try {
+      const apiUrl = getApiUrl();
+      const res = await fetch(`${apiUrl}/api/auth/telegram/unlink`, {
+        method: 'DELETE',
+        credentials: 'include',
+      });
+      if (res.ok) {
+        toast.success('Telegram account unlinked.');
+        await refreshTelegramStatus();
+      } else {
+        toast.error('Failed to unlink Telegram.');
+      }
+    } catch {
+      toast.error('Network error while unlinking Telegram.');
+    } finally {
+      setIsUnlinkingTelegram(false);
+    }
+  };
 
   // Save notification preferences to localStorage when changed
   useEffect(() => {
@@ -726,6 +794,70 @@ export default function SettingsPage() {
                         </div>
                       </div>
                     </div>
+                  </div>
+
+                  {/* Link Telegram Account */}
+                  <div className="bg-[#0A0B0E] rounded-xl border border-[#1a1a2e] p-6">
+                    <h2 className="text-lg font-semibold text-white mb-2 flex items-center gap-2">
+                      <Send className="w-5 h-5 text-[#D4AF37]" />
+                      Link Telegram Account
+                    </h2>
+                    <p className="text-sm text-gray-500 mb-6">
+                      Link your Telegram to unlock Premium/Pro commands in the A2Sniper bot
+                      (<code className="text-gray-400">/analyse</code>, <code className="text-gray-400">/structure</code>, <code className="text-gray-400">/backtesting</code>).
+                      Without linking, all Telegram users get Standard (free) access only.
+                    </p>
+
+                    {telegramLinked === null ? (
+                      <div className="flex items-center gap-2 text-sm text-gray-500">
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        Checking link status...
+                      </div>
+                    ) : telegramLinked ? (
+                      <div className="space-y-4">
+                        <div className="flex items-center gap-3 p-4 bg-green-500/5 border border-green-500/20 rounded-lg">
+                          <div className="w-10 h-10 rounded-full bg-green-500/10 flex items-center justify-center">
+                            <Check className="w-5 h-5 text-green-400" />
+                          </div>
+                          <div>
+                            <p className="font-semibold text-green-400">Telegram account linked</p>
+                            <p className="text-xs text-gray-500">
+                              Chat ID: <code className="text-gray-400">{telegramChatId}</code> — your Premium/Pro plan is active in the bot.
+                            </p>
+                          </div>
+                        </div>
+                        <button
+                          onClick={handleUnlinkTelegram}
+                          disabled={isUnlinkingTelegram}
+                          className="px-4 py-2 rounded-lg bg-[#121216] hover:bg-[#1a1a1f] border border-gray-800 text-gray-300 hover:text-red-400 font-bold flex items-center gap-2 disabled:opacity-50 transition-colors"
+                        >
+                          {isUnlinkingTelegram ? <Loader2 className="w-4 h-4 animate-spin" /> : <Unlink className="w-4 h-4" />}
+                          {isUnlinkingTelegram ? 'Unlinking...' : 'Unlink Telegram'}
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="space-y-4">
+                        <div className="flex items-start gap-3 p-4 bg-yellow-500/5 border border-yellow-500/20 rounded-lg">
+                          <Link2 className="w-5 h-5 text-yellow-400 mt-0.5 flex-shrink-0" />
+                          <div>
+                            <p className="font-semibold text-yellow-400">Not linked</p>
+                            <p className="text-xs text-gray-500 mt-1">
+                              Generate a 6-digit code below — it will be emailed to <code className="text-gray-400">{user?.email || 'your account email'}</code>.
+                              Then open Telegram, find the A2Sniper bot, and send <code className="text-gray-400">/link &lt;code&gt;</code>.
+                              The code expires in 10 minutes.
+                            </p>
+                          </div>
+                        </div>
+                        <button
+                          onClick={handleGenerateLinkCode}
+                          disabled={isGeneratingLinkCode}
+                          className="px-4 py-2 rounded-lg bg-[#D4AF37] hover:bg-[#C5A059] text-black font-bold flex items-center gap-2 disabled:opacity-50 transition-colors"
+                        >
+                          {isGeneratingLinkCode ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                          {isGeneratingLinkCode ? 'Sending code...' : 'Generate Linking Code'}
+                        </button>
+                      </div>
+                    )}
                   </div>
 
                   {/* Export & Delete Account */}

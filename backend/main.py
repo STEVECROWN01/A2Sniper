@@ -3083,6 +3083,11 @@ async def send_otp_email(recipient_email: str, otp_code: str, purpose: str = "pa
         heading = "Admin 2FA Verification"
         message = "You're signing in to the A2Sniper admin dashboard. Enter this code to complete two-factor authentication:"
         footer_note = "This code expires in 15 minutes. If you didn't request admin access, your account may be compromised — please change your password immediately."
+    elif purpose == "telegram_link":
+        subject = "Link your Telegram to A2Sniper"
+        heading = "Telegram Account Linking"
+        message = "You're linking your Telegram account to your A2Sniper subscription. Send this code to the A2Sniper bot in Telegram via the command <code>/link &lt;code&gt;</code>:"
+        footer_note = "This code expires in 10 minutes. If you didn't request this, you can safely ignore this email — your account is secure."
     else:
         subject = "A2Sniper Reset Code"
         heading = "Password Reset"
@@ -3702,6 +3707,129 @@ async def get_me(credentials: HTTPAuthorizationCredentials = Security(security))
             "avatar": getattr(user, 'avatar', None),
             "notification_sound": getattr(user, 'notification_sound', 'bell') or 'bell'
         }
+
+
+# ═══════════ TELEGRAM ACCOUNT LINKING ═══════════
+# Flow: user generates a 6-digit code on the web app → emails it to themselves
+# via Resend → user sends `/link <code>` to the bot → bot verifies the code,
+# updates subscriptions.telegram_chat_id. Future /start calls detect the link
+# via telegram_chat_id and fetch the plan correctly.
+
+TELEGRAM_LINK_TTL_MINUTES = 10
+TELEGRAM_LINK_PURPOSE = "telegram_link"
+
+
+@app.post("/api/auth/telegram/link-code")
+async def generate_telegram_link_code(credentials: HTTPAuthorizationCredentials = Security(security)):
+    """Generate a 6-digit one-time code to link the user's Telegram account.
+
+    The code is stored in password_reset_otps with purpose='telegram_link'
+    (10-min TTL, bound to the user's email) and emailed to the user via Resend.
+    The user then sends `/link <code>` to the A2Sniper bot in Telegram to
+    complete the linking.
+    """
+    token = credentials.credentials
+    payload = decode_access_token(token)
+
+    # Check if token is revoked
+    token_jti = payload.get("jti")
+    if token_jti and await is_token_revoked(token_jti):
+        raise HTTPException(status_code=401, detail="Token has been revoked")
+
+    user_id = payload.get("sub")
+    user_email = payload.get("email")
+
+    async with AsyncSessionLocal() as session:
+        # Delete any previous unused telegram_link codes for this user
+        await session.execute(
+            __import__('sqlalchemy').text(
+                "DELETE FROM password_reset_otps WHERE email = :email AND purpose = :purpose"
+            ),
+            {"email": user_email, "purpose": TELEGRAM_LINK_PURPOSE}
+        )
+        link_code = str(secrets.randbelow(900000) + 100000)
+        new_otp = PasswordResetOTP(
+            id=str(uuid.uuid4()),
+            email=user_email,
+            otp_code=link_code,
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=TELEGRAM_LINK_TTL_MINUTES),
+            created_at=datetime.now(timezone.utc),
+            purpose=TELEGRAM_LINK_PURPOSE,
+        )
+        session.add(new_otp)
+        await session.commit()
+
+    email_sent = await send_otp_email(user_email, link_code, purpose="telegram_link")
+    if not email_sent:
+        logger.error(f"[TELEGRAM-LINK] Email delivery FAILED for {user_email[:3]}*** — code NOT logged.")
+        raise HTTPException(
+            status_code=503,
+            detail="Could not send linking code email. Please verify RESEND_API_KEY is set on the backend."
+        )
+
+    logger.info(f"[TELEGRAM-LINK] Link code sent to {user_email[:3]}*** (user_id={user_id[:8]}...)")
+    return {
+        "status": "code_sent",
+        "ttl_minutes": TELEGRAM_LINK_TTL_MINUTES,
+        "message": f"A 6-digit linking code has been sent to {user_email}. Open Telegram and send `/link <code>` to the A2Sniper bot."
+    }
+
+
+@app.get("/api/auth/telegram/status")
+async def get_telegram_link_status(credentials: HTTPAuthorizationCredentials = Security(security)):
+    """Check whether the user's Telegram account is linked (i.e. the
+    subscriptions.telegram_chat_id column is set for this user).
+    """
+    token = credentials.credentials
+    payload = decode_access_token(token)
+
+    token_jti = payload.get("jti")
+    if token_jti and await is_token_revoked(token_jti):
+        raise HTTPException(status_code=401, detail="Token has been revoked")
+
+    user_id = payload.get("sub")
+
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(UserSubscription).where(UserSubscription.user_id == user_id)
+        )
+        sub = result.scalar_one_or_none()
+        linked_chat_id = getattr(sub, 'telegram_chat_id', None) if sub else None
+
+    return {
+        "linked": bool(linked_chat_id),
+        "telegram_chat_id": linked_chat_id,
+    }
+
+
+@app.delete("/api/auth/telegram/unlink")
+async def unlink_telegram(credentials: HTTPAuthorizationCredentials = Security(security)):
+    """Clear the user's Telegram link (server-side). Useful if the user lost
+    access to their Telegram account or wants to relink to a different one.
+    """
+    token = credentials.credentials
+    payload = decode_access_token(token)
+
+    token_jti = payload.get("jti")
+    if token_jti and await is_token_revoked(token_jti):
+        raise HTTPException(status_code=401, detail="Token has been revoked")
+
+    user_id = payload.get("sub")
+
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(UserSubscription).where(UserSubscription.user_id == user_id)
+        )
+        sub = result.scalar_one_or_none()
+        if sub and getattr(sub, 'telegram_chat_id', None):
+            sub.telegram_chat_id = None
+            await session.commit()
+            logger.info(f"[TELEGRAM-LINK] Unlinked Telegram for user_id={user_id[:8]}...")
+        else:
+            # Not linked — no-op, return success
+            pass
+
+    return {"status": "unlinked"}
 
 
 @app.post("/api/auth/delete-account-send-otp")
