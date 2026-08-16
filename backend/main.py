@@ -72,14 +72,35 @@ from db import (init_db, SignalRecord, CandleRecord, AsyncSessionLocal, User, Us
 # even when the browser tab is closed. The public key is sent to the frontend
 # which uses it to subscribe via the Push API. The private key is used here
 # to sign push messages.
-VAPID_PRIVATE_KEY = os.environ.get(
-    "VAPID_PRIVATE_KEY",
-    "UNpdVEsyFQt6lDVaM6zNscnx4m_80u6Vm6gjNUfM77Y"
-)
-VAPID_PUBLIC_KEY = os.environ.get(
-    "VAPID_PUBLIC_KEY",
-    "BDHk8NGH6p1HyqKoupPWBwdsSHJX5c5hKfgV4NmJ-0X1pcl93dpIzcc4PcBsSIOx0ArM6pJSKRwo4iow8CpCbVM"
-)
+#
+# ⚠️ SECURITY: VAPID keys MUST be provided via environment variables.
+# The previous hardcoded fallback keys were committed to git and are
+# considered COMPROMISED — they have been removed. The server will refuse
+# to start if either key is missing or still set to the old compromised value.
+# Generate a new keypair with:
+#     python -c "from py_vapid import Vapid; v=Vapid(); v.generate_keys(); \
+#         v.save_key('private.pem'); v.save_public_key('public.pem')"
+# then convert to URL-safe base64 (no padding) and set as Railway env vars:
+#     VAPID_PRIVATE_KEY = urlsafe_b64(raw_32_byte_private_value)
+#     VAPID_PUBLIC_KEY  = urlsafe_b64(uncompressed_point_65_bytes)
+_COMPROMISED_VAPID_PRIVATE = "UNpdVEsyFQt6lDVaM6zNscnx4m_80u6Vm6gjNUfM77Y"
+_COMPROMISED_VAPID_PUBLIC  = "BDHk8NGH6p1HyqKoupPWBwdsSHJX5c5hKfgV4NmJ-0X1pcl93dpIzcc4PcBsSIOx0ArM6pJSKRwo4iow8CpCbVM"
+
+VAPID_PRIVATE_KEY = os.environ.get("VAPID_PRIVATE_KEY", "").strip()
+VAPID_PUBLIC_KEY  = os.environ.get("VAPID_PUBLIC_KEY", "").strip()
+
+if not VAPID_PRIVATE_KEY or not VAPID_PUBLIC_KEY:
+    raise RuntimeError(
+        "VAPID_PRIVATE_KEY and VAPID_PUBLIC_KEY environment variables are required. "
+        "The previous hardcoded fallback keys were compromised and removed. "
+        "Generate a fresh keypair with py-vapid and set both env vars on Railway."
+    )
+if VAPID_PRIVATE_KEY == _COMPROMISED_VAPID_PRIVATE or VAPID_PUBLIC_KEY == _COMPROMISED_VAPID_PUBLIC:
+    raise RuntimeError(
+        "Refusing to start: VAPID key is set to the known-compromised value that was "
+        "committed to git. Generate a fresh keypair and update the Railway env vars."
+    )
+
 VAPID_CLAIMS = {"sub": "mailto:support@a2sniper.com"}
 
 
