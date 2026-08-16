@@ -541,7 +541,9 @@ export default function SettingsPage() {
           localStorage.removeItem('a2sniper_theme');
           localStorage.removeItem('a2sniper_language');
           localStorage.removeItem('a2sniper_timezone');
-          localStorage.removeItem('a2sniper_last_ssid');
+          // NOTE: a2sniper_last_ssid is no longer stored in localStorage —
+          // the SSID lives only on the server (encrypted at rest). Nothing
+          // to clean up here.
         }
         // Use Zustand logout to clear store state and call backend logout
         await logout();

@@ -13,8 +13,11 @@ import { toast } from 'sonner';
 
 export default function SignalsPage() {
   useAuth();
-  const { signals, totalSignals, totalActive, totalWon, totalLost, liveStatus, connectMarket, disconnectMarket, fetchMarketStatus, marketInfo, user, attemptReconnect, reconnectAttempts, maxReconnectAttempts } = useAppStore();
-  // Persist SSID in localStorage so it survives page refreshes
+  const { signals, totalSignals, totalActive, totalWon, totalLost, liveStatus, connectMarket, disconnectMarket, fetchMarketStatus, marketInfo, user, connectWithSaved, hasSavedSsid, reconnectAttempts, maxReconnectAttempts } = useAppStore();
+  // SSID textarea — for one-time paste only. NOT persisted to localStorage.
+  // After successful connect, the textarea is cleared and the SSID lives only
+  // on the server (encrypted at rest). The "Reconnect" button uses the
+  // server-side saved SSID via connectWithSaved().
   const [ssid, setSsidState] = useState('');
   const [isConnecting, setIsConnecting] = useState(false);
   const [connectError, setConnectError] = useState('');
@@ -54,11 +57,9 @@ export default function SignalsPage() {
     return 0;
   });
 
-  // Load persisted SSID on mount
-  useEffect(() => {
-    const saved = localStorage.getItem('a2sniper_last_ssid');
-    if (saved) setSsidState(saved);
-  }, []);
+  // NOTE: SSID is no longer loaded from localStorage on mount.
+  // The server stores it (encrypted); the frontend only knows whether one
+  // exists (via hasSavedSsid from the store, populated by fetchSsidStatus).
 
   // Persist filters whenever they change
   useEffect(() => {
@@ -78,8 +79,8 @@ export default function SignalsPage() {
   }, [minWinrate]);
 
   const setSsid = (val: string) => {
+    // SSID textarea is for one-time paste only — do NOT persist to localStorage.
     setSsidState(val);
-    localStorage.setItem('a2sniper_last_ssid', val);
   };
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [justExported, setJustExported] = useState(false);
@@ -173,20 +174,24 @@ export default function SignalsPage() {
       setConnectError(result.message);
     } else {
       toast.success('Connected to Pocket Option market!');
+      // SECURITY: clear the SSID textarea immediately after successful connect.
+      // The SSID has been sent to the server (one-time transit) and is now
+      // stored encrypted at rest. Keeping it in the textarea would leave it
+      // visible in the DOM and accessible to any XSS.
+      setSsidState('');
     }
-    // NOTE: We intentionally do NOT clear the SSID field on success or failure
-    // so the user can see what they pasted and it survives a page refresh.
     setIsConnecting(false);
   };
 
   const handleReconnect = async () => {
     setIsConnecting(true);
     setConnectError('');
-    const result = await attemptReconnect();
+    // Use the server-side saved SSID — no SSID transits the browser.
+    const result = await connectWithSaved();
     if (result.success) {
       toast.success('Reconnection successful!');
     } else {
-      setConnectError(result.message || 'Reconnection failed. Make sure your Pocket Option account is still connected, or paste a new SSID.');
+      setConnectError(result.message || 'Reconnection failed. The saved SSID may have expired — paste a new one from Pocket Option.');
     }
     setIsConnecting(false);
   };
@@ -450,8 +455,8 @@ export default function SignalsPage() {
                       )}
                     </button>
 
-                    {/* Quick Reconnect — uses saved SSID from localStorage */}
-                    {ssid && !isConnecting && (
+                    {/* Reconnect — uses the server-side saved SSID (no SSID transits the browser) */}
+                    {hasSavedSsid && !isConnecting && (
                       <button
                         onClick={handleReconnect}
                         className="w-full py-3 rounded-xl font-black uppercase tracking-[0.15em] text-[10px] transition-all flex items-center justify-center gap-2 bg-white/[0.03] text-gray-400 border border-white/5 hover:bg-white/[0.06] hover:text-white hover:border-[#D4AF37]/30"

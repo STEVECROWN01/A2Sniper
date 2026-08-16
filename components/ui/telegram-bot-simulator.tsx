@@ -283,7 +283,7 @@ function PairRow({
 }
 
 export function TelegramBotSimulator() {
-  const { liveStatus, connectMarket, requestSignal, signals, userStats, marketInfo, attemptReconnect } = useAppStore();
+  const { liveStatus, connectMarket, requestSignal, signals, userStats, marketInfo, connectWithSaved } = useAppStore();
   const [messages, setMessages] = useState<Message[]>([]);
   const [isTyping, setIsTyping] = useState(false);
   const [pairsScrollIndex, setPairsScrollIndex] = useState(0);
@@ -307,26 +307,13 @@ export function TelegramBotSimulator() {
   const [isClearing, setIsClearing] = useState(false);
   const [clearProgress, setClearProgress] = useState(0);
 
-  // Debounced SSID localStorage write
-  const ssidWriteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const debouncedSsidWrite = (value: string) => {
-    if (ssidWriteTimer.current) clearTimeout(ssidWriteTimer.current);
-    ssidWriteTimer.current = setTimeout(() => {
-      localStorage.setItem('a2sniper_last_ssid', value);
-    }, 500);
-  };
+  // SSID input is for one-time paste only — NOT persisted to localStorage.
+  // (The SSID is stored server-side, encrypted at rest. The simulator just
+  // forwards the paste to the backend via connectMarket.)
   const [ssidInput, setSsidInput] = useState('');
   const [ssidError, setSsidError] = useState<string | null>(null);
   const [isConnecting, setIsConnecting] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-
-  // Load persisted SSID on mount
-  useEffect(() => {
-    const saved = localStorage.getItem('a2sniper_last_ssid');
-    if (saved) {
-      setSsidInput(saved);
-    }
-  }, []);
 
   const handleSsidSubmit = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -344,7 +331,10 @@ export function TelegramBotSimulator() {
     setIsConnecting(false);
 
     if (result.success) {
-      localStorage.setItem('a2sniper_last_ssid', ssidInput.trim());
+      // SECURITY: do NOT persist the SSID to localStorage. It has been sent
+      // to the server (one-time transit) and is now stored encrypted at rest.
+      // Clear the input so it's not sitting in the DOM.
+      setSsidInput('');
       toast.success("Successfully connected to Pocket Option market !", { duration: 3000 });
       
       // Start 5-second initial analysis automatically
@@ -686,7 +676,7 @@ Zero Simulation. 100% Real-Market.`;
             <button
               onClick={async () => {
                 addMessage("🔄 Reconnecting with saved SSID...", 'bot');
-                const result = await attemptReconnect();
+                const result = await connectWithSaved();
                 if (result.success) {
                   toast.success("Reconnected to Pocket Option market!");
                 } else {
@@ -875,15 +865,14 @@ Zero Simulation. 100% Real-Market.`;
                     <form onSubmit={handleSsidSubmit} className="flex flex-col gap-1.5 w-[280px]">
 
                       <div className={`flex items-center bg-black/60 rounded-xl border transition-all overflow-hidden ${ssidError ? 'border-red-500 shadow-[0_0_10px_rgba(239,68,68,0.2)]' : 'border-gray-800 focus-within:border-[#D4AF37]/50'}`}>
-                        <input 
-                          type="text" 
+                        <input
+                          type="text"
                           value={ssidInput}
-                          onChange={(e) => { 
-                            setSsidInput(e.target.value); 
-                            debouncedSsidWrite(e.target.value);
-                            if (ssidError) setSsidError(null); 
+                          onChange={(e) => {
+                            setSsidInput(e.target.value);
+                            if (ssidError) setSsidError(null);
                           }}
-                          placeholder="Collez le message WS ici..." 
+                          placeholder="Collez le message WS ici..."
                           disabled={isConnecting}
                           className="flex-1 bg-transparent px-3 py-2 text-xs text-gray-200 placeholder-gray-600 focus:outline-none border-none"
                         />

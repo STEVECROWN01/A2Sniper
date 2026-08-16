@@ -102,12 +102,14 @@ interface AppState {
   } | null;
   isInitialized: boolean;
   clockOffset: number;
-  lastConnectedSSID: string | null;
+  // SSID is now server-side only — the frontend never stores it. We track
+  // only a boolean indicating whether the server has a saved SSID (for the
+  // "Reconnect" button). The SSID value itself never enters the browser.
+  hasSavedSsid: boolean;
   reconnectAttempts: number;
   maxReconnectAttempts: number;
   lastConnectTime: number;
-  autoConnectDone: boolean;  // Track if initial auto-connect has been attempted
-  
+
   // Actions
   setSignals: (signals: Signal[]) => void;
   updateUserStats: (stats: UserStats) => void;
@@ -119,9 +121,10 @@ interface AppState {
   fetchSignals: () => Promise<void>;
   fetchPerformance: () => Promise<void>;
   connectMarket: (ssid: string) => Promise<{ success: boolean; message: string }>;
+  connectWithSaved: () => Promise<{ success: boolean; message: string }>;
   disconnectMarket: () => Promise<void>;
   fetchMarketStatus: () => Promise<void>;
-  attemptReconnect: () => Promise<{ success: boolean; message: string }>;
+  fetchSsidStatus: () => Promise<void>;
   initialize: () => Promise<void>;
   logout: () => Promise<void>;
   requestSignal: (pair: string) => Promise<{ success: boolean; signal?: Signal; message?: string }>;
@@ -144,11 +147,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   marketInfo: null,
   isInitialized: false,
   clockOffset: 0,
-  lastConnectedSSID: null as string | null,
+  hasSavedSsid: false,
   reconnectAttempts: 0,
   maxReconnectAttempts: 5,  // Lowered from 10 to 5 — stop the endless loop faster
   lastConnectTime: 0 as number,  // timestamp of last successful connect (for stability check)
-  autoConnectDone: false,
   
   setSignals: (signals) => set({ signals }),
   
@@ -197,14 +199,27 @@ export const useAppStore = create<AppState>((set, get) => ({
   // Helper to get API base URL (uses shared config)
   getApiUrl: () => getApiUrl(),
 
-  // Reconnect using saved SSID — ONLY called when user clicks the button
-  attemptReconnect: async () => {
-    const state = get();
-    const ssid = state.lastConnectedSSID || (typeof window !== 'undefined' ? localStorage.getItem('a2sniper_last_ssid') : null);
-    if (!ssid) {
-      return { success: false, message: 'No saved SSID for reconnection' };
+  // Reconnect using the server-side saved SSID — no SSID transits the browser.
+  // The server reads its encrypted last_ssid.txt and reconnects.
+  connectWithSaved: async () => {
+    try {
+      const url = get().getApiUrl();
+      const res = await fetch(`${url}/api/market/connect`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ use_saved: true })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        set({ liveStatus: 'LIVE' });
+        await get().fetchMarketStatus();
+        return { success: true, message: data.message };
+      }
+      return { success: false, message: data.detail || 'Reconnection failed — no saved SSID on server.' };
+    } catch {
+      return { success: false, message: 'Network error — verify that the backend server is running.' };
     }
-    return await state.connectMarket(ssid);
   },
 
   // Check if the current user's plan allows the requested action
@@ -370,17 +385,30 @@ export const useAppStore = create<AppState>((set, get) => ({
       });
       const data = await res.json();
       if (res.ok) {
-        set({ liveStatus: 'LIVE', lastConnectedSSID: ssid });
-        // Save SSID for reconnect button
-        if (typeof window !== 'undefined') {
-          localStorage.setItem('a2sniper_last_ssid', ssid);
-        }
+        // SECURITY: do NOT store the SSID in localStorage or Zustand state.
+        // The server has persisted it (encrypted at rest). Future reconnects
+        // use connectWithSaved() which POSTs {use_saved: true} — the SSID
+        // never transits the browser again.
+        set({ liveStatus: 'LIVE', hasSavedSsid: true });
         await get().fetchMarketStatus();
         return { success: true, message: data.message };
       }
       return { success: false, message: data.detail || 'Erreur de connexion' };
     } catch (err) {
       return { success: false, message: 'Network error — verify that the backend server is running on port 8000.' };
+    }
+  },
+
+  fetchSsidStatus: async () => {
+    try {
+      const url = get().getApiUrl();
+      const res = await fetch(`${url}/api/market/ssid-status`, { credentials: 'include' });
+      if (res.ok) {
+        const data = await res.json();
+        set({ hasSavedSsid: data.has_saved_ssid === true });
+      }
+    } catch {
+      // Silent fail — the reconnect button just won't show if status can't be fetched.
     }
   },
 
@@ -606,13 +634,9 @@ export const useAppStore = create<AppState>((set, get) => ({
           get().fetchMarketStatus(),
         ]).catch(() => { /* errors handled in each fetch */ });
 
-        // NO auto-connect — connection ONLY happens on user's explicit click.
-        // We still load the saved SSID into state so the user can quickly
-        // reconnect by clicking the "Reconnect with saved SSID" button.
-        const savedSSID = typeof window !== 'undefined' ? localStorage.getItem('a2sniper_last_ssid') : null;
-        if (savedSSID && !get().autoConnectDone) {
-          set({ autoConnectDone: true, lastConnectedSSID: savedSSID });
-        }
+        // Check whether the server has a saved SSID (for the reconnect button).
+        // The SSID value itself is never sent to the browser — only this boolean.
+        get().fetchSsidStatus();
         return;
       }
       // If /api/auth/me returns 401, user is not authenticated — clear cached user
