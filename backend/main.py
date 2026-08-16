@@ -3184,6 +3184,11 @@ async def send_otp_email(recipient_email: str, otp_code: str, purpose: str = "pa
         heading = "Account Deletion Confirmation"
         message = "You've requested to delete your A2Sniper account. Please confirm by entering this code:"
         footer_note = "If you didn't request account deletion, your account is safe. Please secure your credentials."
+    elif purpose == "admin_2fa":
+        subject = "A2Sniper Admin — 2FA verification code"
+        heading = "Admin 2FA Verification"
+        message = "You're signing in to the A2Sniper admin dashboard. Enter this code to complete two-factor authentication:"
+        footer_note = "This code expires in 15 minutes. If you didn't request admin access, your account may be compromised — please change your password immediately."
     else:
         subject = "A2Sniper Reset Code"
         heading = "Password Reset"
@@ -3396,6 +3401,160 @@ async def setup_2fa(credentials: HTTPAuthorizationCredentials = Security(securit
 async def verify_2fa(request: Request):
     """CDC Section 7: 2FA verification stub — coming soon."""
     return {"status": "coming_soon", "message": "2FA verification will be available in a future update"}
+
+
+# ═══════════ ADMIN 2FA — EMAIL OTP + SIGNED ADMIN TOKEN ═══════════
+# Two-layer admin auth:
+#   Layer 1: regular user login (httpOnly a2sniper_at cookie, is_admin=true).
+#   Layer 2: 6-digit email OTP sent on every admin login attempt. On verify,
+#            backend issues a short-lived (10 min) signed admin token (JWT)
+#            that the frontend stores as the httpOnly admin_token cookie.
+#
+# The middleware (edge) verifies the admin_token JWT signature using Web Crypto
+# (crypto.subtle) — no DB lookup needed in the edge runtime.
+#
+# Why email OTP instead of TOTP authenticator? The codebase already has a
+# working Resend integration and the password_reset_otps table with brute-
+# force tracking. Email-based 2FA is appropriate for a single-founder admin
+# tool and avoids the complexity of TOTP secret provisioning + recovery codes.
+
+ADMIN_TOKEN_TTL_SECONDS = 10 * 60  # 10 minutes
+ADMIN_OTP_PURPOSE = "admin_2fa"
+
+
+def _create_admin_token(user_id: str, user_email: str) -> str:
+    """Sign a short-lived admin token (JWT HS256) using ADMIN_SECRET_TOKEN.
+
+    The middleware verifies this signature with crypto.subtle in the edge
+    runtime. The token encodes {sub, email, exp, iat, purpose: 'admin'}.
+    """
+    import jwt as pyjwt
+    secret = os.environ.get("ADMIN_SECRET_TOKEN", "")
+    if not secret or len(secret) < 16:
+        raise HTTPException(status_code=500, detail="ADMIN_SECRET_TOKEN not configured (must be >= 16 chars)")
+    now = datetime.now(timezone.utc)
+    payload = {
+        "sub": user_id,
+        "email": user_email,
+        "purpose": "admin",
+        "iat": int(now.timestamp()),
+        "exp": int((now + timedelta(seconds=ADMIN_TOKEN_TTL_SECONDS)).timestamp()),
+    }
+    return pyjwt.encode(payload, secret, algorithm="HS256")
+
+
+@app.post("/api/admin/login/initiate")
+async def admin_login_initiate(admin_payload = Depends(require_admin)):
+    """Step 1 of admin 2FA: send a 6-digit OTP to the admin user's email.
+
+    Requires a valid access token for an is_admin=true user (Layer 1).
+    Generates an OTP with purpose='admin_2fa', stores it in
+    password_reset_otps (15-min TTL), and emails it via Resend.
+    """
+    user_id = admin_payload.get("sub")
+    user_email = admin_payload.get("email")
+
+    async with AsyncSessionLocal() as session:
+        # Delete any previous unused admin_2fa OTPs for this user
+        await session.execute(
+            __import__('sqlalchemy').text(
+                "DELETE FROM password_reset_otps WHERE email = :email AND purpose = :purpose"
+            ),
+            {"email": user_email, "purpose": ADMIN_OTP_PURPOSE}
+        )
+        otp_code = str(secrets.randbelow(900000) + 100000)
+        new_otp = PasswordResetOTP(
+            id=str(uuid.uuid4()),
+            email=user_email,
+            otp_code=otp_code,
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=15),
+            created_at=datetime.now(timezone.utc),
+            purpose=ADMIN_OTP_PURPOSE,
+        )
+        session.add(new_otp)
+        await session.commit()
+
+    email_sent = await send_otp_email(user_email, otp_code, purpose="admin_2fa")
+    if not email_sent:
+        logger.error(f"[ADMIN-2FA] OTP email delivery FAILED for {user_email[:3]}*** — Resend misconfigured. OTP NOT logged.")
+        raise HTTPException(
+            status_code=503,
+            detail="Could not send 2FA email. Please verify RESEND_API_KEY is set on the backend."
+        )
+
+    logger.info(f"[ADMIN-2FA] OTP sent to {user_email[:3]}*** for admin login (user_id={user_id[:8]}...)")
+    return {"status": "otp_sent", "message": "A 6-digit verification code has been sent to your email."}
+
+
+@app.post("/api/admin/login/verify")
+async def admin_login_verify(request: Request, admin_payload = Depends(require_admin)):
+    """Step 2 of admin 2FA: verify the OTP and issue a signed admin token.
+
+    Requires Layer 1 (valid access token for is_admin user). On success,
+    returns a short-lived signed admin token (10-min TTL) that the frontend
+    will store as the httpOnly admin_token cookie via the /api/admin-login
+    Next.js route handler.
+    """
+    user_id = admin_payload.get("sub")
+    user_email = admin_payload.get("email")
+
+    try:
+        data = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid request body")
+
+    otp_code = str(data.get("otp_code", "")).strip()
+    if not otp_code or not otp_code.isdigit() or len(otp_code) != 6:
+        raise HTTPException(status_code=400, detail="A 6-digit OTP code is required")
+
+    # Brute-force protection
+    check_otp_bruteforce(user_email)
+
+    async with AsyncSessionLocal() as session:
+        # Fetch the most recent unused admin_2fa OTP for this user.
+        # NOTE: password_reset_otps has no `used` column — we delete rows
+        # on successful verification instead, so any existing row is unused.
+        result = await session.execute(
+            select(PasswordResetOTP).where(
+                PasswordResetOTP.email == user_email,
+                PasswordResetOTP.purpose == ADMIN_OTP_PURPOSE,
+            ).order_by(PasswordResetOTP.created_at.desc()).limit(1)
+        )
+        otp_row = result.scalar_one_or_none()
+
+        is_valid = (
+            otp_row is not None
+            and otp_row.otp_code == otp_code
+            and otp_row.expires_at > datetime.now(timezone.utc)
+        )
+
+        if not is_valid:
+            record_otp_attempt(user_email, success=False)
+            logger.warning(f"[ADMIN-2FA] Failed verify for {user_email[:3]}*** (user_id={user_id[:8]}...)")
+            raise HTTPException(status_code=401, detail="Invalid or expired verification code")
+
+        # Delete the OTP row (matches the existing password_reset_otps usage pattern —
+        # the table has no `used` column, so we delete on successful verification).
+        await session.execute(
+            __import__('sqlalchemy').text(
+                "DELETE FROM password_reset_otps WHERE id = :otp_id"
+            ),
+            {"otp_id": otp_row.id}
+        )
+        await session.commit()
+
+    record_otp_attempt(user_email, success=True)
+    admin_token = _create_admin_token(user_id, user_email)
+    expires_at = datetime.now(timezone.utc) + timedelta(seconds=ADMIN_TOKEN_TTL_SECONDS)
+    logger.info(f"[ADMIN-2FA] Admin token issued for {user_email[:3]}*** (user_id={user_id[:8]}..., ttl={ADMIN_TOKEN_TTL_SECONDS}s)")
+
+    return {
+        "status": "success",
+        "admin_token": admin_token,
+        "expires_at": expires_at.isoformat(),
+        "ttl_seconds": ADMIN_TOKEN_TTL_SECONDS,
+    }
+
 
 
 @app.post("/api/auth/refresh")

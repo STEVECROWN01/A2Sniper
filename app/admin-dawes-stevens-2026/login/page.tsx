@@ -9,16 +9,21 @@ import { ShieldAlert, ShieldCheck, Lock, Fingerprint, Terminal, Mail, Eye, EyeOf
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 
+type Step = 'login' | '2fa' | 'success';
+
 export default function AdminLoginPage() {
-  const [step, setStep] = useState<'login' | '2fa' | 'success'>('login');
+  const [step, setStep] = useState<Step>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [otp, setOtp] = useState('');
   const [isVerifying, setIsVerifying] = useState(false);
-  const [authToken, setAuthToken] = useState<string | null>(null);
   const router = useRouter();
 
+  // ─── Step 1: email + password login ────────────────────────────────────────
+  // Hits the regular /api/auth/login endpoint (proxied to the backend). The
+  // proxy sets the httpOnly a2sniper_at cookie. We then verify the user is
+  // actually an admin before advancing to 2FA.
   const handleLogin = async () => {
     if (!email || !password) {
       toast.error('Veuillez entrer vos identifiants administrateur.');
@@ -35,20 +40,46 @@ export default function AdminLoginPage() {
         body: JSON.stringify({ email, password }),
       });
 
+      const data = await res.json().catch(() => ({}));
+
       if (res.ok) {
-        const data = await res.json();
         // Check if the user is actually an admin
         if (!data.user?.is_admin) {
           setIsVerifying(false);
           toast.error('Access denied. Administrator privileges required.');
           return;
         }
-        // Token is now managed via httpOnly cookie by the API proxy
-        setAuthToken(data.token);
+        // Token is managed via httpOnly cookie by the API proxy — no need to
+        // store it in React state. The cookie will be sent automatically on
+        // the /api/admin/login/initiate call below.
         setStep('2fa');
-        toast.success('Identity verified. Please enter the 2FA code.');
+        toast.success('Identity verified. Requesting 2FA code...');
+
+        // Immediately request the 2FA OTP be emailed to the admin user.
+        // This is a separate step so the user doesn't have to click an extra
+        // button — the OTP arrives seconds after they enter valid credentials.
+        try {
+          const otpRes = await fetch(`${apiUrl}/api/admin/login/initiate`, {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+          });
+          if (!otpRes.ok) {
+            const otpData = await otpRes.json().catch(() => ({}));
+            toast.error(otpData.detail || 'Could not send 2FA code. Please try again.');
+            setIsVerifying(false);
+            setStep('login');
+            return;
+          }
+          toast.success('A 6-digit verification code has been sent to your email.');
+        } catch (err) {
+          toast.error('Network error while requesting 2FA code.');
+          setIsVerifying(false);
+          setStep('login');
+          return;
+        }
+        setIsVerifying(false);
       } else {
-        const data = await res.json().catch(() => ({}));
         setIsVerifying(false);
         toast.error(data.detail || 'Invalid credentials. Access denied.');
       }
@@ -58,6 +89,11 @@ export default function AdminLoginPage() {
     }
   };
 
+  // ─── Step 2: verify the 6-digit email OTP ──────────────────────────────────
+  // Hits /api/admin/login/verify (proxied to the backend). On success, the
+  // backend returns a signed admin_token (JWT HS256, 10-min TTL). We then POST
+  // that token to the same-origin /api/admin-login route handler which sets it
+  // as an httpOnly cookie scoped to /admin-dawes-stevens-2026.
   const handleVerify2FA = async () => {
     if (otp.length < 6) {
       toast.error('Veuillez saisir le code 2FA complet (6 chiffres).');
@@ -67,16 +103,31 @@ export default function AdminLoginPage() {
     setIsVerifying(true);
     try {
       const apiUrl = getApiUrl();
-      const res = await fetch(`${apiUrl}/api/auth/verify-otp`, {
+      const res = await fetch(`${apiUrl}/api/admin/login/verify`, {
         method: 'POST',
         credentials: 'include',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ otp_code: otp }),
       });
 
-      if (res.ok) {
+      const data = await res.json().catch(() => ({}));
+
+      if (res.ok && data.admin_token) {
+        // Set the admin_token as an httpOnly cookie via the same-origin
+        // route handler. The browser cannot set httpOnly cookies directly.
+        const cookieRes = await fetch('/api/admin-login', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ admin_token: data.admin_token }),
+        });
+        if (!cookieRes.ok) {
+          setIsVerifying(false);
+          setOtp('');
+          toast.error('Failed to establish admin session. Please try again.');
+          return;
+        }
+
         setStep('success');
         toast.success('Access granted. Welcome, Founder.');
 
@@ -84,7 +135,6 @@ export default function AdminLoginPage() {
           router.push('/admin-dawes-stevens-2026');
         }, 2000);
       } else {
-        const data = await res.json().catch(() => ({}));
         setIsVerifying(false);
         setOtp('');
         toast.error(data.detail || 'Invalid 2FA code. Access denied.');
@@ -197,7 +247,7 @@ export default function AdminLoginPage() {
               </Button>
 
               <div className="text-[10px] text-center text-gray-600 uppercase tracking-widest">
-                Protected by IP-Whitelist &amp; Secure Token
+                Protected by IP-Whitelist &amp; Email 2FA
               </div>
             </motion.div>
           )}
@@ -211,7 +261,7 @@ export default function AdminLoginPage() {
               className="space-y-8 flex flex-col items-center"
             >
               <div className="text-center">
-                <p className="text-sm text-gray-400 mb-4">Enter the 6-digit code from your authenticator device.</p>
+                <p className="text-sm text-gray-400 mb-4">Enter the 6-digit code sent to your admin email.</p>
                 <input
                   type="text"
                   maxLength={6}
@@ -220,6 +270,7 @@ export default function AdminLoginPage() {
                   disabled={isVerifying}
                   className="w-48 text-center text-2xl font-black tracking-[0.5em] bg-black border border-red-500/30 rounded-xl py-4 text-white outline-none focus:border-red-500 transition-colors"
                   placeholder="------"
+                  autoFocus
                 />
               </div>
 

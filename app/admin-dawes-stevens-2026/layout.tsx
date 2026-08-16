@@ -134,8 +134,17 @@ export default function AdminLayout({
     { name: 'Configuration', href: '/admin-dawes-stevens-2026/settings', icon: Settings },
   ];
 
-  const handleLogout = () => {
-    document.cookie = "admin_token=; path=/; expires=Thu, 01 Jan 1970 00:00:01 GMT;";
+  const handleLogout = async () => {
+    // Clear the admin_token cookie via the same-origin route handler.
+    // This hits the DELETE handler in app/api/admin-login/route.ts which
+    // sets maxAge=0 on the httpOnly cookie (browser cannot clear httpOnly
+    // cookies directly).
+    try {
+      await fetch('/api/admin-login', { method: 'DELETE', credentials: 'include' });
+    } catch {
+      // Network error — the cookie will expire on its own (10-min TTL),
+      // but we still redirect to the login page.
+    }
     window.location.href = '/admin-dawes-stevens-2026/login';
   };
 
