@@ -4937,6 +4937,95 @@ async def debug_ssid_status(credentials: HTTPAuthorizationCredentials = Security
     return diagnostics
 
 
+@app.post("/api/market/ssid-test-save")
+async def test_save_ssid(credentials: HTTPAuthorizationCredentials = Security(security)):
+    """Diagnostic endpoint — tries to insert a TEST row into market_sessions
+    and returns the full result/error. Does NOT save a real SSID.
+
+    Useful for diagnosing why save_market_session() is failing silently.
+    """
+    _payload = decode_access_token(credentials.credentials)
+    _jti = _payload.get("jti")
+    if _jti and await is_token_revoked(_jti):
+        raise HTTPException(status_code=401, detail="Token has been revoked")
+
+    user_id = _payload.get("sub")
+    result = {
+        "user_id": user_id[:8] + "..." if user_id else None,
+        "steps": [],
+        "success": False,
+        "error": None,
+    }
+
+    # Step 1: Check if user exists in users table (FK constraint check)
+    try:
+        async with AsyncSessionLocal() as session:
+            from sqlalchemy import text as sql_text
+            r = await session.execute(
+                sql_text("SELECT id, email FROM users WHERE id = :uid"),
+                {"uid": user_id}
+            )
+            row = r.fetchone()
+            if row:
+                result["steps"].append({"step": "check_user_exists", "ok": True, "detail": f"Found user: {row[1][:3]}***"})
+            else:
+                result["steps"].append({"step": "check_user_exists", "ok": False, "detail": "User NOT found in users table — FK constraint will reject the insert"})
+                result["error"] = "Foreign key violation: user_id does not exist in users table"
+                return result
+    except Exception as e:
+        result["steps"].append({"step": "check_user_exists", "ok": False, "detail": f"{type(e).__name__}: {str(e)[:200]}"})
+        result["error"] = f"User check failed: {type(e).__name__}: {str(e)[:200]}"
+        return result
+
+    # Step 2: Try a raw SQL INSERT (bypass ORM) to see if the issue is ORM-related
+    try:
+        async with AsyncSessionLocal() as session:
+            from sqlalchemy import text as sql_text
+            await session.execute(
+                sql_text(
+                    "INSERT INTO market_sessions (user_id, encrypted_ssid) "
+                    "VALUES (:uid, :ssid) "
+                    "ON CONFLICT (user_id) DO UPDATE SET encrypted_ssid = :ssid"
+                ),
+                {"uid": user_id, "ssid": "TEST_VALUE_NOT_A_REAL_SSID"}
+            )
+            await session.commit()
+            result["steps"].append({"step": "raw_sql_insert", "ok": True, "detail": "Raw SQL insert succeeded"})
+    except Exception as e:
+        result["steps"].append({"step": "raw_sql_insert", "ok": False, "detail": f"{type(e).__name__}: {str(e)[:200]}"})
+        result["error"] = f"Raw SQL insert failed: {type(e).__name__}: {str(e)[:200]}"
+        return result
+
+    # Step 3: Verify the row was saved
+    try:
+        async with AsyncSessionLocal() as session:
+            from sqlalchemy import text as sql_text
+            r = await session.execute(
+                sql_text("SELECT COUNT(*) FROM market_sessions WHERE user_id = :uid"),
+                {"uid": user_id}
+            )
+            count = r.scalar()
+            result["steps"].append({"step": "verify_row", "ok": count > 0, "detail": f"Row count for this user: {count}"})
+    except Exception as e:
+        result["steps"].append({"step": "verify_row", "ok": False, "detail": f"{type(e).__name__}: {str(e)[:200]}"})
+
+    # Step 4: Clean up the test row
+    try:
+        async with AsyncSessionLocal() as session:
+            from sqlalchemy import text as sql_text
+            await session.execute(
+                sql_text("DELETE FROM market_sessions WHERE user_id = :uid AND encrypted_ssid = 'TEST_VALUE_NOT_A_REAL_SSID'"),
+                {"uid": user_id}
+            )
+            await session.commit()
+            result["steps"].append({"step": "cleanup", "ok": True, "detail": "Test row deleted"})
+    except Exception as e:
+        result["steps"].append({"step": "cleanup", "ok": False, "detail": f"{type(e).__name__}: {str(e)[:200]}"})
+
+    result["success"] = all(s["ok"] for s in result["steps"][:3])  # cleanup is non-critical
+    return result
+
+
 @app.get("/api/market/balance-debug")
 async def debug_balance_data(credentials: HTTPAuthorizationCredentials = Security(security)):
     """
