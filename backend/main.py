@@ -4664,13 +4664,18 @@ async def connect_market(request: Request, credentials: HTTPAuthorizationCredent
         # Persist SSID (encrypted) to the market_sessions table for auto-reconnect
         # after Railway redeploy. Only write if this was a fresh SSID paste —
         # skip if we just used the saved one (no need to re-encrypt the same value).
+        logger.info(f"[MARKET-DEBUG] use_saved={use_saved}, user_id={user_id[:8] if user_id else 'None'}..., ssid_clean_starts_with_auth={ssid_clean[:8]}")
         if not use_saved and user_id:
+            logger.info(f"[MARKET-DEBUG] Entering save block for user_id={user_id[:8]}...")
             try:
                 encrypted = _encrypt_ssid(ssid_clean)
+                logger.info(f"[MARKET-DEBUG] SSID encrypted (length={len(encrypted)})")
                 await save_market_session(user_id, encrypted)
                 logger.info(f"[MARKET] SSID saved (encrypted) to DB for user_id={user_id[:8]}... — survives redeploys")
             except Exception as save_err:
-                logger.warning(f"[MARKET] Could not save SSID for auto-reconnect: {save_err}")
+                logger.error(f"[MARKET] Could not save SSID for auto-reconnect: {type(save_err).__name__}: {save_err}", exc_info=True)
+        else:
+            logger.info(f"[MARKET-DEBUG] Save block SKIPPED (use_saved={use_saved}, user_id={'set' if user_id else 'None'})")
 
         # Kick off an immediate analysis pass in the background so signals
         # start appearing in the UI within 5-10 seconds (not waiting for the
