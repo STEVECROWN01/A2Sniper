@@ -58,7 +58,11 @@ except ImportError:
 from engine.compliance import ComplianceManager, geographic_restriction_dependency
 from bot.telegram_bot import TelegramSignalBot
 from db import (init_db, SignalRecord, CandleRecord, AsyncSessionLocal, User, UserSubscription,
-                  PasswordResetOTP, SystemLog, RefreshToken, RevokedToken, RateLimitEntry, PushSubscription)
+                  PasswordResetOTP, SystemLog, RefreshToken, RevokedToken, RateLimitEntry, PushSubscription,
+                  MarketSession, AppState,
+                  save_market_session, get_market_session, get_latest_market_session,
+                  has_market_session, delete_market_session,
+                  get_app_state, set_app_state, delete_app_state)
 
 
 # ═══════════ WEB PUSH NOTIFICATION CONFIG ═══════════
@@ -220,22 +224,29 @@ telegram_bot = TelegramSignalBot(scanner=po_scanner)
 # ═══ PERSISTENT SSID — auto-reconnect scanner on backend restart ═══════
 # When Railway redeploys, the entire Python process restarts and the
 # scanner loses its connection. To avoid requiring the user to manually
-# reconnect after every deploy, we persist the SSID to a file and
-# auto-reconnect on startup.
-# The SSID is written to backend/data/last_ssid.txt by /api/market/connect
-# and read here during lifespan startup.
+# reconnect after every deploy, we persist the SSID and auto-reconnect
+# on startup.
 #
 # ⚠️ SECURITY: The SSID is the user's full Pocket Option session token.
-# It is now ENCRYPTED AT REST using Fernet (AES-128-CBC + HMAC-SHA256)
-# with a key from the SSID_ENCRYPTION_KEY env var. If the env var is
-# unset, we fall back to plaintext with a loud warning (backward compat
-# for existing deployments that haven't set the env var yet).
+# It is ENCRYPTED AT REST using Fernet (AES-128-CBC + HMAC-SHA256) with
+# a key from the SSID_ENCRYPTION_KEY env var. If the env var is unset,
+# we fall back to plaintext with a loud warning (backward compat).
 #
 # The SSID is NEVER returned to the frontend by any GET endpoint. The
 # frontend sends it exactly once (POST /api/market/connect) and the
 # server stores it. Subsequent reconnects use POST /api/market/connect
-# with {use_saved: true} — the server reads the encrypted file, decrypts
-# it, and reconnects without the SSID ever transiting the browser again.
+# with {use_saved: true} — the server reads the encrypted row from the
+# DB, decrypts it, and reconnects without the SSID ever transiting the
+# browser again.
+#
+# STORAGE: The encrypted SSID lives in the `market_sessions` table
+# (one row per user, keyed by user_id). This survives Railway redeploys
+# because the DB (Supabase Postgres) is a separate managed service.
+#
+# LEGACY MIGRATION: On first startup after this deploy, if a
+# backend/data/last_ssid.txt file exists (from the previous file-based
+# implementation), it's read once and migrated to the DB, then deleted.
+# This is a one-time migration — the file is never touched again.
 SSID_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'last_ssid.txt')
 
 
@@ -256,77 +267,133 @@ def _get_ssid_fernet():
         return None
 
 
-def _save_ssid_encrypted(ssid: str) -> None:
-    """Persist the SSID to last_ssid.txt, encrypted with Fernet if a key is set.
+def _encrypt_ssid(ssid: str) -> str:
+    """Encrypt a plaintext SSID and return the Fernet token as a string.
 
-    Falls back to plaintext (with a warning) if SSID_ENCRYPTION_KEY is unset.
-    This is a defense-in-depth measure: the file lives on the server filesystem
-    (Railway volume), and encryption protects against snapshot leaks.
+    Falls back to returning the plaintext SSID (with a warning) if
+    SSID_ENCRYPTION_KEY is unset — defense in depth, the DB layer still
+    protects against filesystem snapshot leaks.
     """
-    os.makedirs(os.path.dirname(SSID_FILE), exist_ok=True)
     fernet = _get_ssid_fernet()
     if fernet is not None:
-        token = fernet.encrypt(ssid.encode('utf-8'))
-        with open(SSID_FILE, 'wb') as f:
-            f.write(token)
-    else:
-        logger.warning("[SSID] SSID_ENCRYPTION_KEY not set — writing SSID as PLAINTEXT. Set the env var for encryption at rest.")
-        with open(SSID_FILE, 'w') as f:
-            f.write(ssid)
+        return fernet.encrypt(ssid.encode('utf-8')).decode('utf-8')
+    logger.warning("[SSID] SSID_ENCRYPTION_KEY not set — storing SSID as PLAINTEXT in DB. Set the env var for encryption at rest.")
+    return ssid
 
 
-def _load_ssid_decrypted() -> str | None:
-    """Read and decrypt the SSID from last_ssid.txt.
+def _decrypt_ssid(encrypted_token: str) -> str | None:
+    """Decrypt a Fernet token back to the plaintext SSID.
 
-    Returns the plaintext SSID, or None if the file doesn't exist or is empty.
-    Handles both encrypted (Fernet token) and legacy plaintext files — if
-    decryption fails, tries reading as plaintext (for backward compat with
-    files written before the encryption feature was added).
+    Returns None if decryption fails (e.g., wrong key, corrupted token).
+    Handles both encrypted (Fernet token) and legacy plaintext values — if
+    decryption fails, tries returning the value as-is (for backward compat
+    with rows written before encryption was enabled).
     """
-    if not os.path.exists(SSID_FILE):
+    if not encrypted_token:
         return None
     fernet = _get_ssid_fernet()
-    # Read as bytes first (encrypted files are binary)
-    with open(SSID_FILE, 'rb') as f:
-        raw = f.read()
-    if not raw:
-        return None
-    # Try encrypted first
     if fernet is not None:
         try:
-            return fernet.decrypt(raw).decode('utf-8')
+            return fernet.decrypt(encrypted_token.encode('utf-8')).decode('utf-8')
         except Exception:
-            # Decryption failed — could be a legacy plaintext file written
-            # before encryption was enabled. Fall through to plaintext read.
-            logger.warning("[SSID] Failed to decrypt last_ssid.txt — trying as legacy plaintext")
+            # Decryption failed — could be a legacy plaintext value written
+            # before encryption was enabled. Fall through to plaintext return.
+            logger.warning("[SSID] Failed to decrypt SSID token — returning as legacy plaintext")
     # Plaintext fallback (legacy or no key set)
-    try:
-        return raw.decode('utf-8').strip()
-    except Exception:
-        return None
+    return encrypted_token.strip() if encrypted_token else None
 
 
-def _has_saved_ssid() -> bool:
-    """Check whether a saved SSID file exists (without reading/decrypting it)."""
-    return os.path.exists(SSID_FILE) and os.path.getsize(SSID_FILE) > 0
+async def _migrate_legacy_ssid_file() -> None:
+    """One-time migration: read backend/data/last_ssid.txt (if it exists)
+    and move the encrypted SSID into the market_sessions table.
 
-async def auto_reconnect_scanner():
-    """On backend startup, try to reconnect the scanner using the last SSID.
-
-    This survives Railway redeploys — the user doesn't need to manually
-    reconnect after every code push.
+    Called from the lifespan startup. After migration, the file is deleted
+    so it's never read again. The SSID is associated with the most recently
+    active admin user (or skipped if no users exist).
     """
+    if not os.path.exists(SSID_FILE):
+        return
     try:
-        ssid = _load_ssid_decrypted()
-        if not ssid:
-            logger.info("[AUTO-RECONNECT] No saved SSID found — waiting for manual connect")
+        # Read the file (could be encrypted Fernet token OR legacy plaintext)
+        with open(SSID_FILE, 'rb') as f:
+            raw = f.read()
+        if not raw:
+            os.remove(SSID_FILE)
             return
 
-        if not ssid.startswith('42["auth"'):
+        fernet = _get_ssid_fernet()
+        plaintext_ssid = None
+        if fernet is not None:
+            try:
+                plaintext_ssid = fernet.decrypt(raw).decode('utf-8')
+            except Exception:
+                # Legacy plaintext file — read as-is
+                try:
+                    plaintext_ssid = raw.decode('utf-8').strip()
+                except Exception:
+                    pass
+        else:
+            try:
+                plaintext_ssid = raw.decode('utf-8').strip()
+            except Exception:
+                pass
+
+        if not plaintext_ssid or not plaintext_ssid.startswith('42["auth"'):
+            logger.info("[SSID-MIGRATION] Legacy file is invalid or empty — deleting without migration")
+            os.remove(SSID_FILE)
+            return
+
+        # Find the most recently active user to associate the SSID with.
+        # For a single-founder admin tool, this is almost always the admin.
+        # Pick the user with the most recent login activity.
+        async with AsyncSessionLocal() as session:
+            # Pick the admin user if one exists, else the most recently created user
+            result = await session.execute(
+                select(User).where(User.is_admin == True).order_by(User.created_at.desc()).limit(1)  # noqa: E712
+            )
+            user = result.scalar_one_or_none()
+            if not user:
+                result = await session.execute(
+                    select(User).order_by(User.created_at.desc()).limit(1)
+                )
+                user = result.scalar_one_or_none()
+            if not user:
+                logger.info("[SSID-MIGRATION] No users found — deleting legacy file without migration")
+                os.remove(SSID_FILE)
+                return
+
+            encrypted = _encrypt_ssid(plaintext_ssid)
+            await save_market_session(user.id, encrypted)
+            logger.info(f"[SSID-MIGRATION] Migrated legacy SSID to DB for user_id={user.id[:8]}...")
+
+        # Delete the file so it's never read again
+        os.remove(SSID_FILE)
+        logger.info("[SSID-MIGRATION] Legacy last_ssid.txt deleted — future SSIDs stored in DB only")
+    except Exception as e:
+        logger.warning(f"[SSID-MIGRATION] Failed to migrate legacy SSID file: {e}")
+
+async def auto_reconnect_scanner():
+    """On backend startup, try to reconnect the scanner using the most
+    recently saved SSID from the market_sessions table.
+
+    Picks the most recently updated row across all users (preserves the
+    "single shared scanner" model where the last user to connect wins).
+    Survives Railway redeploys because the DB is on Supabase (separate
+    managed service).
+    """
+    try:
+        latest = await get_latest_market_session()
+        if not latest:
+            logger.info("[AUTO-RECONNECT] No saved SSID in DB — waiting for manual connect")
+            return
+
+        user_id, encrypted_ssid = latest
+        ssid = _decrypt_ssid(encrypted_ssid)
+        if not ssid or not ssid.startswith('42["auth"'):
             logger.info("[AUTO-RECONNECT] Saved SSID is invalid or empty — waiting for manual connect")
             return
 
-        logger.info("[AUTO-RECONNECT] Found saved SSID — attempting auto-reconnect...")
+        logger.info(f"[AUTO-RECONNECT] Found saved SSID for user_id={user_id[:8]}... — attempting auto-reconnect...")
         success = await po_scanner.connect(ssid)
         if success:
             logger.info(f"[AUTO-RECONNECT] ✅ Scanner reconnected automatically (demo={po_scanner.is_demo})")
@@ -1678,6 +1745,34 @@ async def _startup_background_tasks():
 
     # 3. Load cached candles
     await _load_candles_background()
+
+    # 4. Migrate legacy last_ssid.txt → market_sessions table (one-time)
+    #    Runs BEFORE auto_reconnect_scanner so the migrated SSID is available.
+    await _migrate_legacy_ssid_file()
+
+    # 5. Hydrate stateful modules from the app_state table (replaces
+    #    compliance_hash_chain.json / risk_state.json / bot_state.json).
+    #    Each module's _load_state() was a no-op at __init__ time (no async
+    #    loop available); this is where they actually load from the DB.
+    try:
+        await compliance.hydrate_from_db()
+        logger.info("[STARTUP] ✅ Compliance hash chain hydrated from DB")
+    except Exception as e:
+        logger.warning(f"[STARTUP] Could not hydrate compliance state: {e}")
+    try:
+        await risk_mgr.hydrate_from_db()
+        logger.info("[STARTUP] ✅ Risk manager state hydrated from DB")
+    except Exception as e:
+        logger.warning(f"[STARTUP] Could not hydrate risk state: {e}")
+    try:
+        await telegram_bot.hydrate_from_db()
+        logger.info("[STARTUP] ✅ Telegram bot state hydrated from DB")
+    except Exception as e:
+        logger.warning(f"[STARTUP] Could not hydrate telegram bot state: {e}")
+
+    # 6. Auto-reconnect scanner using the most recently saved SSID
+    #    (picks the latest from market_sessions, survives Railway redeploys)
+    asyncio.create_task(auto_reconnect_scanner())
 
 
 @asynccontextmanager
@@ -4483,15 +4578,19 @@ async def connect_market(request: Request, credentials: HTTPAuthorizationCredent
     use_saved = data.get("use_saved", False)
     ssid = data.get("ssid")
 
+    # Extract user_id from the JWT (used to scope the saved SSID)
+    user_id = _payload.get("sub")
+
     if use_saved:
-        # Reconnect mode — read the encrypted SSID from last_ssid.txt
-        ssid_clean = _load_ssid_decrypted()
+        # Reconnect mode — read the encrypted SSID from the market_sessions table
+        encrypted_ssid = await get_market_session(user_id) if user_id else None
+        ssid_clean = _decrypt_ssid(encrypted_ssid) if encrypted_ssid else None
         if not ssid_clean:
             raise HTTPException(
                 status_code=400,
-                detail="No saved SSID on the server. Paste a fresh SSID from Pocket Option to connect."
+                detail="No saved SSID for your account on the server. Paste a fresh SSID from Pocket Option to connect."
             )
-        logger.info("[MARKET] Reconnect request — using saved (encrypted) SSID")
+        logger.info(f"[MARKET] Reconnect request — using saved (encrypted) SSID for user_id={user_id[:8] if user_id else 'unknown'}...")
     else:
         if not ssid:
             raise HTTPException(status_code=400, detail="SSID required. Paste the Pocket Option authentication frame, or send {use_saved: true} to reconnect with the saved SSID.")
@@ -4562,13 +4661,14 @@ async def connect_market(request: Request, credentials: HTTPAuthorizationCredent
         mode = "DÉMO" if is_demo else "RÉEL"
         logger.info(f"[MARKET] Connecté avec succès — Mode: {mode}")
 
-        # Persist SSID (encrypted at rest) for auto-reconnect after Railway redeploy.
-        # Only write if this was a fresh SSID paste — skip if we just used the saved
-        # one (no need to re-encrypt the same value).
-        if not use_saved:
+        # Persist SSID (encrypted) to the market_sessions table for auto-reconnect
+        # after Railway redeploy. Only write if this was a fresh SSID paste —
+        # skip if we just used the saved one (no need to re-encrypt the same value).
+        if not use_saved and user_id:
             try:
-                _save_ssid_encrypted(ssid_clean)
-                logger.info("[MARKET] SSID saved (encrypted) for auto-reconnect on backend restart")
+                encrypted = _encrypt_ssid(ssid_clean)
+                await save_market_session(user_id, encrypted)
+                logger.info(f"[MARKET] SSID saved (encrypted) to DB for user_id={user_id[:8]}... — survives redeploys")
             except Exception as save_err:
                 logger.warning(f"[MARKET] Could not save SSID for auto-reconnect: {save_err}")
 
@@ -4651,15 +4751,16 @@ async def disconnect_market(credentials: HTTPAuthorizationCredentials = Security
     if _jti and await is_token_revoked(_jti):
         raise HTTPException(status_code=401, detail="Token has been revoked")
 
+    user_id = _payload.get("sub")
+
     await po_scanner.disconnect()
 
-    # Delete saved SSID file so nothing can auto-reconnect
-    try:
-        if os.path.exists(SSID_FILE):
-            os.remove(SSID_FILE)
-            logger.info("[MARKET] SSID file deleted on disconnect")
-    except Exception:
-        pass
+    # Delete the user's saved SSID from the DB so nothing can auto-reconnect
+    # with it. (The scanner is shared, so we only delete the calling user's
+    # row — other users' saved SSIDs are preserved.)
+    if user_id:
+        await delete_market_session(user_id)
+        logger.info(f"[MARKET] SSID deleted from DB for user_id={user_id[:8]}...")
 
     return {"status": "success", "message": "Déconnecté du marché"}
 
@@ -4756,9 +4857,12 @@ async def get_ssid_status(credentials: HTTPAuthorizationCredentials = Security(s
     if _jti and await is_token_revoked(_jti):
         raise HTTPException(status_code=401, detail="Token has been revoked")
 
+    user_id = _payload.get("sub")
+    has_saved = await has_market_session(user_id) if user_id else False
+
     return {
         "connected": bool(po_scanner.is_connected),
-        "has_saved_ssid": _has_saved_ssid(),
+        "has_saved_ssid": has_saved,
     }
 
 

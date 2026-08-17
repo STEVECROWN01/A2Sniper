@@ -26,8 +26,8 @@ _SSID_PATTERN = re.compile(r'["\']?session["\']?\s*[:=]\s*["\']?([A-Za-z0-9+/=_-
 _SSID_RAW_PATTERN = re.compile(r'\b[A-Za-z0-9+/]{80,}={0,2}\b')  # Long base64 strings
 _AUTH_MSG_PATTERN = re.compile(r'42\["auth"', re.IGNORECASE)
 
-# File path for persisting bot state
-BOT_STATE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'bot_state.json')
+# app_state key for the bot state
+BOT_STATE_KEY = 'bot_state'
 
 
 class TelegramSignalBot:
@@ -66,11 +66,25 @@ class TelegramSignalBot:
         self.signal_history = deque(maxlen=1000)
 
     def _load_state(self):
-        """Load bot state from persistent JSON file."""
+        """Legacy sync load — now a no-op. Use hydrate_from_db() instead.
+
+        Kept for backward compat with any external callers, but the real
+        hydration happens in hydrate_from_db() called from the lifespan.
+        """
+        pass
+
+    async def hydrate_from_db(self):
+        """Load bot state from the app_state table.
+
+        Called from the lifespan startup. Replaces the old file-based
+        _load_state (which read bot_state.json — wiped on every Railway
+        redeploy, causing the bot to lose user_settings, user_plans,
+        subscribed_chats, and the is_live flag across redeploys).
+        """
         try:
-            if os.path.exists(BOT_STATE_FILE):
-                with open(BOT_STATE_FILE, 'r') as f:
-                    data = json.load(f)
+            from db import get_app_state
+            data = await get_app_state(BOT_STATE_KEY, default=None)
+            if data and isinstance(data, dict):
                 self.user_settings = data.get('user_settings', {})
                 self.user_plans = data.get('user_plans', {})
                 self.alerts = data.get('alerts', {})
@@ -78,14 +92,27 @@ class TelegramSignalBot:
                 self.subscribed_chats = set(data.get('subscribed_chats', []))
                 # Restore is_live flag
                 self.is_live = data.get('is_live', False)
-                logger.info("[TELEGRAM] Bot state loaded from file")
-        except (json.JSONDecodeError, IOError, TypeError) as e:
-            logger.warning(f"[TELEGRAM] Could not load bot state (using defaults): {e}")
-            # Keep the empty defaults already set in __init__
+                logger.info("[TELEGRAM] Bot state hydrated from DB")
+        except Exception as e:
+            logger.warning(f"[TELEGRAM] Could not hydrate bot state from DB: {e}")
 
     def _save_state(self):
-        """Persist current bot state to JSON file."""
+        """Persist the current bot state to the app_state table.
+
+        Sync wrapper — schedules an async DB write via asyncio.create_task
+        (fire-and-forget). Safe to call from sync contexts. If no event loop
+        is running (e.g., during __init__), the write is skipped.
+        """
         try:
+            asyncio.create_task(self._async_save_state())
+        except RuntimeError:
+            # No running event loop — skip (e.g., during __init__).
+            pass
+
+    async def _async_save_state(self):
+        """Async DB write — the actual persistence layer."""
+        try:
+            from db import set_app_state
             data = {
                 'user_settings': self.user_settings,
                 'user_plans': self.user_plans,
@@ -93,10 +120,9 @@ class TelegramSignalBot:
                 'subscribed_chats': list(self.subscribed_chats),  # Convert set to list for JSON
                 'is_live': self.is_live,
             }
-            with open(BOT_STATE_FILE, 'w') as f:
-                json.dump(data, f)
-        except (IOError, TypeError) as e:
-            logger.warning(f"[TELEGRAM] Could not save bot state: {e}")
+            await set_app_state(BOT_STATE_KEY, data)
+        except Exception as e:
+            logger.warning(f"[TELEGRAM] Could not save bot state to DB: {e}")
 
     def get_default_keyboard(self):
         keyboard = [

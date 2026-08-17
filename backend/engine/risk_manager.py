@@ -3,15 +3,15 @@ Risk Manager Backend — CDC A2Sniper 3.0
 Money management intégré dans chaque signal.
 """
 
+import asyncio
 import json
 import logging
-import os
 from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
-# File path for persisting risk state
-RISK_STATE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'risk_state.json')
+# app_state key for the risk manager state
+RISK_STATE_KEY = 'risk_state'
 
 
 class RiskManager:
@@ -30,31 +30,65 @@ class RiskManager:
         self.session_stopped_at = None
         self.requires_manual_acknowledgment = False  # Flag for manual acknowledgment
         self.last_reset = datetime.now(timezone.utc).date()
-        # Load persisted state
-        self._load_state()
+        # _load_state is a no-op at __init__ time (no async loop available).
+        # Hydration happens via hydrate_from_db() called from lifespan startup.
 
     def _load_state(self):
-        """Load risk state from persistent file."""
+        """Legacy sync load — now a no-op. Use hydrate_from_db() instead.
+
+        Kept for backward compat with any external callers, but the real
+        hydration happens in hydrate_from_db() called from the lifespan.
+        """
+        pass
+
+    async def hydrate_from_db(self):
+        """Load risk state from the app_state table.
+
+        Called from the lifespan startup. Replaces the old file-based
+        _load_state (which read risk_state.json — wiped on every Railway
+        redeploy, causing the risk manager to lose consecutive_losses and
+        daily_risk_used tracking across redeploys).
+        """
         try:
-            if os.path.exists(RISK_STATE_FILE):
-                with open(RISK_STATE_FILE, 'r') as f:
-                    data = json.load(f)
-                    self.consecutive_losses = data.get('consecutive_losses', 0)
-                    self.daily_risk_used = data.get('daily_risk_used', 0.0)
-                    self.session_risk = data.get('session_risk', 0.0)
-                    self.is_session_stopped = data.get('is_session_stopped', False)
-                    self.requires_manual_acknowledgment = data.get('requires_manual_acknowledgment', False)
-                    if data.get('session_stopped_at'):
+            from db import get_app_state
+            data = await get_app_state(RISK_STATE_KEY, default=None)
+            if data and isinstance(data, dict):
+                self.consecutive_losses = data.get('consecutive_losses', 0)
+                self.daily_risk_used = data.get('daily_risk_used', 0.0)
+                self.session_risk = data.get('session_risk', 0.0)
+                self.is_session_stopped = data.get('is_session_stopped', False)
+                self.requires_manual_acknowledgment = data.get('requires_manual_acknowledgment', False)
+                if data.get('session_stopped_at'):
+                    try:
                         self.session_stopped_at = datetime.fromisoformat(data['session_stopped_at'])
-                    if data.get('last_reset'):
+                    except (ValueError, TypeError):
+                        self.session_stopped_at = None
+                if data.get('last_reset'):
+                    try:
                         self.last_reset = datetime.fromisoformat(data['last_reset']).date() if isinstance(data['last_reset'], str) else data['last_reset']
-                    logger.info("[RISK] State loaded from file")
+                    except (ValueError, TypeError):
+                        self.last_reset = datetime.now(timezone.utc).date()
+                logger.info("[RISK] State hydrated from DB")
         except Exception as e:
-            logger.warning(f"[RISK] Could not load state: {e}")
+            logger.warning(f"[RISK] Could not hydrate state from DB: {e}")
 
     def _save_state(self):
-        """Persist current risk state to file."""
+        """Persist the current risk state to the app_state table.
+
+        Sync wrapper — schedules an async DB write via asyncio.create_task
+        (fire-and-forget). Safe to call from sync contexts. If no event loop
+        is running (e.g., during __init__), the write is skipped.
+        """
         try:
+            asyncio.create_task(self._async_save_state())
+        except RuntimeError:
+            # No running event loop — skip (e.g., during __init__).
+            pass
+
+    async def _async_save_state(self):
+        """Async DB write — the actual persistence layer."""
+        try:
+            from db import set_app_state
             data = {
                 'consecutive_losses': self.consecutive_losses,
                 'daily_risk_used': self.daily_risk_used,
@@ -64,10 +98,9 @@ class RiskManager:
                 'session_stopped_at': self.session_stopped_at.isoformat() if self.session_stopped_at else None,
                 'last_reset': self.last_reset.isoformat() if hasattr(self.last_reset, 'isoformat') else str(self.last_reset),
             }
-            with open(RISK_STATE_FILE, 'w') as f:
-                json.dump(data, f)
+            await set_app_state(RISK_STATE_KEY, data)
         except Exception as e:
-            logger.warning(f"[RISK] Could not save state: {e}")
+            logger.warning(f"[RISK] Could not save state to DB: {e}")
 
     def _reset_daily(self):
         today = datetime.now(timezone.utc).date()

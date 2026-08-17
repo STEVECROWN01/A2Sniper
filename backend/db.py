@@ -239,6 +239,46 @@ class PushSubscription(Base):
     user = relationship("User", back_populates="push_subscriptions")
 
 
+class MarketSession(Base):
+    """Encrypted Pocket Option SSID storage — survives Railway redeploys.
+
+    Replaces backend/data/last_ssid.txt (which was wiped on every container
+    restart). The SSID is Fernet-encrypted (AES-128-CBC + HMAC-SHA256)
+    before being stored here, so it's encrypted both at rest (DB layer +
+    our Fernet layer) and in transit (HTTPS).
+
+    One row per user — when a user connects, their row is upserted. The
+    auto_reconnect_scanner picks the most recently updated SSID across
+    all users (preserves the "single shared scanner" model).
+    """
+    __tablename__ = "market_sessions"
+    user_id = Column(String, ForeignKey("users.id"), primary_key=True, index=True)
+    encrypted_ssid = Column(Text, nullable=False)  # Fernet token (base64url)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+
+class AppState(Base):
+    """Generic key-value store for app state — replaces JSON files.
+
+    Replaces:
+      - compliance_hash_chain.json  (key: 'compliance_hash_chain')
+      - risk_state.json             (key: 'risk_state')
+      - bot_state.json              (key: 'bot_state')
+
+    All three were previously stored on the ephemeral Railway filesystem
+    and wiped on every redeploy. Moving them here makes them durable
+    across redeploys, backups (Supabase PITR), and DB failovers.
+
+    The `value` column uses SQLAlchemy's JSON type, which maps to JSONB
+    on PostgreSQL and TEXT on SQLite (for local dev fallback).
+    """
+    __tablename__ = "app_state"
+    key = Column(String, primary_key=True, index=True)
+    value = Column(JSON, nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+
 # OTP brute force tracking (in-memory, with DB fallback)
 otp_attempt_tracker = {}  # {email: {"count": int, "last_attempt": datetime}}
 
@@ -246,6 +286,156 @@ async def get_db():
     """Dépendance pour obtenir une session de DB asynchrone."""
     async with AsyncSessionLocal() as session:
         yield session
+
+
+# ═══════════ APP STATE HELPERS (replaces JSON state files) ═══════════
+# Generic key-value store for app state that needs to survive Railway
+# redeploys. Replaces:
+#   - backend/compliance_hash_chain.json   (key: 'compliance_hash_chain')
+#   - backend/risk_state.json              (key: 'risk_state')
+#   - backend/bot_state.json               (key: 'bot_state')
+#
+# All methods are async — callers must `await` them. The sync `_save_state()`
+# methods on ComplianceManager / RiskManager / TelegramSignalBot wrap these
+# with asyncio.create_task (fire-and-forget) so they can be called from sync
+# contexts without blocking.
+
+async def get_app_state(key: str, default=None):
+    """Read a JSON-serializable value from the app_state table.
+
+    Returns `default` if the key doesn't exist or the DB is unreachable.
+    Never raises — state reads are best-effort.
+    """
+    try:
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                select(AppState).where(AppState.key == key)
+            )
+            row = result.scalar_one_or_none()
+            return row.value if row else default
+    except Exception as e:
+        logger.warning(f"[APP_STATE] get('{key}') failed: {e}")
+        return default
+
+
+async def set_app_state(key: str, value) -> None:
+    """Upsert a JSON-serializable value into the app_state table.
+
+    Never raises — state writes are best-effort. If the DB is unreachable,
+    the in-memory state remains correct for the current process (but won't
+    survive a restart).
+    """
+    try:
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                select(AppState).where(AppState.key == key)
+            )
+            row = result.scalar_one_or_none()
+            if row:
+                row.value = value
+            else:
+                session.add(AppState(key=key, value=value))
+            await session.commit()
+    except Exception as e:
+        logger.warning(f"[APP_STATE] set('{key}') failed: {e}")
+
+
+async def delete_app_state(key: str) -> None:
+    """Delete a key from the app_state table. No-op if the key doesn't exist."""
+    try:
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                select(AppState).where(AppState.key == key)
+            )
+            row = result.scalar_one_or_none()
+            if row:
+                await session.delete(row)
+                await session.commit()
+    except Exception as e:
+        logger.warning(f"[APP_STATE] delete('{key}') failed: {e}")
+
+
+# ═══════════ MARKET SESSION HELPERS (replaces last_ssid.txt) ═══════════
+
+async def save_market_session(user_id: str, encrypted_ssid: str) -> None:
+    """Upsert the encrypted SSID for a user. The SSID must already be
+    Fernet-encrypted by the caller — this helper stores the opaque token.
+    """
+    try:
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                select(MarketSession).where(MarketSession.user_id == user_id)
+            )
+            row = result.scalar_one_or_none()
+            if row:
+                row.encrypted_ssid = encrypted_ssid
+            else:
+                session.add(MarketSession(user_id=user_id, encrypted_ssid=encrypted_ssid))
+            await session.commit()
+    except Exception as e:
+        logger.warning(f"[MARKET_SESSION] save for user_id={user_id[:8]}... failed: {e}")
+
+
+async def get_market_session(user_id: str) -> str | None:
+    """Return the encrypted SSID token for a user, or None if not saved."""
+    try:
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                select(MarketSession).where(MarketSession.user_id == user_id)
+            )
+            row = result.scalar_one_or_none()
+            return row.encrypted_ssid if row else None
+    except Exception as e:
+        logger.warning(f"[MARKET_SESSION] get for user_id={user_id[:8]}... failed: {e}")
+        return None
+
+
+async def get_latest_market_session() -> tuple[str, str] | None:
+    """Return (user_id, encrypted_ssid) for the most recently updated row.
+
+    Used by auto_reconnect_scanner on backend startup — picks the most
+    recently connected user's SSID (preserves the "single shared scanner"
+    model where the last user to connect wins).
+    """
+    try:
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                select(MarketSession).order_by(MarketSession.updated_at.desc()).limit(1)
+            )
+            row = result.scalar_one_or_none()
+            return (row.user_id, row.encrypted_ssid) if row else None
+    except Exception as e:
+        logger.warning(f"[MARKET_SESSION] get_latest failed: {e}")
+        return None
+
+
+async def has_market_session(user_id: str) -> bool:
+    """Check whether a saved SSID exists for a user (without decrypting it)."""
+    try:
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                select(MarketSession.user_id).where(MarketSession.user_id == user_id)
+            )
+            return result.scalar_one_or_none() is not None
+    except Exception as e:
+        logger.warning(f"[MARKET_SESSION] has for user_id={user_id[:8]}... failed: {e}")
+        return False
+
+
+async def delete_market_session(user_id: str) -> None:
+    """Delete the saved SSID for a user (on disconnect)."""
+    try:
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                select(MarketSession).where(MarketSession.user_id == user_id)
+            )
+            row = result.scalar_one_or_none()
+            if row:
+                await session.delete(row)
+                await session.commit()
+    except Exception as e:
+        logger.warning(f"[MARKET_SESSION] delete for user_id={user_id[:8]}... failed: {e}")
+
 
 async def init_db():
     """Crée les tables si elles n'existent pas, et ajoute les colonnes manquantes."""

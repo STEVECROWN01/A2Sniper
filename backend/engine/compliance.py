@@ -5,10 +5,10 @@ Conformité, Sécurité & RGPD — CDC A2Sniper 3.0
 - Restrictions Géographiques
 """
 
+import asyncio
 import hashlib
 import json
 import logging
-import os
 
 from fastapi import Request
 
@@ -19,34 +19,63 @@ RESTRICTED_COUNTRIES = [
     'US', 'CA', 'BE', 'IL', 'SY', 'SD', 'IR', 'KP', 'RU'
 ]
 
-# File path for persisting hash chain state
-HASH_CHAIN_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'compliance_hash_chain.json')
+# app_state key for the hash chain head
+HASH_CHAIN_STATE_KEY = 'compliance_hash_chain'
 
 
 class ComplianceManager:
     def __init__(self):
         self.previous_hash = "0000000000000000000000000000000000000000000000000000000000000000"
-        # Load persisted hash chain state
-        self._load_state()
+        # _load_state is a no-op at __init__ time (no async loop available).
+        # Hydration happens via hydrate_from_db() called from lifespan startup.
 
     def _load_state(self):
-        """Load previous_hash from persistent file."""
+        """Legacy sync load — now a no-op. Use hydrate_from_db() instead.
+
+        Kept for backward compat with any external callers, but the real
+        hydration happens in hydrate_from_db() called from the lifespan.
+        """
+        pass
+
+    async def hydrate_from_db(self):
+        """Load previous_hash from the app_state table.
+
+        Called from the lifespan startup. Replaces the old file-based
+        _load_state (which read compliance_hash_chain.json — wiped on
+        every Railway redeploy).
+        """
         try:
-            if os.path.exists(HASH_CHAIN_FILE):
-                with open(HASH_CHAIN_FILE, 'r') as f:
-                    data = json.load(f)
-                    self.previous_hash = data.get('previous_hash', self.previous_hash)
-                    logger.info("[COMPLIANCE] Hash chain state loaded from file")
+            from db import get_app_state
+            data = await get_app_state(HASH_CHAIN_STATE_KEY, default=None)
+            if data and isinstance(data, dict):
+                self.previous_hash = data.get('previous_hash', self.previous_hash)
+                logger.info("[COMPLIANCE] Hash chain state hydrated from DB")
         except Exception as e:
-            logger.warning(f"[COMPLIANCE] Could not load hash chain state: {e}")
+            logger.warning(f"[COMPLIANCE] Could not hydrate hash chain state from DB: {e}")
 
     def _save_state(self):
-        """Persist current hash chain state to file."""
+        """Persist the current hash chain state to the app_state table.
+
+        Sync wrapper — schedules an async DB write via asyncio.create_task
+        (fire-and-forget). Safe to call from sync contexts. If no event loop
+        is running (e.g., during __init__), the write is skipped — the next
+        hydrate_from_db() will pick up the in-memory value.
+        """
         try:
-            with open(HASH_CHAIN_FILE, 'w') as f:
-                json.dump({'previous_hash': self.previous_hash}, f)
+            asyncio.create_task(self._async_save_state())
+        except RuntimeError:
+            # No running event loop — skip (e.g., during __init__).
+            # The value lives in memory and will be saved on the next
+            # _save_state() call from a real async context.
+            pass
+
+    async def _async_save_state(self):
+        """Async DB write — the actual persistence layer."""
+        try:
+            from db import set_app_state
+            await set_app_state(HASH_CHAIN_STATE_KEY, {'previous_hash': self.previous_hash})
         except Exception as e:
-            logger.warning(f"[COMPLIANCE] Could not save hash chain state: {e}")
+            logger.warning(f"[COMPLIANCE] Could not save hash chain state to DB: {e}")
 
     def generate_immutable_log(self, signal_data: dict) -> str:
         """
@@ -70,21 +99,21 @@ class ComplianceManager:
 
         # Conversion en string déterministe
         payload_str = json.dumps(payload, sort_keys=True)
-        
+
         # Hachage
         current_hash = hashlib.sha256(payload_str.encode('utf-8')).hexdigest()
-        
+
         # Chaînage
         self.previous_hash = current_hash
-        
-        # Persist the new state
+
+        # Persist the new state (fire-and-forget async DB write)
         self._save_state()
-        
+
         return current_hash
 
     def check_geographic_restriction(self, country_code: str) -> dict:
         """Vérifie si l'utilisateur est dans un pays interdit.
-        
+
         NOTE: Geographic restriction is DISABLED — the platform owner needs
         full access to the system regardless of location. The owner is
         responsible for enforcing geo-restrictions on their end users if needed.
@@ -135,3 +164,4 @@ async def geographic_restriction_dependency(request: Request) -> dict:
     Depends() parameter on signal endpoints).
     """
     return {'allowed': True, 'reason': 'Geographic restriction disabled'}
+
