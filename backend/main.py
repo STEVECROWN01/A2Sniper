@@ -4866,6 +4866,77 @@ async def get_ssid_status(credentials: HTTPAuthorizationCredentials = Security(s
     }
 
 
+@app.get("/api/market/ssid-debug")
+async def debug_ssid_status(credentials: HTTPAuthorizationCredentials = Security(security)):
+    """Diagnostic endpoint — checks whether the market_sessions table exists
+    and whether the current user has a saved SSID. Does NOT return the SSID.
+
+    Useful for diagnosing why the 'Reconnect with saved SSID' button isn't
+    appearing after a Railway redeploy.
+    """
+    _payload = decode_access_token(credentials.credentials)
+    _jti = _payload.get("jti")
+    if _jti and await is_token_revoked(_jti):
+        raise HTTPException(status_code=401, detail="Token has been revoked")
+
+    user_id = _payload.get("sub")
+    user_email = _payload.get("email")
+
+    diagnostics = {
+        "user_id": user_id[:8] + "..." if user_id else None,
+        "user_email": user_email[:3] + "***" if user_email else None,
+        "scanner_connected": bool(po_scanner.is_connected),
+        "table_exists": False,
+        "total_rows": 0,
+        "current_user_has_row": False,
+        "latest_row": None,
+        "errors": [],
+    }
+
+    try:
+        async with AsyncSessionLocal() as session:
+            from sqlalchemy import text as sql_text
+            # Check if the table exists
+            result = await session.execute(
+                sql_text(
+                    "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'market_sessions')"
+                )
+            )
+            diagnostics["table_exists"] = result.scalar()
+
+            if diagnostics["table_exists"]:
+                # Count total rows
+                result = await session.execute(sql_text("SELECT COUNT(*) FROM market_sessions"))
+                diagnostics["total_rows"] = result.scalar() or 0
+
+                # Check if current user has a row
+                if user_id:
+                    result = await session.execute(
+                        sql_text("SELECT COUNT(*) FROM market_sessions WHERE user_id = :uid"),
+                        {"uid": user_id}
+                    )
+                    diagnostics["current_user_has_row"] = (result.scalar() or 0) > 0
+
+                # Get the latest row (without the encrypted_ssid value)
+                result = await session.execute(
+                    sql_text(
+                        "SELECT user_id, created_at, updated_at FROM market_sessions "
+                        "ORDER BY updated_at DESC LIMIT 1"
+                    )
+                )
+                row = result.fetchone()
+                if row:
+                    diagnostics["latest_row"] = {
+                        "user_id": row[0][:8] + "..." if row[0] else None,
+                        "created_at": row[1].isoformat() if row[1] else None,
+                        "updated_at": row[2].isoformat() if row[2] else None,
+                    }
+    except Exception as e:
+        diagnostics["errors"].append(f"{type(e).__name__}: {str(e)[:200]}")
+
+    return diagnostics
+
+
 @app.get("/api/market/balance-debug")
 async def debug_balance_data(credentials: HTTPAuthorizationCredentials = Security(security)):
     """

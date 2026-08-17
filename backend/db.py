@@ -372,8 +372,9 @@ async def save_market_session(user_id: str, encrypted_ssid: str) -> None:
             else:
                 session.add(MarketSession(user_id=user_id, encrypted_ssid=encrypted_ssid))
             await session.commit()
+        logger.info(f"[MARKET_SESSION] ✅ Saved SSID for user_id={user_id[:8]}...")
     except Exception as e:
-        logger.warning(f"[MARKET_SESSION] save for user_id={user_id[:8]}... failed: {e}")
+        logger.error(f"[MARKET_SESSION] save for user_id={user_id[:8]}... FAILED: {type(e).__name__}: {e}", exc_info=True)
 
 
 async def get_market_session(user_id: str) -> str | None:
@@ -465,6 +466,33 @@ async def init_db():
     if _use_pg:
         try:
             async with engine.begin() as conn:
+                # ─── Create new tables explicitly (Base.metadata.create_all can
+                #     silently fail on Supabase PgBouncer transaction mode) ───
+
+                # market_sessions — encrypted SSID storage (replaces last_ssid.txt)
+                await conn.execute(__import__('sqlalchemy').text(
+                    """
+                    CREATE TABLE IF NOT EXISTS market_sessions (
+                        user_id VARCHAR PRIMARY KEY REFERENCES users(id),
+                        encrypted_ssid TEXT NOT NULL,
+                        created_at TIMESTAMPTZ DEFAULT NOW(),
+                        updated_at TIMESTAMPTZ DEFAULT NOW()
+                    )
+                    """
+                ))
+
+                # app_state — generic key-value store (replaces JSON state files)
+                await conn.execute(__import__('sqlalchemy').text(
+                    """
+                    CREATE TABLE IF NOT EXISTS app_state (
+                        key VARCHAR PRIMARY KEY,
+                        value JSONB NOT NULL,
+                        updated_at TIMESTAMPTZ DEFAULT NOW()
+                    )
+                    """
+                ))
+                logger.info("[DB] Ensured market_sessions + app_state tables exist")
+
                 # Add is_admin column if missing
                 result = await conn.execute(
                     __import__('sqlalchemy').text(
