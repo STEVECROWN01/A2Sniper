@@ -236,8 +236,19 @@ class CandleAccumulator:
             df_kept.to_csv(tmp_file, index=False)
             os.replace(tmp_file, self.current_file)
 
-            # Rebuild dedup cache from kept data
-            keys = df_kept["symbol"] + "|" + df_kept["timestamp"]
+            # Rebuild dedup cache from kept data.
+            # BUGFIX: the previous code used `df_kept["timestamp"]` directly,
+            # which is the ISO string from the CSV (e.g. "2024-01-15T10:30:00+00:00").
+            # But append() builds dedup keys using unix int (e.g. "1705312200").
+            # After a prune, the cache had ISO-string keys → append() builds
+            # unix-int keys → they never match → every row is treated as "new"
+            # → CSV grows unboundedly with duplicates.
+            #
+            # Fix: parse the timestamp back to unix int, same as
+            # _load_existing_dedup_cache() does on startup.
+            ts_unix = pd.to_datetime(df_kept["timestamp"], utc=True, errors="coerce").astype("int64") // 10**9
+            keys = df_kept["symbol"] + "|" + ts_unix.astype("string")
+            keys = keys.dropna()  # Drop rows where timestamp parsing failed (NaT → NaN key)
             self._seen_keys = set(keys.head(1_000_000).tolist())
             self._total_rows_appended = len(df_kept)
             self._last_prune_at = datetime.now(timezone.utc)
