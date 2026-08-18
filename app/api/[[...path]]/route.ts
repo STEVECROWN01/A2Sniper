@@ -162,16 +162,19 @@ function setAuthCookies(
   accessToken: string,
   refreshToken: string
 ): void {
-  // Access token cookie — sent on all /api/* requests
-  // MUST match the backend's ACCESS_TOKEN_EXPIRE_MINUTES (7 days = 10080 min)
-  // Previously was 15 minutes — caused endless logouts after 15 min of inactivity
+  // Access token cookie — sent on all /api/* requests.
+  // maxAge MUST match the backend's ACCESS_TOKEN_EXPIRE_MINUTES (15 min = 900s).
+  // The proxy transparently refreshes the access token via the refresh cookie
+  // when it expires, so the user stays logged in for up to 30 days without
+  // noticing the short access token lifetime. A stolen access token cookie
+  // is only valid for 15 minutes max.
   response.cookies.set(ACCESS_TOKEN_COOKIE, accessToken, {
     ...COOKIE_OPTIONS,
-    maxAge: 7 * 24 * 60 * 60, // 7 days (matches backend ACCESS_TOKEN_EXPIRE_MINUTES)
+    maxAge: 15 * 60, // 15 minutes (matches backend ACCESS_TOKEN_EXPIRE_MINUTES)
   });
 
-  // Refresh token cookie — only sent on /api/auth/refresh requests
-  // MUST match the backend's REFRESH_TOKEN_EXPIRE_DAYS (30 days)
+  // Refresh token cookie — only sent on /api/auth/refresh requests.
+  // maxAge MUST match the backend's REFRESH_TOKEN_EXPIRE_DAYS (30 days).
   response.cookies.set(REFRESH_TOKEN_COOKIE, refreshToken, {
     ...REFRESH_COOKIE_OPTIONS,
     maxAge: 30 * 24 * 60 * 60, // 30 days (matches backend REFRESH_TOKEN_EXPIRE_DAYS)

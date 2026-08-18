@@ -14,14 +14,23 @@ if len(SECRET_KEY) < 32:
     raise RuntimeError("JWT_SECRET_KEY must be at least 32 characters for security")
 ALGORITHM = "HS256"
 
-# Access token: extended to 7 days so users don't get logged out after 15 minutes.
-# The original 15-minute expiry required constant token refresh, which was failing
-# on Vercel's serverless proxy (cookies not always forwarded, refresh token
-# rotation race conditions). With 7 days, the user stays logged in for a week.
-# The refresh token (also 7 days) still exists as a backup.
-ACCESS_TOKEN_EXPIRE_MINUTES = 7 * 24 * 60  # 7 days = 10080 minutes
+# Access token: short-lived (15 minutes) — industry standard.
+# The frontend proxy (app/api/[[...path]]/route.ts) transparently refreshes
+# expired access tokens using the httpOnly refresh_token cookie, so the
+# user stays logged in for up to REFRESH_TOKEN_EXPIRE_DAYS without noticing
+# the short access token lifetime. A stolen access token is only valid for
+# 15 minutes max, limiting the blast radius.
+#
+# Previously this was set to 7 days as a workaround for a buggy proxy refresh
+# implementation. The proxy now correctly handles token refresh (30s buffer,
+# 10s timeout, cookie rotation on response) so the workaround is no longer
+# needed.
+ACCESS_TOKEN_EXPIRE_MINUTES = 15
 
-# Refresh token: long-lived (30 days) — used to obtain new access tokens
+# Refresh token: long-lived (30 days) — used to obtain new access tokens.
+# Rotated on every use (the backend revokes the old refresh token when
+# issuing a new one, so a stolen refresh token can only be used once
+# before the legitimate user's next refresh invalidates it).
 REFRESH_TOKEN_EXPIRE_DAYS = 30
 
 MIN_PASSWORD_LENGTH = 8
@@ -69,7 +78,7 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 
 
 def create_access_token(data: dict) -> str:
-    """Create a short-lived access token (15 minutes)."""
+    """Create a short-lived access token (15 min). Refreshed transparently by the proxy."""
     to_encode = data.copy()
     expire = datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     to_encode.update({
@@ -81,7 +90,7 @@ def create_access_token(data: dict) -> str:
 
 
 def create_refresh_token(data: dict) -> str:
-    """Create a long-lived refresh token (7 days). Only used to obtain new access tokens."""
+    """Create a long-lived refresh token (30 days). Rotated on every use."""
     to_encode = data.copy()
     expire = datetime.now(timezone.utc) + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
     to_encode.update({
