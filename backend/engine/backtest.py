@@ -254,8 +254,9 @@ class Backtester:
         total_pnl = sum(pnl_per_win if r['actual_win'] else pnl_per_loss for r in resolved)
         total_pnl = round(total_pnl, 2)
 
-        # Break-even win rate
-        break_even = round(100 / (100 + self.payout), 1)
+        # Break-even win rate (as a percentage, not a fraction)
+        # At 80% payout: break_even = 100 / (100 + 80) * 100 = 55.6%
+        break_even = round(100 / (100 + self.payout) * 100, 1)
 
         # Per-direction stats
         calls = [r for r in resolved if r['direction'] == 'CALL']
