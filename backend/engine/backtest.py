@@ -216,6 +216,7 @@ class Backtester:
                 'score': score,
                 'classification': classification,
                 'payout': self.payout,
+                'strategy': signal.get('factors', {}).get('strategy', 'unknown'),
             })
 
             if len(results) % 50 == 0:

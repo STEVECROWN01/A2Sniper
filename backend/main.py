@@ -4572,6 +4572,113 @@ async def admin_run_backtest(request: Request, admin_payload = Depends(require_a
     }
 
 
+@app.post("/api/admin/backtest/diagnose-puts")
+async def admin_diagnose_puts(request: Request, admin_payload = Depends(require_admin)):
+    """Diagnostic — breaks down PUT signals by strategy type to find
+    which PUT logic is failing.
+
+    Returns:
+      - per-strategy CALL vs PUT win rate comparison
+      - ACE Trend Continuation PUT breakdown
+      - ACE BB Reversal PUT breakdown
+      - Sniper Option C PUT breakdown
+      - Sniper Option D (strict) PUT breakdown
+
+    This tells us whether PUTs are failing due to a specific strategy
+    (e.g., ACE trend continuation) or across the board.
+    """
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+
+    pair = data.get('pair', 'EURUSD_otc')
+    payout = float(data.get('payout', 80))
+    step = int(data.get('step', 1))
+
+    from engine.backtest import Backtester
+    bt = Backtester(pair=pair, payout=payout)
+    df = await bt._load_data()
+    if df is None or len(df) < 50:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Not enough candle data for {pair}. Need at least 50 candles."
+        )
+
+    df = bt._prepare_indicators(df)
+
+    # Run all 3 engine configs
+    ace_results = bt.run_backtest(df, engine='ace', strict_mode=False, step=step)
+    sniper_c_results = bt.run_backtest(df, engine='sniper', strict_mode=False, step=step)
+    sniper_d_results = bt.run_backtest(df, engine='sniper', strict_mode=True, step=step)
+
+    def _bucket_stats(results):
+        """Break down results by direction + strategy."""
+        buckets = {}
+        for r in results:
+            if r['actual_win'] is None:
+                continue  # skip ties
+            key = f"{r['engine']}_{r['strategy']}"
+            if key not in buckets:
+                buckets[key] = {'calls': [], 'puts': []}
+            if r['direction'] == 'CALL':
+                buckets[key]['calls'].append(r)
+            else:
+                buckets[key]['puts'].append(r)
+        return buckets
+
+    def _wr(records):
+        if not records:
+            return 0, 0
+        wins = sum(1 for r in records if r['actual_win'])
+        return wins, len(records)
+
+    all_results = ace_results + sniper_c_results + sniper_d_results
+    buckets = _bucket_stats(all_results)
+
+    # Build report
+    report = {
+        'pair': pair,
+        'payout': payout,
+        'candles_analyzed': len(df),
+        'total_signals': len(all_results),
+        'breakdown': {},
+        'verdict': '',
+    }
+
+    for bucket_name, data in sorted(buckets.items()):
+        call_wins, call_total = _wr(data['calls'])
+        put_wins, put_total = _wr(data['puts'])
+        call_wr = round(call_wins / call_total * 100, 1) if call_total > 0 else 0
+        put_wr = round(put_wins / put_total * 100, 1) if put_total > 0 else 0
+        gap = round(call_wr - put_wr, 1)
+
+        report['breakdown'][bucket_name] = {
+            'call_signals': call_total,
+            'call_wins': call_wins,
+            'call_winrate': call_wr,
+            'put_signals': put_total,
+            'put_wins': put_wins,
+            'put_winrate': put_wr,
+            'gap_call_minus_put': gap,
+            'put_status': 'LOSING' if put_wr < 55.6 else 'PROFITABLE' if put_wr >= 55.6 else 'BREAK-EVEN',
+        }
+
+    # Overall verdict
+    all_puts = [r for r in all_results if r['direction'] == 'PUT' and r['actual_win'] is not None]
+    all_calls = [r for r in all_results if r['direction'] == 'CALL' and r['actual_win'] is not None]
+    if all_puts:
+        put_wr = sum(1 for r in all_puts if r['actual_win']) / len(all_puts) * 100
+        call_wr = sum(1 for r in all_calls if r['actual_win']) / len(all_calls) * 100 if all_calls else 0
+        report['verdict'] = (
+            f"PUTs: {put_wr:.1f}% WR ({len(all_puts)} signals) | "
+            f"CALLs: {call_wr:.1f}% WR ({len(all_calls)} signals) | "
+            f"Gap: {call_wr - put_wr:+.1f}pp"
+        )
+
+    return {'status': 'success', 'report': report}
+
+
 # ═══════════ MARKET CONNECTION ENDPOINTS ═══════════
 
 import re as _re
