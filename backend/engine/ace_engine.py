@@ -206,6 +206,25 @@ def generate_ace_signal(df: pd.DataFrame, payout: float, fast_mode: bool = False
             logger.info(f"[ACE] Price too far from EMA21 ({ema21_dist_atr:.2f} ATR) — waiting for pullback")
             return None
 
+        # ─── DISABLE PUT SIGNALS IN TREND CONTINUATION ────────────
+        # DIAGNOSTIC FINDING: ACE trend continuation PUTs have a 36.4% win rate
+        # (22 signals, 8 wins) while CALLs have 62.5% (16 signals, 10 wins).
+        # The 26.1pp gap is caused by:
+        #   1. OTC feeds have a bullish bias — price drifts upward even in
+        #      "downtrends," killing PUT signals over the 3-min expiry.
+        #   2. The pullback confirmation is too loose for PUTs — almost any
+        #      candle in a downtrend has a high near EMA21.
+        #   3. 3-minute expiry gives the OTC feed time to push price back up.
+        #
+        # FIX: Disable PUT signals from trend continuation. CALLs are still
+        # emitted (they're profitable). PUT signals from BB reversal and the
+        # Sniper engine are NOT affected — only ACE trend continuation PUTs.
+        #
+        # To re-enable PUTs (after tightening the logic), remove this block.
+        if direction == 'PUT':
+            logger.info("[ACE] Trend continuation PUT disabled (36.4% WR — OTC bullish bias). Only CALLs emitted in this strategy.")
+            return None
+
         # ─── CONFIRMATION: candle closed in trend direction ───────
         if direction == 'CALL':
             # Current candle closed above EMA21 (back in uptrend after pullback)
