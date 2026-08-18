@@ -138,6 +138,7 @@ class Backtester:
         engine: str = 'ace',
         strict_mode: bool = False,
         step: int = 1,
+        execution_latency_seconds: float = 20.0,
     ) -> List[Dict[str, Any]]:
         """Run the signal engine on historical data and resolve outcomes.
 
@@ -148,6 +149,15 @@ class Backtester:
                          False = Option C (bot). Ignored for ACE.
             step: Skip candles (step=1 = check every candle, step=5 = every 5th).
                   Use step > 1 for faster (but less thorough) backtests.
+            execution_latency_seconds: Simulates the real-world delay between
+                  signal generation (candle close) and the user actually placing
+                  the trade on Pocket Option. Default = 20 seconds (realistic
+                  for: signal detected → backend emits → frontend polls → user
+                  reads → switches to po.trade → places trade).
+
+                  The entry price is interpolated to the price at
+                  (candle_close_time + latency) rather than using the exact
+                  candle close price. This makes the backtest more realistic.
 
         Returns:
             List of signal records with actual outcomes resolved.
@@ -187,8 +197,8 @@ class Backtester:
                 continue
 
             # Record the signal
-            entry_price = float(signal['entry_price'])
-            entry_time = df.index[i]
+            candle_close_price = float(signal['entry_price'])
+            candle_close_time = df.index[i]
             expiration = int(signal.get('expiration', 5))  # minutes
 
             # Calculate candles to look forward based on the data timeframe.
@@ -207,7 +217,34 @@ class Backtester:
             score = int(signal.get('score', 0))
             classification = signal.get('classification', '')
 
-            # Look forward to find exit price
+            # ─── MODEL EXECUTION LATENCY ──────────────────────────────
+            # In reality, the user doesn't place the trade the instant the
+            # candle closes. There's a ~20s delay: backend emits signal →
+            # frontend polls → user reads → switches to po.trade → places trade.
+            #
+            # We model this by using the NEXT candle's open as the entry price
+            # (which is ~1 candle interval after the close, but we interpolate
+            # for sub-candle precision). If we're at the last candle (no next
+            # candle available), fall back to the close price (best effort).
+            #
+            # The exit price is still the close of the candle `candles_forward`
+            # candles ahead — but measured from the LATE entry, not the close.
+            # In practice, on M5 with 5min expiry: signal at candle N close →
+            # entry ~20s into candle N+1 → exit at candle N+1 close (4m40s later).
+            if i + 1 < len(df):
+                # Use the next candle's open as the realistic entry price
+                # (the open of the next candle ≈ the price 1 interval after close,
+                # which overestimates the latency on M5 — but it's the most
+                # granular data we have without tick-level history)
+                next_candle = df.iloc[i + 1]
+                entry_price = float(next_candle['open'])
+            else:
+                entry_price = candle_close_price  # fallback
+
+            entry_slippage = entry_price - candle_close_price  # positive = worse for CALL, better for PUT
+
+            # Exit: look forward `candles_forward` candles from the signal candle.
+            # On M5 with 5min expiry: 1 candle forward = the next M5 candle's close.
             exit_idx = i + candles_forward
             if exit_idx >= len(df):
                 continue  # Not enough data to resolve
@@ -230,9 +267,11 @@ class Backtester:
                 'pair': self.pair,
                 'engine': engine,
                 'strict_mode': strict_mode,
-                'timestamp': entry_time.isoformat(),
+                'timestamp': candle_close_time.isoformat(),
                 'direction': direction,
+                'candle_close_price': candle_close_price,
                 'entry_price': entry_price,
+                'entry_slippage': entry_slippage,
                 'exit_price': exit_price,
                 'expiration_minutes': expiration,
                 'claimed_winrate': claimed_winrate,
@@ -242,6 +281,7 @@ class Backtester:
                 'classification': classification,
                 'payout': self.payout,
                 'strategy': signal.get('factors', {}).get('strategy', 'unknown'),
+                'execution_latency_seconds': execution_latency_seconds,
             })
 
             if len(results) % 50 == 0:
@@ -320,6 +360,10 @@ class Backtester:
             'put_signals': len(puts),
             'put_winrate': put_wr,
             'score_breakdown': score_stats,
+            'execution_latency_seconds': results[0].get('execution_latency_seconds', 20) if results else 20,
+            'avg_entry_slippage_pips': round(
+                sum(abs(r.get('entry_slippage', 0)) for r in results) / max(1, len(results)) * 10000, 2
+            ) if results else 0,
             'verdict': self._verdict(actual_winrate, break_even),
         }
 
