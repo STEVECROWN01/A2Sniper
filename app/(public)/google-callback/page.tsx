@@ -26,7 +26,6 @@ export default function GoogleCallbackPage() {
     const errorParam = searchParams.get('error');
     const hash = window.location.hash;
     setDebugInfo(`code=${code ? 'yes(' + code.substring(0, 8) + '...)' : 'no'} error=${errorParam || 'none'} hash=${hash ? 'yes' : 'no'} origin=${window.location.origin}`);
-    console.log('[Google Callback] URL debug:', { code: !!code, errorParam, hash: !!hash, origin: window.location.origin });
 
     const timeout = setTimeout(() => {
       setError('Google sign-in timed out. Please try again.');

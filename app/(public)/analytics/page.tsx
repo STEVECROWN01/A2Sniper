@@ -41,7 +41,7 @@ export default function AnalyticsPage() {
       userId: user?.id,
       avatarUrl: user?.avatar,
     };
-    const doc = createBrandedPDF('Analysiss Avancees', `Periode: ${selectedTimeframe}`, pdfUser);
+    const doc = createBrandedPDF('Analyses Avancées', `Période: ${selectedTimeframe}`, pdfUser);
     let y = 58;
 
     // User info card

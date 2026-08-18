@@ -277,11 +277,9 @@ async function proxyRequest(request: NextRequest, path?: string[]) {
           if (!headers['content-type'] && !headers['Content-Type']) {
             headers['content-type'] = 'application/json';
           }
-          // Debug log for signal requests
-          if (endpoint === '/api/signals/request') {
-            console.log(`[PROXY] /api/signals/request body: ${bodyText.slice(0, 200)}`);
-            console.log(`[PROXY] headers:`, JSON.stringify(headers));
-          }
+          // Debug log for signal requests — removed (was leaking request bodies
+          // to Vercel logs, which may contain PII). Re-enable with a DEBUG env
+          // var if needed.
         } else {
           console.warn(`[PROXY] ${request.method} ${endpoint} — empty body!`);
         }

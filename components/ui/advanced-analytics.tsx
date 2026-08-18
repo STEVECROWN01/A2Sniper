@@ -183,7 +183,7 @@ export function AdvancedAnalytics({ timeframe = '24H' }: AdvancedAnalyticsProps)
       userId: user?.id,
       avatarUrl: user?.avatar,
     };
-    const doc = createBrandedPDF('Analysiss Avancees', `Timeframe: ${timeframe}`, pdfUser);
+    const doc = createBrandedPDF('Analyses Avancées', `Timeframe: ${timeframe}`, pdfUser);
     let y = 58;
 
     // User info card

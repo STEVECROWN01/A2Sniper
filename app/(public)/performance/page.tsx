@@ -198,7 +198,7 @@ export default function PerformancePage() {
       userId: user?.id,
       avatarUrl: user?.avatar,
     };
-    const doc = createBrandedPDF('Analysis de Performance', `Periode: ${selectedTimeframe}`, pdfUser);
+    const doc = createBrandedPDF('Analyse de Performance', `Période: ${selectedTimeframe}`, pdfUser);
     let y = 58;
 
     // User info card

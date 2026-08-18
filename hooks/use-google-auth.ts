@@ -41,8 +41,6 @@ export function useGoogleAuth() {
     const searchParams = new URLSearchParams(window.location.search);
     const code = searchParams.get('code');
 
-    console.log('[Google Auth Callback] hash:', hash ? 'present' : 'empty', 'code:', code ? 'present' : 'empty', 'accessToken:', accessToken ? 'present' : 'empty');
-
     if (!accessToken && !code) {
       console.error('[Google Auth Callback] No access_token or code found in URL');
       return false;
@@ -81,7 +79,6 @@ export function useGoogleAuth() {
           toast.error('Server returned invalid response. Please try again.');
           return false;
         }
-        console.log('[Google Auth] Code exchange response:', res.status, data);
 
         // Tokens are now in httpOnly cookies — no localStorage needed
         const userData = data.user || {};
