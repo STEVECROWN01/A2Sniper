@@ -1567,19 +1567,31 @@ async def resolution_loop():
                         # For PUT:  win if exit_price < entry_price
                         # Tie (exit == entry): no result (skip, will retry next loop)
                         try:
-                            # Fetch candles around the expiry time
-                            df_expiry = await po_scanner.get_candles(s.pair, timeframe="1m", count=5)
+                            # Fetch candles around the expiry time.
+                            # Use the SAME timeframe as the signal's expiry:
+                            #   - 5min expiry → fetch M5 candles (close at ts + 300s)
+                            #   - 3min expiry → fetch M1 candles (close at ts + 60s)
+                            #   - 1min expiry → fetch M1 candles
+                            expiry_minutes = s.expiration or 5
+                            if expiry_minutes >= 5:
+                                expiry_tf = "5m"
+                                expiry_candle_seconds = 300
+                            else:
+                                expiry_tf = "1m"
+                                expiry_candle_seconds = 60
+
+                            df_expiry = await po_scanner.get_candles(s.pair, timeframe=expiry_tf, count=5)
                             if df_expiry is not None and not df_expiry.empty:
                                 # Find the candle whose timestamp matches the expiry minute
                                 # The candle containing expiry_time has its close at the
-                                # end of that minute. We want the close price of the candle
+                                # end of that interval. We want the close price of the candle
                                 # that was closing at expiry_time.
                                 expiry_ts = expiry_time.timestamp()
                                 # Convert candle index (datetime) to timestamp for comparison
                                 df_expiry_ts = df_expiry.index.astype(np.int64) // 10**9
                                 # Find the last candle that CLOSED at or before expiry_time
-                                # A 1-minute candle closes at its timestamp + 60 seconds
-                                candle_close_ts = df_expiry_ts.values + 60
+                                # A candle closes at its timestamp + candle_seconds
+                                candle_close_ts = df_expiry_ts.values + expiry_candle_seconds
                                 # Get the candle whose close is closest to (but not after) expiry
                                 valid_candles = df_expiry[candle_close_ts <= expiry_ts + 30]  # 30s tolerance
                                 if not valid_candles.empty:

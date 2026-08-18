@@ -2343,16 +2343,51 @@ class PocketOptionScanner:
 
         # ═══ 1. CHECK REST-PREFETCHED CACHE FIRST ══════════════════
         # This is the FAST path — candles were fetched via REST API on connect.
-        # With 100 candles available instantly, we can run full CDC analysis
-        # (RSI, EMA, MACD, Bollinger) within 5 seconds of connecting.
+        # The REST prefetch fetches M1 candles (cache key: "{asset}_1m").
+        # If the caller requested M1, return the cache directly.
+        # If the caller requested a DIFFERENT timeframe (e.g. M5), skip
+        # the M1 cache and go to the WebSocket/REST fetch path below.
         cache_key = f"{asset}_1m"
-        cached_df = self._candles_cache.get(cache_key)
-        if cached_df is not None and not cached_df.empty:
-            # Stamp the cache with a timestamp if it doesn't have one
-            if not hasattr(cached_df, 'attrs') or not cached_df.attrs.get('last_updated'):
-                cached_df.attrs['last_updated'] = datetime.now(timezone.utc).timestamp()
-            logger.info(f"[SCANNER-CANDLE-HIT] asset={asset} tf={timeframe} bars={len(cached_df)} (REST cache)")
-            return cached_df.copy()
+        if timeframe == "1m":
+            cached_df = self._candles_cache.get(cache_key)
+            if cached_df is not None and not cached_df.empty:
+                # Stamp the cache with a timestamp if it doesn't have one
+                if not hasattr(cached_df, 'attrs') or not cached_df.attrs.get('last_updated'):
+                    cached_df.attrs['last_updated'] = datetime.now(timezone.utc).timestamp()
+                logger.info(f"[SCANNER-CANDLE-HIT] asset={asset} tf={timeframe} bars={len(cached_df)} (REST cache)")
+                return cached_df.copy()
+        else:
+            # For non-M1 timeframes, check the specific timeframe cache
+            # (populated by WebSocket loadHistoryPeriod or REST fetch)
+            tf_cache_key = f"{asset}_{timeframe}"
+            cached_df = self._candles_cache.get(tf_cache_key)
+            if cached_df is not None and not cached_df.empty:
+                logger.info(f"[SCANNER-CANDLE-HIT] asset={asset} tf={timeframe} bars={len(cached_df)} (tf cache)")
+                return cached_df.copy()
+
+            # If no M5 cache exists but we have M1 cache, resample M1→M5
+            # (this gives us instant M5 data from the prefetched M1 candles)
+            if timeframe == "5m":
+                m1_cached = self._candles_cache.get(cache_key)
+                if m1_cached is not None and not m1_cached.empty:
+                    try:
+                        # Ensure datetime index for resampling
+                        df_resample = m1_cached.copy()
+                        if not isinstance(df_resample.index, pd.DatetimeIndex):
+                            if 'timestamp' in df_resample.columns:
+                                df_resample['timestamp'] = pd.to_datetime(df_resample['timestamp'], unit='s', errors='coerce')
+                                df_resample = df_resample.set_index('timestamp')
+                        df_m5 = df_resample.resample('5min').agg({
+                            'open': 'first', 'high': 'max', 'low': 'min',
+                            'close': 'last', 'volume': 'sum'
+                        }).dropna()
+                        if not df_m5.empty:
+                            # Cache the resampled M5 data for future calls
+                            self._candles_cache[tf_cache_key] = df_m5
+                            logger.info(f"[SCANNER-CANDLE-HIT] asset={asset} tf=5m bars={len(df_m5)} (resampled from M1 cache)")
+                            return df_m5.copy()
+                    except Exception as e:
+                        logger.warning(f"[SCANNER] M1→M5 resample failed for {asset}: {e}")
 
         # ═══ 2. TRY WEBSOCKET changeSymbol / loadHistoryPeriod ══════
         try:
