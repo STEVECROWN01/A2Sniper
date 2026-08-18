@@ -50,38 +50,42 @@ from typing import Optional, Dict, Any
 logger = logging.getLogger(__name__)
 
 
-def _get_m5_trend(df: pd.DataFrame) -> str:
+def _get_m15_trend(df: pd.DataFrame) -> str:
     """
-    Resample M1 to M5 and check EMA9 vs EMA21 alignment.
+    Resample M5 to M15 and check EMA9 vs EMA21 alignment.
     Returns 'UPTREND', 'DOWNTREND', or 'RANGE'.
+
+    The engine now receives M5 candles directly. For higher-timeframe
+    trend confirmation, we resample M5 → M15 (the institutional standard
+    for trend confirmation on binary options).
     """
     try:
         if len(df) < 30:
             return 'RANGE'
 
-        df_m5 = df.copy()
-        if not isinstance(df_m5.index, pd.DatetimeIndex):
-            if 'timestamp' in df_m5.columns:
-                df_m5['timestamp'] = pd.to_datetime(df_m5['timestamp'], unit='s', errors='coerce')
-                df_m5 = df_m5.set_index('timestamp')
+        df_m15 = df.copy()
+        if not isinstance(df_m15.index, pd.DatetimeIndex):
+            if 'timestamp' in df_m15.columns:
+                df_m15['timestamp'] = pd.to_datetime(df_m15['timestamp'], unit='s', errors='coerce')
+                df_m15 = df_m15.set_index('timestamp')
             else:
                 return 'RANGE'
 
-        df_m5 = df_m5.resample('5min').agg({
+        df_m15 = df_m15.resample('15min').agg({
             'open': 'first', 'high': 'max', 'low': 'min',
             'close': 'last', 'volume': 'sum'
         }).dropna()
 
-        if len(df_m5) < 5:
+        if len(df_m15) < 5:
             return 'RANGE'
 
-        df_m5['EMA_21'] = df_m5['close'].ewm(span=21, adjust=False).mean()
-        df_m5['EMA_9'] = df_m5['close'].ewm(span=9, adjust=False).mean()
+        df_m15['EMA_21'] = df_m15['close'].ewm(span=21, adjust=False).mean()
+        df_m15['EMA_9'] = df_m15['close'].ewm(span=9, adjust=False).mean()
 
-        last_m5 = df_m5.iloc[-1]
-        last_ema9 = float(last_m5['EMA_9'])
-        last_ema21 = float(last_m5['EMA_21'])
-        last_close = float(last_m5['close'])
+        last_m15 = df_m15.iloc[-1]
+        last_ema9 = float(last_m15['EMA_9'])
+        last_ema21 = float(last_m15['EMA_21'])
+        last_close = float(last_m15['close'])
 
         if last_ema9 > last_ema21 and last_close > last_ema21:
             return 'UPTREND'
@@ -89,7 +93,7 @@ def _get_m5_trend(df: pd.DataFrame) -> str:
             return 'DOWNTREND'
         return 'RANGE'
     except Exception as e:
-        logger.debug(f"[ACE] M5 trend error: {e}")
+        logger.debug(f"[ACE] M15 trend error: {e}")
         return 'RANGE'
 
 
@@ -163,7 +167,7 @@ def generate_ace_signal(df: pd.DataFrame, payout: float, fast_mode: bool = False
     bbl = float(last.get('BBL_20_2.0', 0)) if 'BBL_20_2.0' in df.columns else 0
     bbm = float(last.get('BBM_20_2.0', close)) if 'BBM_20_2.0' in df.columns else close
 
-    m5_trend = 'RANGE' if fast_mode else _get_m5_trend(df)
+    m5_trend = 'RANGE' if fast_mode else _get_m15_trend(df)
 
     # Distance from EMA21 in ATR units (for pullback detection)
     ema21_dist_atr = abs(close - ema21) / atr if atr > 0 else 0
@@ -303,7 +307,7 @@ def generate_ace_signal(df: pd.DataFrame, payout: float, fast_mode: bool = False
             'score': 3 if not m5_aligned else 4,
             'max_score': 4,
             'winrate': winrate,
-            'expiration': 3,
+            'expiration': 5,
             'entry_price': close,
             'classification': classification,
             'factors': {
@@ -395,7 +399,7 @@ def generate_ace_signal(df: pd.DataFrame, payout: float, fast_mode: bool = False
                 'score': 3,
                 'max_score': 4,
                 'winrate': winrate,
-                'expiration': 3,
+                'expiration': 5,
                 'entry_price': close,
                 'classification': classification,
                 'factors': {
@@ -479,7 +483,7 @@ def generate_ace_signal(df: pd.DataFrame, payout: float, fast_mode: bool = False
                 'score': 3,
                 'max_score': 4,
                 'winrate': winrate,
-                'expiration': 3,
+                'expiration': 5,
                 'entry_price': close,
                 'classification': classification,
                 'factors': {

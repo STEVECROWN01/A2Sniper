@@ -107,11 +107,24 @@ class Backtester:
     def _prepare_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
         """Pre-calculate all indicators on the full DataFrame.
 
-        This is done once upfront so the backtest loop can just slice
-        the pre-calculated DataFrame for each window — much faster than
-        recalculating indicators on every iteration.
+        Also resamples M1 candles to M5 if the data appears to be M1
+        (the engines now expect M5 candles).
         """
         try:
+            # Check if the data is M1 (timestamps spaced ~60s apart)
+            # and resample to M5 if so
+            if len(df) > 2:
+                ts_diff = df.index.to_series().diff().dropna()
+                median_diff = ts_diff.median()
+                if median_diff <= pd.Timedelta(seconds=120):
+                    # Data is M1 — resample to M5
+                    logger.info(f"[BACKTEST] Resampling M1→M5 (median candle interval: {median_diff})")
+                    df = df.resample('5min').agg({
+                        'open': 'first', 'high': 'max', 'low': 'min',
+                        'close': 'last', 'volume': 'sum'
+                    }).dropna()
+                    logger.info(f"[BACKTEST] M5 candles after resample: {len(df)}")
+
             from engine.indicators import TechnicalIndicators
             ti = TechnicalIndicators()
             return ti.calculate_all(df)
@@ -143,7 +156,7 @@ class Backtester:
         from engine.sniper_engine import generate_sniper_signal
 
         min_candles = 50  # Engines need at least 50 candles for indicators
-        max_lookahead = 10  # Max expiration in candles (3min on 1min data = 3 candles)
+        max_lookahead = 3  # Max candles to look forward (5min expiry on M5 = 1 candle, +2 margin)
 
         results: List[Dict[str, Any]] = []
 
@@ -176,14 +189,26 @@ class Backtester:
             # Record the signal
             entry_price = float(signal['entry_price'])
             entry_time = df.index[i]
-            expiration = int(signal.get('expiration', 3))  # minutes (on 1m data = candles)
+            expiration = int(signal.get('expiration', 5))  # minutes
+
+            # Calculate candles to look forward based on the data timeframe.
+            # On M5 data: 5 min expiry = 1 candle forward.
+            # On M1 data: 5 min expiry = 5 candles forward.
+            # Detect the candle interval from the index
+            if len(df) > 2:
+                ts_diff = df.index.to_series().diff().dropna()
+                median_minutes = ts_diff.median().total_seconds() / 60
+            else:
+                median_minutes = 5  # default to M5
+            candles_forward = max(1, int(expiration / max(1, median_minutes)))
+
             direction = signal['direction']
             claimed_winrate = float(signal.get('winrate', 0))
             score = int(signal.get('score', 0))
             classification = signal.get('classification', '')
 
             # Look forward to find exit price
-            exit_idx = i + expiration
+            exit_idx = i + candles_forward
             if exit_idx >= len(df):
                 continue  # Not enough data to resolve
 

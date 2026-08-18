@@ -242,53 +242,53 @@ def detect_candlestick_patterns(df: pd.DataFrame) -> Dict[str, Optional[str]]:
 
 def get_m5_trend(df_m1: pd.DataFrame) -> str:
     """
-    Determine the M5 timeframe trend by resampling M1 candles.
+    Determine the M15 timeframe trend by resampling M5 candles.
 
     Returns:
-        'UPTREND' — price above EMA21 on M5 (bullish)
-        'DOWNTREND' — price below EMA21 on M5 (bearish)
+        'UPTREND' — price above EMA21 on M15 (bullish)
+        'DOWNTREND' — price below EMA21 on M15 (bearish)
         'RANGE' — no clear trend (skip signals)
     """
-    if len(df_m1) < 25:  # Need at least 5 M5 candles (25 M1 candles)
+    if len(df_m1) < 30:  # Need at least 10 M15 candles (30 M5 candles)
         return 'RANGE'
 
     try:
-        # Resample M1 to M5
-        df_m5 = df_m1.resample('5Min').agg({
+        # Resample M5 to M15 (higher timeframe confirmation)
+        df_m15 = df_m1.resample('15Min').agg({
             'open': 'first', 'high': 'max', 'low': 'min',
             'close': 'last', 'volume': 'sum'
         }).dropna()
 
-        if len(df_m5) < 5:
+        if len(df_m15) < 5:
             return 'RANGE'
 
-        # Calculate EMA21 on M5
-        df_m5['EMA_21'] = df_m5['close'].ewm(span=21, adjust=False).mean()
+        # Calculate EMA21 on M15
+        df_m15['EMA_21'] = df_m15['close'].ewm(span=21, adjust=False).mean()
 
-        last_m5_close = float(df_m5.iloc[-1]['close'])
-        last_m5_ema = float(df_m5.iloc[-1]['EMA_21'])
+        last_m15_close = float(df_m15.iloc[-1]['close'])
+        last_m15_ema = float(df_m15.iloc[-1]['EMA_21'])
 
-        if np.isnan(last_m5_ema) or last_m5_ema <= 0:
+        if np.isnan(last_m15_ema) or last_m15_ema <= 0:
             return 'RANGE'
 
         # Also check EMA9 vs EMA21 for trend direction
-        df_m5['EMA_9'] = df_m5['close'].ewm(span=9, adjust=False).mean()
-        last_m5_ema9 = float(df_m5.iloc[-1]['EMA_9'])
+        df_m15['EMA_9'] = df_m15['close'].ewm(span=9, adjust=False).mean()
+        last_m15_ema9 = float(df_m15.iloc[-1]['EMA_9'])
 
-        if np.isnan(last_m5_ema9):
+        if np.isnan(last_m15_ema9):
             return 'RANGE'
 
         # Uptrend: price above EMA21 AND EMA9 above EMA21
-        if last_m5_close > last_m5_ema and last_m5_ema9 > last_m5_ema:
+        if last_m15_close > last_m15_ema and last_m15_ema9 > last_m15_ema:
             return 'UPTREND'
         # Downtrend: price below EMA21 AND EMA9 below EMA21
-        elif last_m5_close < last_m5_ema and last_m5_ema9 < last_m5_ema:
+        elif last_m15_close < last_m15_ema and last_m15_ema9 < last_m15_ema:
             return 'DOWNTREND'
         else:
             return 'RANGE'
 
     except Exception as e:
-        logger.warning(f"[M5-TREND] Error: {e}")
+        logger.warning(f"[M15-TREND] Error: {e}")
         return 'RANGE'
 
 
@@ -516,7 +516,7 @@ def generate_sniper_signal(df: pd.DataFrame, payout: float, min_factors: int = 4
         'score': score,
         'max_score': 4,
         'winrate': winrate,
-        'expiration': 3,
+        'expiration': 5,
         'entry_price': close,
         'classification': classification,
         'factors': {

@@ -805,28 +805,29 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False, return_can
         return None
 
     # 3. Fetch 1-minute candles (need 25+ for Bollinger/RSI/Stoch/CCI)
-    # Use cached candles (from connect-time REST prefetch). The cache has 100
-    # candles which is enough for indicator calculation. PO only pushes live
-    # ticks for one pair at a time, so clearing the cache would force a slow
-    # WebSocket fetch (15s per pair × 30 pairs = 7+ minutes per cycle).
-    # Instead, use the cache and let the engine find patterns in the data.
-    df_m1 = await po_scanner.get_candles(pair, timeframe="1m", count=100)
+    # Fetch M5 candles (5-minute timeframe — the recommended analysis timeframe
+    # for OTC binary options. M5 filters out broker noise, gives indicators
+    # time to stabilize, and aligns with real market structure).
+    # We request 200 M5 candles = ~16.5 hours of data — enough for EMA21/50/200,
+    # ADX(14), Bollinger(20), and M15 resampling (need at least 21 M15 candles
+    # = 63 M5 candles for EMA21 on M15).
+    df_m5 = await po_scanner.get_candles(pair, timeframe="5m", count=200)
     # Yield to event loop after the WebSocket candle fetch — allows pending
     # HTTP requests to be processed between the slow WebSocket I/O and the
     # CPU-bound indicator calculation that follows.
     await asyncio.sleep(0)
-    candle_count = len(df_m1) if df_m1 is not None and not df_m1.empty else 0
-    min_candles_needed = 25  # Price action engine needs 25 candles for M5 resampling
-    logger.info(f"[SNIPER-TRACE] {pair} step=3 candles={candle_count}/{min_candles_needed} needed (force={force})")
-    if df_m1 is None or df_m1.empty or len(df_m1) < min_candles_needed:
+    candle_count = len(df_m5) if df_m5 is not None and not df_m5.empty else 0
+    min_candles_needed = 50  # M5 engine needs 50 candles for M15 resampling + indicators
+    logger.info(f"[SNIPER-TRACE] {pair} step=3 candles={candle_count}/{min_candles_needed} needed (force={force}) [M5 timeframe]")
+    if df_m5 is None or df_m5.empty or len(df_m5) < min_candles_needed:
         logger.info(
-            f"[{pair}] Insufficient candles for price action engine: "
+            f"[{pair}] Insufficient M5 candles for engine: "
             f"{candle_count}/{min_candles_needed} — waiting for warm-up"
         )
         return None
 
     # 4. Calculate all indicators (RSI, Bollinger, Stochastic, CCI, EMA, ATR, ADX)
-    df_with_indicators = indicators.calculate_all(df_m1)
+    df_with_indicators = indicators.calculate_all(df_m5)
     # Yield again after CPU-bound indicator calculation
     await asyncio.sleep(0)
     logger.info(f"[SNIPER-TRACE] {pair} step=4 indicators_calculated columns={list(df_with_indicators.columns)[:10]}")
