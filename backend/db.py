@@ -8,7 +8,7 @@ import logging
 from datetime import datetime, timezone, timedelta
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import declarative_base, sessionmaker
-from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, JSON, Numeric, ForeignKey, Index, Text
+from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, JSON, Numeric, ForeignKey, Index, Text, select
 from sqlalchemy.orm import relationship
 
 logger = logging.getLogger(__name__)
