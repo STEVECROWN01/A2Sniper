@@ -4508,6 +4508,70 @@ async def admin_accumulator_status(admin_payload = Depends(require_admin)):
         raise HTTPException(status_code=500, detail=f"Failed to get accumulator status: {e}")
 
 
+# ═══════════ BACKTEST ENDPOINTS ═══════════
+
+@app.post("/api/admin/backtest/run")
+async def admin_run_backtest(request: Request, admin_payload = Depends(require_admin)):
+    """Run a backtest on historical candle data and return actual win rate stats.
+
+    Body: {
+        pair: str (e.g. "EURUSD_otc") — defaults to "EURUSD_otc"
+        engine: str ("ace" | "sniper") — defaults to "ace"
+        strict_mode: bool (sniper only) — defaults to false
+        payout: float (e.g. 80) — defaults to 80
+        step: int (1 = check every candle, 5 = every 5th — faster) — defaults to 1
+    }
+
+    Returns:
+        Summary stats: actual win rate vs claimed, P&L simulation,
+        per-direction breakdown, per-score breakdown, verdict.
+
+    This is the TRUTH layer — it compares the engines' hardcoded winrate
+    claims against what actually happens when you follow the signals.
+    """
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+
+    pair = data.get('pair', 'EURUSD_otc')
+    engine = data.get('engine', 'ace')
+    strict_mode = data.get('strict_mode', False)
+    payout = float(data.get('payout', 80))
+    step = int(data.get('step', 1))
+
+    if engine not in ('ace', 'sniper'):
+        raise HTTPException(status_code=400, detail="engine must be 'ace' or 'sniper'")
+    if step < 1 or step > 100:
+        raise HTTPException(status_code=400, detail="step must be between 1 and 100")
+
+    from engine.backtest import Backtester
+    bt = Backtester(pair=pair, payout=payout)
+
+    # Load data (DB first, CSV fallback)
+    df = await bt._load_data()
+    if df is None or len(df) < 50:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Not enough candle data for {pair}. Need at least 50 candles. "
+                   f"Connect to the market and let the scanner accumulate data, or use the synthetic CSV."
+        )
+
+    # Pre-calculate indicators
+    df = bt._prepare_indicators(df)
+
+    # Run backtest
+    results = bt.run_backtest(df, engine=engine, strict_mode=strict_mode, step=step)
+    summary = bt.summary(results)
+
+    return {
+        'status': 'success',
+        'data_source': 'DB (real PO OTC candles)' if len(df) > 500 else 'CSV (synthetic fallback)',
+        'candles_analyzed': len(df),
+        'summary': summary,
+    }
+
+
 # ═══════════ MARKET CONNECTION ENDPOINTS ═══════════
 
 import re as _re

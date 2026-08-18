@@ -128,8 +128,9 @@ export default function AdminLayout({
   const menuItems = [
     { name: 'Overview', href: '/admin-dawes-stevens-2026', icon: LayoutDashboard },
     { name: 'Sniper Signals', href: '/admin-dawes-stevens-2026/signals', icon: Target },
+    { name: 'Backtest', href: '/admin-dawes-stevens-2026/backtest', icon: Activity },
     { name: 'User Matrix', href: '/admin-dawes-stevens-2026/users', icon: Users },
-    { name: 'Engine Flux', href: '/admin-dawes-stevens-2026/engine', icon: Activity },
+    { name: 'Engine Flux', href: '/admin-dawes-stevens-2026/engine', icon: Terminal },
     { name: 'Kernel Logs', href: '/admin-dawes-stevens-2026/logs', icon: Terminal },
     { name: 'Configuration', href: '/admin-dawes-stevens-2026/settings', icon: Settings },
   ];
