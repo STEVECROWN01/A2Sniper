@@ -2739,6 +2739,12 @@ class PocketOptionScanner:
             base_lower,
             base_lower.replace('_otc', ''),
             base_lower.replace('_otc', '') + '_otc' if not base_lower.endswith('_otc') else base_lower,
+            # Also try WITHOUT _otc suffix in case PO sends ticks under the
+            # non-OTC symbol name (e.g. "AUDCAD" instead of "AUDCAD_otc")
+            base_lower.replace('_otc', '') if '_otc' in base_lower else base_lower,
+            # And try uppercase variants
+            base.upper(),
+            base.upper().replace('_OTC', ''),
         ]
         for cand in candidates:
             if not cand:

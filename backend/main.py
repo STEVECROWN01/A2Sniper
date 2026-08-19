@@ -1124,6 +1124,22 @@ async def _emit_candidate(candidate: dict, force: bool = False) -> dict:
     now = datetime.now(timezone.utc)
     now_ts = now.timestamp()
 
+    # ─── REFRESH ENTRY PRICE AT EMISSION TIME ──────────────────────
+    # The candidate was created up to 30s ago (during the trading loop scan).
+    # By the time we emit it, the price may have moved. Fetch the LATEST
+    # price from the scanner and override the candidate's entry_price.
+    # This ensures the entry_price matches what the user sees on PO's chart
+    # RIGHT NOW (not 30s ago), and the 5-minute countdown starts from the
+    # actual emission moment (not the candidate creation moment).
+    live_price = None
+    try:
+        live_price = await po_scanner.get_current_price(pair)
+    except Exception:
+        pass
+    if live_price and live_price > 0:
+        logger.info(f"[EMIT-PRICE] {pair} refreshing entry_price: candidate={candidate['entry_price']} → live={live_price}")
+        candidate['entry_price'] = live_price
+
     signal = {
         'id': f'SIG-{now.strftime("%Y%m%d")}-{uuid.uuid4().hex[:6].upper()}',
         'pair': pair,
