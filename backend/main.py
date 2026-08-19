@@ -1121,8 +1121,7 @@ async def _emit_candidate(candidate: dict, force: bool = False) -> dict:
                 f"gap={now_ts_check - last_time:.0f}s). Skipping to prevent duplicate."
             )
             return None
-    now = datetime.now(timezone.utc)
-    now_ts = now.timestamp()
+    now_ts = datetime.now(timezone.utc).timestamp()
 
     # ─── REFRESH ENTRY PRICE AT EMISSION TIME ──────────────────────
     # The candidate was created up to 30s ago (during the trading loop scan).
@@ -1139,6 +1138,13 @@ async def _emit_candidate(candidate: dict, force: bool = False) -> dict:
     if live_price and live_price > 0:
         logger.info(f"[EMIT-PRICE] {pair} refreshing entry_price: candidate={candidate['entry_price']} → live={live_price}")
         candidate['entry_price'] = live_price
+
+    # Set `now` AFTER the price refresh (which may take 1-2s for the
+    # async get_current_price call). This ensures the signal's timestamp
+    # is as close to the actual emission moment as possible, so the
+    # frontend's countdown starts at ~5:00 (not 4:58).
+    now = datetime.now(timezone.utc)
+    now_ts = now.timestamp()
 
     signal = {
         'id': f'SIG-{now.strftime("%Y%m%d")}-{uuid.uuid4().hex[:6].upper()}',
