@@ -163,14 +163,12 @@ function setAuthCookies(
   refreshToken: string
 ): void {
   // Access token cookie — sent on all /api/* requests.
-  // maxAge MUST match the backend's ACCESS_TOKEN_EXPIRE_MINUTES (15 min = 900s).
-  // The proxy transparently refreshes the access token via the refresh cookie
-  // when it expires, so the user stays logged in for up to 30 days without
-  // noticing the short access token lifetime. A stolen access token cookie
-  // is only valid for 15 minutes max.
+  // maxAge MUST match the backend's ACCESS_TOKEN_EXPIRE_MINUTES (7 days = 604800s).
+  // Reverted from 15 minutes — the Vercel serverless proxy's refresh logic
+  // has a race condition with cold starts, causing 401 Unauthorized errors.
   response.cookies.set(ACCESS_TOKEN_COOKIE, accessToken, {
     ...COOKIE_OPTIONS,
-    maxAge: 15 * 60, // 15 minutes (matches backend ACCESS_TOKEN_EXPIRE_MINUTES)
+    maxAge: 7 * 24 * 60 * 60, // 7 days (matches backend ACCESS_TOKEN_EXPIRE_MINUTES)
   });
 
   // Refresh token cookie — only sent on /api/auth/refresh requests.

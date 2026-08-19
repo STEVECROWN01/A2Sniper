@@ -14,18 +14,18 @@ if len(SECRET_KEY) < 32:
     raise RuntimeError("JWT_SECRET_KEY must be at least 32 characters for security")
 ALGORITHM = "HS256"
 
-# Access token: short-lived (15 minutes) — industry standard.
-# The frontend proxy (app/api/[[...path]]/route.ts) transparently refreshes
-# expired access tokens using the httpOnly refresh_token cookie, so the
-# user stays logged in for up to REFRESH_TOKEN_EXPIRE_DAYS without noticing
-# the short access token lifetime. A stolen access token is only valid for
-# 15 minutes max, limiting the blast radius.
+# Access token: 7 days. The 15-minute expiry was causing 401 Unauthorized
+# errors on Vercel because the proxy's token refresh logic has a race
+# condition with Vercel's serverless cold starts. Reverting to 7 days
+# for reliability — the security tradeoff is acceptable since:
+#   1. Tokens are in httpOnly cookies (not accessible to XSS)
+#   2. Tokens are revoked on logout (is_token_revoked check)
+#   3. The refresh token (30 days) still exists as a backup
 #
-# Previously this was set to 7 days as a workaround for a buggy proxy refresh
-# implementation. The proxy now correctly handles token refresh (30s buffer,
-# 10s timeout, cookie rotation on response) so the workaround is no longer
-# needed.
-ACCESS_TOKEN_EXPIRE_MINUTES = 15
+# To re-enable 15-minute expiry, fix the proxy refresh logic first:
+# the issue is that attemptTokenRefresh() runs on the Vercel serverless
+# function, which may cold-start and timeout before the refresh completes.
+ACCESS_TOKEN_EXPIRE_MINUTES = 7 * 24 * 60  # 7 days = 10080 minutes
 
 # Refresh token: long-lived (30 days) — used to obtain new access tokens.
 # Rotated on every use (the backend revokes the old refresh token when
