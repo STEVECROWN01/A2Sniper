@@ -817,7 +817,8 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False, return_can
     # CPU-bound indicator calculation that follows.
     await asyncio.sleep(0)
     candle_count = len(df_m5) if df_m5 is not None and not df_m5.empty else 0
-    min_candles_needed = 50  # M5 engine needs 50 candles for M15 resampling + indicators
+    min_candles_needed = 35  # M5 engine: 35 M5 candles = enough for RSI(14), BB(20), ADX(14), EMA(9/21)
+    # Note: M15 resampling from 35 M5 = ~11 M15 candles (enough for basic EMA9/21)
     logger.info(f"[SNIPER-TRACE] {pair} step=3 candles={candle_count}/{min_candles_needed} needed (force={force}) [M5 timeframe]")
     if df_m5 is None or df_m5.empty or len(df_m5) < min_candles_needed:
         logger.info(

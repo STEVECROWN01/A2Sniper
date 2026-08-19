@@ -60,7 +60,7 @@ def _get_m15_trend(df: pd.DataFrame) -> str:
     for trend confirmation on binary options).
     """
     try:
-        if len(df) < 30:
+        if len(df) < 20:
             return 'RANGE'
 
         df_m15 = df.copy()
@@ -76,7 +76,7 @@ def _get_m15_trend(df: pd.DataFrame) -> str:
             'close': 'last', 'volume': 'sum'
         }).dropna()
 
-        if len(df_m15) < 5:
+        if len(df_m15) < 3:
             return 'RANGE'
 
         df_m15['EMA_21'] = df_m15['close'].ewm(span=21, adjust=False).mean()
@@ -145,8 +145,8 @@ def generate_ace_signal(df: pd.DataFrame, payout: float, fast_mode: bool = False
         payout: The pair's payout percentage
         fast_mode: If True, skip M5 resampling (faster, used by bot SCAN_ALL)
     """
-    if len(df) < 30:
-        logger.info(f"[ACE] Not enough candles: {len(df)} < 30")
+    if len(df) < 25:
+        logger.info(f"[ACE] Not enough candles: {len(df)} < 25")
         return None
 
     last = df.iloc[-1]

@@ -249,7 +249,7 @@ def get_m5_trend(df_m1: pd.DataFrame) -> str:
         'DOWNTREND' — price below EMA21 on M15 (bearish)
         'RANGE' — no clear trend (skip signals)
     """
-    if len(df_m1) < 30:  # Need at least 10 M15 candles (30 M5 candles)
+    if len(df_m1) < 20:  # Need at least 7 M15 candles (20 M5 candles)
         return 'RANGE'
 
     try:
@@ -259,7 +259,7 @@ def get_m5_trend(df_m1: pd.DataFrame) -> str:
             'close': 'last', 'volume': 'sum'
         }).dropna()
 
-        if len(df_m15) < 5:
+        if len(df_m15) < 3:
             return 'RANGE'
 
         # Calculate EMA21 on M15

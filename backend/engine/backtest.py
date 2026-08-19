@@ -165,7 +165,7 @@ class Backtester:
         from engine.ace_engine import generate_ace_signal
         from engine.sniper_engine import generate_sniper_signal
 
-        min_candles = 50  # Engines need at least 50 candles for indicators
+        min_candles = 35  # Engines need at least 35 M5 candles for indicators
         max_lookahead = 3  # Max candles to look forward (5min expiry on M5 = 1 candle, +2 margin)
 
         results: List[Dict[str, Any]] = []
