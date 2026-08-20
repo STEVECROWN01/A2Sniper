@@ -85,6 +85,25 @@ export default function SignalsPage() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [justExported, setJustExported] = useState(false);
 
+  // Track which signals have been client-side expired (countdown hit 0).
+  // These are removed from the ACTIVE list immediately — no need to wait
+  // for the backend's resolution_loop (which takes up to 10s).
+  const [expiredSignalIds, setExpiredSignalIds] = useState<Set<string>>(new Set());
+
+  // This function is called by the SignalCard when its countdown hits 0.
+  // We expose it via the store so the card can trigger removal.
+  useEffect(() => {
+    // Listen for client-side expiry events from signal cards
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (detail?.signalId) {
+        setExpiredSignalIds(prev => new Set(prev).add(detail.signalId));
+      }
+    };
+    window.addEventListener('signal-expired', handler);
+    return () => window.removeEventListener('signal-expired', handler);
+  }, []);
+
   const filteredSignals = useMemo(() => {
     let result = signals.filter(signal => {
       const matchesPair = selectedPair === 'ALL' || signal.pair === selectedPair;
@@ -99,20 +118,27 @@ export default function SignalsPage() {
         const minPayout = Number(selectedPayout);
         matchesPayout = payoutVal >= minPayout;
       }
+
+      // If filtering for ACTIVE signals, HIDE signals that have been
+      // client-side expired (countdown hit 0). These signals are waiting
+      // for the backend to resolve them as WON/LOST, but the user should
+      // not see them in the ACTIVE list anymore.
+      if (selectedStatus === 'ACTIVE' && expiredSignalIds.has(signal.id)) {
+        return false;
+      }
       
       return matchesPair && matchesStatus && matchesDirection && matchesWinrate && matchesPayout;
     });
 
+    // Always sort NEWEST FIRST (newest signals at the top of the list).
     if (selectedStatus === 'ACTIVE' || selectedStatus === 'ALL') {
-      const latest12 = result
+      return result
         .sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime())
         .slice(0, 50);
-      
-      return latest12.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
     }
 
-    return result;
-  }, [signals, selectedPayout, selectedPair, selectedStatus, selectedDirection, minWinrate]);
+    return result.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+  }, [signals, selectedPayout, selectedPair, selectedStatus, selectedDirection, minWinrate, expiredSignalIds]);
 
   // Global stats — sourced from backend SQL COUNT aggregates (accurate regardless
   // of pagination). Falls back to in-memory computation only if backend hasn't

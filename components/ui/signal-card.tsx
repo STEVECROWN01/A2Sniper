@@ -71,6 +71,9 @@ export function SignalCard({ signal }: SignalCardProps) {
           // Countdown hit zero — flip client-side state immediately so the
           // card transitions to expired without waiting for backend poll.
           setClientExpired(true);
+          // Dispatch event so the signals page removes this card from the
+          // ACTIVE list immediately — no lingering "EXPIRED" cards.
+          window.dispatchEvent(new CustomEvent('signal-expired', { detail: { signalId: signal.id } }));
           // Also trigger a fetch so the backend can resolve WON/LOST ASAP.
           useAppStore.getState().fetchSignals();
         }
