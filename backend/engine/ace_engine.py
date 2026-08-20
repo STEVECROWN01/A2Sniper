@@ -429,9 +429,11 @@ def generate_ace_signal(df: pd.DataFrame, payout: float, fast_mode: bool = False
             return result
 
         # PUT: price pierced above upper BB
+        # DISABLED: OTC feeds have a bullish bias — PUT signals underperform.
+        # Only CALL signals (lower BB pierce + reversal) are emitted.
         if curr_high >= bbu and bbu > 0:
-            direction = 'PUT'
-            logger.info(f"[ACE] Price pierced upper BB ({curr_high:.5f} >= {bbu:.5f})")
+            logger.info(f"[ACE] Price pierced upper BB ({curr_high:.5f} >= {bbu:.5f}) — PUT disabled (OTC bullish bias). Skipping.")
+            return None
 
             # Candle must close back inside the band (below BBU)
             if close >= bbu:
