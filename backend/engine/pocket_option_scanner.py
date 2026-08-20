@@ -984,8 +984,8 @@ class PocketOptionScanner:
                 # extremely low liquidity, near-zero price movement, and
                 # produce meaningless signals. Filter them out by symbol.
                 EXOTIC_BLACKLIST = {
-                    'IRRUSD_otc', 'SYPUSD_otc', 'LBPUSD_otc',
-                    'IRRUSD', 'SYPUSD', 'LBPUSD',
+                    'IRRUSD_otc', 'SYPUSD_otc',
+                    'IRRUSD', 'SYPUSD',
                 }
                 if symbol in EXOTIC_BLACKLIST:
                     is_active = False  # Force inactive — won't be scanned or traded
