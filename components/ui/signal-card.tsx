@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { motion } from 'framer-motion';
-import { TrendingUp, TrendingDown, Clock, Star, Copy, ExternalLink, Check, X, Target, AlertTriangle, Zap } from 'lucide-react';
+import { TrendingUp, TrendingDown, Clock, Copy, ExternalLink, X, Target, AlertTriangle, Zap } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAppStore } from '@/lib/store';
 import { Signal } from '@/lib/mock-data';
@@ -13,7 +13,6 @@ interface SignalCardProps {
 
 export function SignalCard({ signal }: SignalCardProps) {
   const { updateSignalStatus } = useAppStore();
-  const [isFavorite, setIsFavorite] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
   const [timeLeft, setTimeLeft] = useState(0);
   const [isExpiring, setIsExpiring] = useState(false);
@@ -154,17 +153,6 @@ Timestamp: ${signal.timestamp.toLocaleString('en-US')}
     toast.info('Redirecting to Pocket Option...');
   };
 
-  const handleMarkResult = (result: 'WON' | 'LOST') => {
-    // Calculate P&L based on actual signal data
-    // Use signal.is_win if available from backend, otherwise use user's manual marking
-    const payout = signal.payout || 85;
-    const profitLoss = result === 'WON' ? payout : -100;
-    const resultPrice = signal.entry_price;
-    
-    updateSignalStatus(signal.id, result, { result_price: resultPrice, profit_loss: profitLoss });
-    toast.success(`Signal marked as ${result === 'WON' ? 'won' : 'lost'}!`);
-  };
-
   return (
     <>
       <motion.div
@@ -202,16 +190,6 @@ Timestamp: ${signal.timestamp.toLocaleString('en-US')}
           
           <div className="flex flex-col items-end space-y-2 flex-shrink-0">
             <div className="flex items-center space-x-2">
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setIsFavorite(!isFavorite);
-                }}
-                className={`p-1 rounded ${isFavorite ? 'text-[#D4AF37]' : 'text-gray-500 hover:text-[#D4AF37]'}`}
-              >
-                <Star className={`w-4 h-4 ${isFavorite ? 'fill-current' : ''}`} />
-              </button>
-              
               <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider ${
                 effectiveStatus === 'ACTIVE' ? 'bg-[#D4AF37] text-black shadow-[0_0_10px_rgba(212,175,55,0.3)]' :
                 effectiveStatus === 'WON' ? 'bg-green-500/20 text-green-500 border border-green-500/30' :
@@ -283,7 +261,7 @@ Timestamp: ${signal.timestamp.toLocaleString('en-US')}
           </div>
         )}
 
-        {/* Actions — Copy + manual result mark (for active only) */}
+        {/* Actions — Copy only (removed WON/LOST manual mark buttons) */}
         <div className="flex items-center space-x-2">
           <button
             onClick={(e) => {
@@ -295,32 +273,6 @@ Timestamp: ${signal.timestamp.toLocaleString('en-US')}
             <Copy className="w-3.5 h-3.5" />
             <span>Copy</span>
           </button>
-          
-          {effectiveStatus === 'ACTIVE' && (
-            <>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleMarkResult('WON');
-                }}
-                className="p-2 bg-green-500/10 text-green-500 border border-green-500/20 rounded-xl hover:bg-green-500 hover:text-black transition-all"
-                title="Mark as won"
-              >
-                <Check className="w-4 h-4" />
-              </button>
-              
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleMarkResult('LOST');
-                }}
-                className="p-2 bg-red-500/10 text-red-500 border border-red-500/20 rounded-xl hover:bg-red-500 hover:text-black transition-all"
-                title="Mark as lost"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </>
-          )}
         </div>
       </motion.div>
 
