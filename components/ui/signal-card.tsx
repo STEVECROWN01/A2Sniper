@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { motion } from 'framer-motion';
 import { TrendingUp, TrendingDown, Clock, Star, Copy, ExternalLink, Check, X, Target, AlertTriangle, Zap } from 'lucide-react';
 import { toast } from 'sonner';
@@ -24,6 +24,10 @@ export function SignalCard({ signal }: SignalCardProps) {
   // poll. Reset whenever the signal's status prop changes (e.g., backend
   // resolved it to WON/LOST).
   const [clientExpired, setClientExpired] = useState(false);
+  // Track when this signal FIRST appeared on the user's screen.
+  // The countdown always starts from 5:00 (or whatever the expiration is)
+  // from the moment the user sees it — NOT from the backend's emission time.
+  const firstSeenRef = useRef<number | null>(null);
 
   // Effective status: backend status wins once it's not ACTIVE; otherwise
   // fall back to clientExpired to drive the expired UI.
@@ -36,18 +40,21 @@ export function SignalCard({ signal }: SignalCardProps) {
     setClientExpired(false);
 
     if (signal.status === 'ACTIVE') {
+      // On first render of this ACTIVE signal, record the "first seen" time.
+      // The countdown ALWAYS starts from 5:00 (or whatever the expiration is)
+      // from the moment the user sees it — NOT from the backend's emission time.
+      // This eliminates the polling delay (up to 5s) that made the countdown
+      // start at 4:55 instead of 5:00.
+      if (firstSeenRef.current === null) {
+        firstSeenRef.current = Date.now();
+      }
+
       const calculateRemaining = () => {
-        // Use raw Date.now() — NOT clockOffset.
-        // clockOffset is recalculated every 5s from HTTP Date headers with
-        // varying RTT (50-200ms), causing the countdown to jump up and down.
         const now = Date.now();
-
-        // Expiry = signal timestamp + expiration minutes
-        // Each signal expires at its OWN time — different countdown per signal
         const expMinutes = Number(signal.expiration) || 1;
-        const expiryTime = signal.timestamp.getTime() + (expMinutes * 60 * 1000);
-
-        const remaining = expiryTime - now;
+        // Countdown = expiration - time elapsed since the user FIRST saw the signal
+        const elapsed = now - (firstSeenRef.current || now);
+        const remaining = (expMinutes * 60 * 1000) - elapsed;
         return remaining <= 0 ? 0 : remaining;
       };
 
