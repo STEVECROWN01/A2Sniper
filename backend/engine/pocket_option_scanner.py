@@ -978,6 +978,18 @@ class PocketOptionScanner:
                 else:
                     is_active = True  # Default to active if we can't tell
 
+                # ─── EXOTIC CURRENCY FILTER ──────────────────────────
+                # Some OTC pairs (IRR/USD, SYP/USD, LBP/USD, etc.) exist in
+                # PO's asset list but are NOT tradable by users. They have
+                # extremely low liquidity, near-zero price movement, and
+                # produce meaningless signals. Filter them out by symbol.
+                EXOTIC_BLACKLIST = {
+                    'IRRUSD_otc', 'SYPUSD_otc', 'LBPUSD_otc',
+                    'IRRUSD', 'SYPUSD', 'LBPUSD',
+                }
+                if symbol in EXOTIC_BLACKLIST:
+                    is_active = False  # Force inactive — won't be scanned or traded
+
                 # Detect payout changes (for logging only — helps verify real-time updates)
                 existing = self._payouts.get(symbol)
                 if existing is not None:
