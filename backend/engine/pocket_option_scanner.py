@@ -48,18 +48,6 @@ except ImportError:
 # We detect the open state value at runtime after first connection
 _WS_OPEN_STATE = None  # Will be set after first successful connect
 
-# ═══════════ CACHE STALENESS GUARD ═══════════
-# Higher-timeframe caches (M5, M15, ...) that are derived from the M1 cache
-# via `pd.resample` are re-resampled after this many seconds. The M1 cache
-# itself is continuously updated by `_aggregate_ticks_into_candles` as new
-# ticks arrive, so the higher-TF cache MUST be re-derived periodically to
-# reflect the latest M1 candles.
-#
-# 15 seconds is a good balance:
-#   - Fast enough that entry_price stays current (15s = 5% of a 5-min expiry)
-#   - Slow enough to avoid CPU waste (resample is cheap but not free)
-M5_CACHE_TTL_SECONDS = 15
-
 # ═══════════ POCKET OPTION SERVERS ═══════════
 PO_SERVERS = {
     "demo": [
@@ -979,10 +967,8 @@ class PocketOptionScanner:
                     is_active = True  # Default to active if we can't tell
 
                 # ─── EXOTIC CURRENCY FILTER ──────────────────────────
-                # Some OTC pairs (IRR/USD, SYP/USD, LBP/USD, etc.) exist in
-                # PO's asset list but are NOT tradable by users. They have
-                # extremely low liquidity, near-zero price movement, and
-                # produce meaningless signals. Filter them out by symbol.
+                # Some OTC pairs (IRR/USD, SYP/USD) exist in PO's asset list
+                # but are NOT tradable by users. Filter them out.
                 EXOTIC_BLACKLIST = {
                     'IRRUSD_otc', 'SYPUSD_otc',
                     'IRRUSD', 'SYPUSD',
@@ -1968,12 +1954,6 @@ class PocketOptionScanner:
                 df["volume"] = np.nan
 
             cache_key = f"{asset_norm}_{tf_str}"
-            # Mark this cache entry as coming from an authoritative source
-            # (WS loadHistoryPeriod). The staleness guard in get_candles()
-            # trusts ws_or_rest sources for M5_CACHE_TTL_SECONDS before
-            # re-resampling from M1 (which is continuously updated by ticks).
-            df.attrs['source'] = 'ws_or_rest'
-            df.attrs['last_updated'] = datetime.now(timezone.utc).timestamp()
             self._candles_cache[cache_key] = df
 
             # Resolve any pending candle request for this asset/timeframe
@@ -2361,13 +2341,6 @@ class PocketOptionScanner:
         2. WebSocket loadHistoryPeriod (async — arrives after changeSymbol)
         3. REST API direct fetch (fallback)
         4. Tick-aggregated candles (last resort — slow, needs 1+ minutes)
-
-        CRITICAL (2026-08-19): The M5 cache is now re-resampled from the M1
-        cache every call (with a 15s TTL). The M1 cache is continuously
-        updated by `_aggregate_ticks_into_candles` as new ticks arrive.
-        Previously, the M5 cache was built ONCE on the first call and never
-        refreshed, causing entry_price to drift hours behind the live market
-        price. See scanner audit report for details.
         """
         asset = self.get_asset_symbol(pair)
 
@@ -2394,50 +2367,16 @@ class PocketOptionScanner:
                 logger.info(f"[SCANNER-CANDLE-HIT] asset={asset} tf={timeframe} bars={len(cached_df)} (REST cache)")
                 return cached_df.copy()
         else:
-            # For non-M1 timeframes, check the specific timeframe cache.
-            #
-            # ═══ STALENESS GUARD (2026-08-19) ═══════════════════════
-            # The M5/M15/... caches are populated by either:
-            #   - WS loadHistoryPeriod (one-shot at connect)
-            #   - The M1→M5 resample path below
-            # The M1 cache is continuously updated by `_aggregate_ticks_into_candles`
-            # as new ticks arrive. But the higher-timeframe caches were NEVER
-            # refreshed, so the "last candle close" (used as entry_price by the
-            # engines) drifted hours behind the live market price.
-            #
-            # FIX: Re-resample from M1 if the higher-TF cache is older than
-            # M5_CACHE_TTL_SECONDS. This guarantees entry_price stays within
-            # ~15s of the latest M1 candle close.
+            # For non-M1 timeframes, check the specific timeframe cache
+            # (populated by WebSocket loadHistoryPeriod or REST fetch)
             tf_cache_key = f"{asset}_{timeframe}"
             cached_df = self._candles_cache.get(tf_cache_key)
-            cache_age_s = None
             if cached_df is not None and not cached_df.empty:
-                cache_age_s = (
-                    datetime.now(timezone.utc).timestamp()
-                    - float(cached_df.attrs.get('last_updated', 0) or 0)
-                ) if hasattr(cached_df, 'attrs') else None
-
-            # Use cached higher-TF only if it's fresh (< TTL) AND it was
-            # populated by an authoritative source (WS loadHistoryPeriod with
-            # the matching tf_sec, or a REST fetch with the matching tf_sec).
-            # If we resampled from M1 ourselves, we MUST re-resample to pick up
-            # the latest M1 candles — never trust a stale M1-derived M5 cache.
-            if (
-                cached_df is not None
-                and not cached_df.empty
-                and cache_age_s is not None
-                and cache_age_s < M5_CACHE_TTL_SECONDS
-                and cached_df.attrs.get('source') == 'ws_or_rest'
-            ):
-                logger.info(
-                    f"[SCANNER-CANDLE-HIT] asset={asset} tf={timeframe} bars={len(cached_df)} "
-                    f"(tf cache, age={cache_age_s:.1f}s)"
-                )
+                logger.info(f"[SCANNER-CANDLE-HIT] asset={asset} tf={timeframe} bars={len(cached_df)} (tf cache)")
                 return cached_df.copy()
 
-            # If no fresh M5 cache exists but we have M1 cache, resample M1→M5.
-            # This runs on EVERY call (or after TTL expiry) so the M5 candles
-            # always reflect the latest M1 data (which is updated by ticks).
+            # If no M5 cache exists but we have M1 cache, resample M1→M5
+            # (this gives us instant M5 data from the prefetched M1 candles)
             if timeframe == "5m":
                 m1_cached = self._candles_cache.get(cache_key)
                 if m1_cached is not None and not m1_cached.empty:
@@ -2448,65 +2387,14 @@ class PocketOptionScanner:
                             if 'timestamp' in df_resample.columns:
                                 df_resample['timestamp'] = pd.to_datetime(df_resample['timestamp'], unit='s', errors='coerce')
                                 df_resample = df_resample.set_index('timestamp')
-
-                        # ═══ INJECT LIVE TICK PRICE (2026-08-19) ════════
-                        # The M1 cache only contains COMPLETED minutes (the
-                        # current accumulating minute is skipped by
-                        # `_aggregate_ticks_into_candles`). Without this
-                        # injection, the resampled M5's last close would be
-                        # up to 60s old. For binary options with 1-3 minute
-                        # expiries, we need the entry_price to match what the
-                        # user sees on the chart RIGHT NOW.
-                        #
-                        # We append a synthetic M1 candle at the current
-                        # timestamp with OHLC = latest tick price. This makes
-                        # the resample produce an M5 candle for the current
-                        # 5-min window whose close = latest tick price.
-                        latest_tick_price = self._get_latest_tick_price(asset)
-                        if latest_tick_price is not None:
-                            now_ts = pd.Timestamp(datetime.now(timezone.utc))
-                            # Round down to current minute boundary
-                            now_minute = now_ts.floor('min')
-                            # Only inject if we don't already have this minute
-                            # in the M1 cache (otherwise resample would dedupe)
-                            if now_minute not in df_resample.index:
-                                live_row = pd.DataFrame(
-                                    {'open': [latest_tick_price],
-                                     'high': [latest_tick_price],
-                                     'low': [latest_tick_price],
-                                     'close': [latest_tick_price],
-                                     'volume': [0.0]},
-                                    index=pd.DatetimeIndex([now_minute], name='time', tz='UTC')
-                                )
-                                df_resample = pd.concat([df_resample, live_row])
-                                logger.debug(
-                                    f"[SCANNER-LIVE-TICK-INJECT] asset={asset} "
-                                    f"price={latest_tick_price:.5f} at {now_minute.isoformat()}"
-                                )
-
                         df_m5 = df_resample.resample('5min').agg({
                             'open': 'first', 'high': 'max', 'low': 'min',
                             'close': 'last', 'volume': 'sum'
                         }).dropna()
-
-                        # Drop the synthetic live-tick row from the M1 cache
-                        # (we only injected it into df_resample, a copy)
                         if not df_m5.empty:
-                            # Cache the resampled M5 data with a fresh timestamp
-                            # so subsequent calls within the TTL window can
-                            # skip the resample. Mark source as 'resample' so
-                            # the staleness guard above KNOWS to re-resample
-                            # after TTL expiry (we don't trust resample output
-                            # to stay fresh — only ws_or_rest sources are
-                            # considered authoritative enough to cache longer).
-                            df_m5.attrs['last_updated'] = datetime.now(timezone.utc).timestamp()
-                            df_m5.attrs['source'] = 'resample'
+                            # Cache the resampled M5 data for future calls
                             self._candles_cache[tf_cache_key] = df_m5
-                            last_close = float(df_m5['close'].iloc[-1])
-                            logger.info(
-                                f"[SCANNER-CANDLE-HIT] asset={asset} tf=5m bars={len(df_m5)} "
-                                f"(resampled from M1 cache, last_close={last_close:.5f})"
-                            )
+                            logger.info(f"[SCANNER-CANDLE-HIT] asset={asset} tf=5m bars={len(df_m5)} (resampled from M1 cache)")
                             return df_m5.copy()
                     except Exception as e:
                         logger.warning(f"[SCANNER] M1→M5 resample failed for {asset}: {e}")
@@ -2584,10 +2472,6 @@ class PocketOptionScanner:
             df_rest = await self._fetch_candles_http(asset, tf_sec, count)
             if df_rest is not None and not df_rest.empty:
                 logger.info(f"[SCANNER-CANDLE-HIT] asset={asset} tf={timeframe} bars={len(df_rest)} (REST fallback)")
-                # Mark as authoritative REST source so the staleness guard
-                # trusts it for M5_CACHE_TTL_SECONDS before re-resampling.
-                df_rest.attrs['source'] = 'ws_or_rest'
-                df_rest.attrs['last_updated'] = datetime.now(timezone.utc).timestamp()
                 self._candles_cache[cache_key] = df_rest
                 return df_rest.copy()
 
@@ -2694,10 +2578,6 @@ class PocketOptionScanner:
 
                 tf_str = self._tf_seconds_to_str(tf_sec)
                 cache_key = f"{asset}_{tf_str}"
-                # Mark as authoritative REST source so the staleness guard
-                # trusts it for M5_CACHE_TTL_SECONDS before re-resampling.
-                df.attrs['source'] = 'ws_or_rest'
-                df.attrs['last_updated'] = datetime.now(timezone.utc).timestamp()
                 self._candles_cache[cache_key] = df
 
                 logger.info(
@@ -2711,63 +2591,10 @@ class PocketOptionScanner:
             return pd.DataFrame()
 
     async def get_current_price(self, pair: str) -> Optional[float]:
-        """Récupère le dernier prix de clôture.
-
-        Tries the LIVE tick buffer first (instant — reflects the latest WS
-        tick, no resampling lag). Falls back to the last close of the M1
-        candle cache if no live tick is available (e.g., pair not subscribed).
-        """
-        # 1. Try the live tick buffer first (most accurate — matches what PO's
-        # chart shows RIGHT NOW)
-        asset = self.get_asset_symbol(pair)
-        live_price = self._get_latest_tick_price(asset)
-        if live_price is not None:
-            return live_price
-        # 2. Fall back to the M1 cache's last close (could be up to 60s old)
+        """Récupère le dernier prix de clôture."""
         df = await self.get_candles(pair, count=1)
         if not df.empty:
             return float(df['close'].iloc[-1])
-        return None
-
-    def _get_latest_tick_price(self, asset: str) -> Optional[float]:
-        """Return the most recent live tick price for an asset, or None.
-
-        Looks up the live tick buffer (populated by `_process_tick_stream`)
-        under multiple symbol variants (with/without _otc suffix, lower/upper
-        case). This is the FASTEST and most accurate way to get the current
-        market price — no candle aggregation lag, no resample lag.
-
-        Used by `get_candles(timeframe='5m')` to inject the live tick as the
-        close of the current M5 candle, so the engine's `entry_price` matches
-        what the user sees on PO's chart.
-        """
-        if not self._tick_buffer:
-            return None
-        # Build candidate asset names (same logic as get_payout)
-        base = asset
-        base_lower = base.lower()
-        candidates = [
-            asset,
-            base_lower,
-            base_lower.replace('_otc', ''),
-            base_lower.replace('_otc', '') + '_otc' if not base_lower.endswith('_otc') else base_lower,
-            # Also try WITHOUT _otc suffix in case PO sends ticks under the
-            # non-OTC symbol name (e.g. "AUDCAD" instead of "AUDCAD_otc")
-            base_lower.replace('_otc', '') if '_otc' in base_lower else base_lower,
-            # And try uppercase variants
-            base.upper(),
-            base.upper().replace('_OTC', ''),
-        ]
-        for cand in candidates:
-            if not cand:
-                continue
-            ticks = self._tick_buffer.get(cand)
-            if ticks:
-                # ticks is a list of (ts, price) tuples; last entry is the latest
-                try:
-                    return float(ticks[-1][1])
-                except (IndexError, ValueError, TypeError):
-                    continue
         return None
 
     def get_tick_data(self, pair: str, max_ticks: int = 200) -> tuple:

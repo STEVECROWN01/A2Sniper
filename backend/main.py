@@ -1122,28 +1122,10 @@ async def _emit_candidate(candidate: dict, force: bool = False) -> dict:
                 f"gap={now_ts_check - last_time:.0f}s). Skipping to prevent duplicate."
             )
             return None
-    now_ts = datetime.now(timezone.utc).timestamp()
-
-    # ─── REFRESH ENTRY PRICE AT EMISSION TIME ──────────────────────
-    # The candidate was created up to 30s ago (during the trading loop scan).
-    # By the time we emit it, the price may have moved. Fetch the LATEST
-    # price from the scanner and override the candidate's entry_price.
-    # This ensures the entry_price matches what the user sees on PO's chart
-    # RIGHT NOW (not 30s ago), and the 5-minute countdown starts from the
-    # actual emission moment (not the candidate creation moment).
-    live_price = None
-    try:
-        live_price = await po_scanner.get_current_price(pair)
-    except Exception:
-        pass
-    if live_price and live_price > 0:
-        logger.info(f"[EMIT-PRICE] {pair} refreshing entry_price: candidate={candidate['entry_price']} → live={live_price}")
-        candidate['entry_price'] = live_price
-
-    # Set `now` AFTER the price refresh (which may take 1-2s for the
-    # async get_current_price call). This ensures the signal's timestamp
-    # is as close to the actual emission moment as possible, so the
-    # frontend's countdown starts at ~5:00 (not 4:58).
+    # TEMPORARY REVERT for A/B testing: removed entry price refresh at emission
+    # (commit 5fe31b2). The scanner's get_current_price() used the live-tick
+    # injection from commit 2ec99e2 which is also reverted. Reverting both
+    # returns the system to the state where the user had winning trades.
     now = datetime.now(timezone.utc)
     now_ts = now.timestamp()
 
