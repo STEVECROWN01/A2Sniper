@@ -402,7 +402,14 @@ def generate_sniper_signal(df: pd.DataFrame, payout: float, min_factors: int = 4
         logger.info(f"[PRICE-ACTION] No candlestick pattern on last candle — skipping")
         return None
 
-    # TEMPORARY REVERT for A/B testing — PUT signals re-enabled.
+    # ─── DISABLE PUT SIGNALS ─────────────────────────────────────
+    # DIAGNOSTIC FINDING: Sniper PUTs have ~50.1% win rate (359 signals)
+    # — below break-even at 88% payout (53.2%). OTC feeds have a bullish
+    # bias that hurts PUT signals. Only emit CALL signals.
+    if pattern_direction == 'PUT':
+        logger.info(f"[PRICE-ACTION] PUT pattern detected ({pattern}) — disabled (50.1% WR, below break-even). Only CALLs emitted.")
+        return None
+
     logger.info(f"[PRICE-ACTION] Pattern: {pattern} ({pattern_direction}) — {pattern_result['description']}")
 
     # 5. Check if price is at a key level that matches the pattern direction
