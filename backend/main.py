@@ -873,11 +873,9 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False, return_can
                 )
                 return None
     else:
-        # Bot → ACE first (with full M15 trend confirmation), then FALLBACK
-        # to Option C if ACE finds nothing. The fast_mode parameter was removed
-        # — the M15 resample takes <1ms on M5 data, so there's no performance
-        # reason to skip it. Both bot and signals page now get the same quality.
-        engine_result = generate_ace_signal(df_with_indicators, payout)
+        # Bot → ACE first (fast_mode for speed), then FALLBACK to Option C if ACE finds nothing.
+        # TEMPORARY REVERT for A/B testing — will be restored after testing.
+        engine_result = generate_ace_signal(df_with_indicators, payout, fast_mode=force)
         if engine_result is not None:
             logger.info(f"[{pair}] ACE signal found — using ACE (higher win rate)")
         else:
