@@ -524,7 +524,7 @@ def generate_sniper_signal(df: pd.DataFrame, payout: float, min_factors: int = 4
         'score': score,
         'max_score': 4,
         'winrate': winrate,
-        'expiration': 5,
+        'expiration': 3,
         'entry_price': close,
         'classification': classification,
         'factors': {

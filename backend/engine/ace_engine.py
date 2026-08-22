@@ -204,7 +204,9 @@ def generate_ace_signal(df: pd.DataFrame, payout: float, fast_mode: bool = False
 
         # ─── PULLBACK CHECK ───────────────────────────────────────
         # Price must be NEAR EMA21 (within 1.0 ATR — relaxed from 0.5)
-        pullback_to_ema = ema21_dist_atr <= 1.0
+        # H4 FIX: tightened pullback tolerance from 1.0 ATR to 0.5 ATR.
+        # 1.0 ATR was too loose — almost any candle in a trend qualified.
+        pullback_to_ema = ema21_dist_atr <= 0.5
 
         if not pullback_to_ema:
             logger.info(f"[ACE] Price too far from EMA21 ({ema21_dist_atr:.2f} ATR) — waiting for pullback")
@@ -241,9 +243,11 @@ def generate_ace_signal(df: pd.DataFrame, payout: float, fast_mode: bool = False
             prev2 = df.iloc[-3] if len(df) >= 3 else prev
             prev2_low = float(prev2['low'])
             curr_low = float(last['low'])
-            pulled_back = (prev_low <= ema21 + atr * 0.5) or \
-                          (prev2_low <= ema21 + atr * 0.5) or \
-                          (curr_low <= ema21 + atr * 0.5)
+            # H4 FIX: tightened from 0.5 ATR to 0.3 ATR, and require the
+            # PREVIOUS candle (not current) to have dipped — the current
+            # candle should be the continuation, not the pullback itself.
+            pulled_back = (prev_low <= ema21 + atr * 0.3) or \
+                          (prev2_low <= ema21 + atr * 0.3)
             if not pulled_back:
                 logger.info("[ACE] CALL: no recent candle dipped to EMA21 — no real pullback")
                 return None
@@ -257,9 +261,9 @@ def generate_ace_signal(df: pd.DataFrame, payout: float, fast_mode: bool = False
             prev2 = df.iloc[-3] if len(df) >= 3 else prev
             prev2_high = float(prev2['high'])
             curr_high = float(last['high'])
-            pulled_back = (prev_high >= ema21 - atr * 0.5) or \
-                          (prev2_high >= ema21 - atr * 0.5) or \
-                          (curr_high >= ema21 - atr * 0.5)
+            # H4 FIX: tightened from 0.5 ATR to 0.3 ATR, require previous candle.
+            pulled_back = (prev_high >= ema21 - atr * 0.3) or \
+                          (prev2_high >= ema21 - atr * 0.3)
             if not pulled_back:
                 logger.info("[ACE] PUT: no recent candle rallied to EMA21 — no real pullback")
                 return None
@@ -307,7 +311,7 @@ def generate_ace_signal(df: pd.DataFrame, payout: float, fast_mode: bool = False
             'score': 3 if not m5_aligned else 4,
             'max_score': 4,
             'winrate': winrate,
-            'expiration': 5,
+            'expiration': 3,
             'entry_price': close,
             'classification': classification,
             'factors': {
@@ -355,7 +359,9 @@ def generate_ace_signal(df: pd.DataFrame, payout: float, fast_mode: bool = False
                 return None
 
             # RSI must be oversold (< 40 — relaxed from 35)
-            if rsi >= 40:
+            # H5 FIX: restored RSI threshold from 40 to 30 (industry standard oversold).
+            # RSI 35-40 is weakly oversold — produces too many low-quality reversals.
+            if rsi >= 30:
                 logger.info(f"[ACE] CALL: RSI={rsi:.1f} not oversold (< 35 needed), skipping")
                 return None
 
@@ -399,7 +405,7 @@ def generate_ace_signal(df: pd.DataFrame, payout: float, fast_mode: bool = False
                 'score': 3,
                 'max_score': 4,
                 'winrate': winrate,
-                'expiration': 5,
+                'expiration': 3,
                 'entry_price': close,
                 'classification': classification,
                 'factors': {
@@ -441,7 +447,8 @@ def generate_ace_signal(df: pd.DataFrame, payout: float, fast_mode: bool = False
                 return None
 
             # RSI must be overbought (> 60 — relaxed from 65)
-            if rsi <= 60:
+            # H5 FIX: restored from 60 to 70 (industry standard overbought).
+            if rsi <= 70:
                 logger.info(f"[ACE] PUT: RSI={rsi:.1f} not overbought (> 65 needed), skipping")
                 return None
 
@@ -485,7 +492,7 @@ def generate_ace_signal(df: pd.DataFrame, payout: float, fast_mode: bool = False
                 'score': 3,
                 'max_score': 4,
                 'winrate': winrate,
-                'expiration': 5,
+                'expiration': 3,
                 'entry_price': close,
                 'classification': classification,
                 'factors': {

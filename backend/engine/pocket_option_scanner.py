@@ -2566,12 +2566,26 @@ class PocketOptionScanner:
             df_rest = await self._fetch_candles_http(asset, tf_sec, count)
             if df_rest is not None and not df_rest.empty:
                 logger.info(f"[SCANNER-CANDLE-HIT] asset={asset} tf={timeframe} bars={len(df_rest)} (REST fallback)")
-                # Mark as authoritative REST source so the staleness guard
-                # trusts it for M5_CACHE_TTL_SECONDS before re-resampling.
-                df_rest.attrs['source'] = 'ws_or_rest'
-                df_rest.attrs['last_updated'] = datetime.now(timezone.utc).timestamp()
-                self._candles_cache[cache_key] = df_rest
-                return df_rest.copy()
+                # H7 FIX: MERGE REST data with existing tick-aggregated M1 cache
+                # instead of overwriting. REST and WS feeds can disagree by 1-3 pips
+                # on OTC pairs — overwriting causes price jumps in indicators.
+                # Merge strategy: keep tick-aggregated candles as authoritative for
+                # overlapping timestamps; fill gaps from REST only.
+                existing = self._candles_cache.get(cache_key)
+                if existing is not None and not existing.empty:
+                    merged = pd.concat([existing, df_rest])
+                    # Deduplicate by index — keep the LAST value (tick-aggregated wins)
+                    merged = merged[~merged.index.duplicated(keep='last')]
+                    merged = merged.sort_index().tail(200)
+                    merged.attrs['source'] = 'ws_or_rest'
+                    merged.attrs['last_updated'] = datetime.now(timezone.utc).timestamp()
+                    self._candles_cache[cache_key] = merged
+                    return merged.copy()
+                else:
+                    df_rest.attrs['source'] = 'ws_or_rest'
+                    df_rest.attrs['last_updated'] = datetime.now(timezone.utc).timestamp()
+                    self._candles_cache[cache_key] = df_rest
+                    return df_rest.copy()
 
             return pd.DataFrame()
 

@@ -856,16 +856,16 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False, return_can
     df_with_indicators.attrs['pair'] = pair
 
     if strict_mode:
-        # Signals page → ACE first, then Option C fallback (SAME as bot)
-        # Both paths now use the same engine: ACE → Option C fallback.
-        # This ensures the signals page finds the SAME signals as the bot,
-        # making them truly independent.
+        # Signals page → ACE first, then Option D (strict) fallback.
+        # C3 FIX: was passing strict_mode=False to the Sniper engine in
+        # BOTH branches. Now the strict path uses strict_mode=True (Option D:
+        # pattern + BOTH bonuses = higher quality, fewer but better signals).
         engine_result = generate_ace_signal(df_with_indicators, payout)
         if engine_result is not None:
             logger.info(f"[{pair}] ACE signal found — using ACE (higher win rate)")
         else:
-            logger.info(f"[{pair}] No ACE signal — falling back to Option C (pattern + 1 bonus)")
-            engine_result = generate_sniper_signal(df_with_indicators, payout, strict_mode=False)
+            logger.info(f"[{pair}] No ACE signal — falling back to Option D (pattern + BOTH bonuses)")
+            engine_result = generate_sniper_signal(df_with_indicators, payout, strict_mode=True)
             if engine_result is None:
                 logger.info(
                     f"[{pair}] No Option C signal either — no pattern at key level. "
@@ -1124,20 +1124,31 @@ async def _emit_candidate(candidate: dict, force: bool = False) -> dict:
             return None
     now_ts = datetime.now(timezone.utc).timestamp()
 
-    # ─── REFRESH ENTRY PRICE AT EMISSION TIME ──────────────────────
-    # The candidate was created up to 30s ago (during the trading loop scan).
-    # By the time we emit it, the price may have moved. Fetch the LATEST
-    # price from the scanner and override the candidate's entry_price.
-    # This ensures the entry_price matches what the user sees on PO's chart
-    # RIGHT NOW (not 30s ago), and the 5-minute countdown starts from the
-    # actual emission moment (not the candidate creation moment).
+    # ─── H2 FIX: RE-VALIDATE CANDIDATE AT EMISSION TIME ──────────
+    # The candidate was created up to 30s ago. The signal was valid then,
+    # but the market may have moved since. Before emitting, verify the
+    # entry price hasn't moved against the signal direction by more than
+    # 0.5 ATR. If it has, the setup is no longer valid — skip it.
     live_price = None
     try:
         live_price = await po_scanner.get_current_price(pair)
     except Exception:
         pass
     if live_price and live_price > 0:
-        logger.info(f"[EMIT-PRICE] {pair} refreshing entry_price: candidate={candidate['entry_price']} → live={live_price}")
+        candidate_price = candidate['entry_price']
+        price_move = abs(live_price - candidate_price)
+        # Get ATR from the candidate's analysis details if available
+        candidate_atr = candidate.get('analysis_details', {}).get('atr', 0) or 0
+        if candidate_atr and candidate_atr > 0:
+            move_atr = price_move / candidate_atr
+            if move_atr > 0.5:
+                logger.info(
+                    f"[EMIT-SKIP] {pair} — price moved {move_atr:.2f} ATR since candidate creation "
+                    f"(candidate={candidate_price:.5f}, live={live_price:.5f}, ATR={candidate_atr:.5f}). "
+                    f"Signal no longer valid — skipping emission."
+                )
+                return None
+        logger.info(f"[EMIT-PRICE] {pair} refreshing entry_price: candidate={candidate_price} → live={live_price}")
         candidate['entry_price'] = live_price
 
     # Set `now` AFTER the price refresh (which may take 1-2s for the

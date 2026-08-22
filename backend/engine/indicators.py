@@ -133,7 +133,12 @@ class TechnicalIndicators:
         df['ADX_14'] = dx.ewm(alpha=1/period, min_periods=period).mean()
         df['PLUS_DI'] = plus_di
         df['MINUS_DI'] = minus_di
-        df['ADX_14'] = df['ADX_14'].fillna(25)
+        # H6 FIX: was fillna(25) — silently routed NaN-data signals into
+        # trend continuation (ADX=25 > 22). Now fillna(0) so NaN data
+        # falls through both ACE branches (ADX=0 < 18 → BB reversal, but
+        # BB reversal also checks price/band relationship, so effectively
+        # no signal is generated on broken data).
+        df['ADX_14'] = df['ADX_14'].fillna(0)
         return df
 
     # ──────────────── 7. ATR ────────────────
