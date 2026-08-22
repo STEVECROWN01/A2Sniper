@@ -2,13 +2,12 @@
 
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import { motion } from 'framer-motion';
-import { Search, Filter, TrendingUp, TrendingDown, Clock, Target, RefreshCw, Download, Settings, Link2, Check, Wifi, WifiOff, AlertTriangle, Zap, Award } from 'lucide-react';
+import { Search, Filter, TrendingUp, TrendingDown, Clock, Target, Settings, Link2, Wifi, WifiOff, AlertTriangle, Zap, Award, RotateCcw, Loader2 } from 'lucide-react';
 import { SignalCard } from '@/components/ui/signal-card';
 import { useAppStore } from '@/lib/store';
 import { useAuth } from '@/hooks/use-auth';
 import { tradingPairs } from '@/lib/mock-data';
 import { validateSSID } from '@/lib/validate-ssid';
-import { createBrandedPDF, drawSectionTitle, drawStatCard, drawTable, drawInfoRow, drawUserInfoCard, savePDF, PAGE, PDFUserInfo, fetchAvatarBase64 } from '@/lib/pdf-export';
 import { toast } from 'sonner';
 
 export default function SignalsPage() {
@@ -82,8 +81,7 @@ export default function SignalsPage() {
     // SSID textarea is for one-time paste only — do NOT persist to localStorage.
     setSsidState(val);
   };
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const [justExported, setJustExported] = useState(false);
+  const [isRefreshing] = useState(false);
 
   // Track which signals have been client-side expired (countdown hit 0).
   // These are removed from the ACTIVE list immediately — no need to wait
@@ -222,79 +220,19 @@ export default function SignalsPage() {
     setIsConnecting(false);
   };
 
-  const handleRefresh = async () => {
-    setIsRefreshing(true);
+  const handleReset = () => {
+    // Reset all stats to zero for a fresh trading session.
     const store = useAppStore.getState();
-    if (store.fetchSignals) {
-      await store.fetchSignals();
-    }
-    setIsRefreshing(false);
-  };
-
-  const handleExportSignals = async () => {
-    if (user?.avatar) await fetchAvatarBase64(user.avatar);
-    const pdfUser: PDFUserInfo = {
-      name: user?.name,
-      email: user?.email,
-      plan: user?.plan,
-      userId: user?.id,
-      avatarUrl: user?.avatar,
-    };
-    const doc = createBrandedPDF('Signals Report', 'Filtered trading signals and statistics', pdfUser);
-    let y = 58;
-
-    // User info card
-    y = drawUserInfoCard(doc, y, pdfUser);
-
-    // Filter info
-    y = drawSectionTitle(doc, 'Filtres appliques', y);
-    y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Pair', selectedPair === 'ALL' ? 'All' : selectedPair);
-    y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Direction', selectedDirection === 'ALL' ? 'All' : selectedDirection);
-    y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Status', selectedStatus === 'ALL' ? 'All' : selectedStatus);
-    y = drawInfoRow(doc, PAGE.marginL + 2, y, 'Payout', selectedPayout === 'ALL' ? 'All' : `>${selectedPayout}%`);
-    y += 2;
-
-    // Stats
-    y = drawSectionTitle(doc, 'Statistiques', y);
-    const cardW = 42;
-    const gap = 3;
-    y = drawStatCard(doc, PAGE.marginL, y, cardW, 'Total', String(stats.total));
-    y = drawStatCard(doc, PAGE.marginL + cardW + gap, y - 21, cardW, 'Active', String(stats.active), { valueColor: '#3B82F6' });
-    y = drawStatCard(doc, PAGE.marginL + (cardW + gap) * 2, y - 21, cardW, 'Gagnes', String(stats.won), { valueColor: '#22C55E' });
-    y = drawStatCard(doc, PAGE.marginL + (cardW + gap) * 3, y - 21, cardW, 'Losts', String(stats.lost), { valueColor: '#EF4444' });
-    y += 6;
-
-    // Signals table
-    y = drawSectionTitle(doc, 'Liste des signaux', y);
-    if (filteredSignals.length > 0) {
-      const headers = [
-        { label: 'Pair', width: 28 },
-        { label: 'Direction', width: 22, align: 'center' as const },
-        { label: 'Winrate', width: 20, align: 'center' as const },
-        { label: 'Status', width: 20, align: 'center' as const },
-        { label: 'Payout', width: 18, align: 'right' as const },
-        { label: 'Expiration', width: 35, align: 'right' as const },
-      ];
-      const rows = filteredSignals.slice(0, 50).map(s => [
-        s.pair || '-',
-        s.direction || '-',
-        s.winrate ? `${s.winrate}%` : '-',
-        s.status || '-',
-        s.payout ? `${s.payout}%` : '-',
-        s.timestamp ? new Date(s.timestamp).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-',
-      ]);
-      y = drawTable(doc, PAGE.marginL, y, headers, rows);
-    } else {
-      doc.setFontSize(8);
-      doc.setTextColor(107, 114, 128);
-      doc.text('No signals found with these filters.', PAGE.marginL + 4, y + 4);
-    }
-
-    const dateStr = new Date().toISOString().split('T')[0];
-    savePDF(doc, `a2sniper-signaux-${dateStr}.pdf`, pdfUser);
-    setJustExported(true);
-    setTimeout(() => setJustExported(false), 2500);
-    toast.success('Rapport PDF exporte avec succes !');
+    store.setSignals([]);
+    useAppStore.setState({
+      totalSignals: 0,
+      totalActive: 0,
+      totalWon: 0,
+      totalLost: 0,
+    });
+    // Also clear client-side expired signal tracking
+    setExpiredSignalIds(new Set());
+    toast.success('Stats reset to zero. Fresh start!');
   };
 
   return (
@@ -343,20 +281,11 @@ export default function SignalsPage() {
                 )}
 
                 <button
-                  onClick={handleRefresh}
-                  disabled={isRefreshing}
-                  className="p-2 bg-[#0a0a0c] text-[#D4AF37] border border-white/5 rounded-xl hover:bg-white/[0.03] transition-colors disabled:opacity-50"
-                  title="Actualiser les signaux"
+                  onClick={handleReset}
+                  className="p-2 bg-[#0a0a0c] text-red-400 border border-white/5 rounded-xl hover:bg-red-500/10 hover:border-red-500/30 transition-colors"
+                  title="Reset stats to zero"
                 >
-                  <RefreshCw className={`w-5 h-5 ${isRefreshing ? 'animate-spin' : ''}`} />
-                </button>
-                
-                <button
-                  onClick={handleExportSignals}
-                  className={`p-2 rounded-xl transition-colors ${justExported ? 'bg-green-500 text-white border border-green-400' : 'bg-[#0a0a0c] text-green-500 border border-white/5 hover:bg-white/[0.03]'}`}
-                  title={justExported ? 'PDF exported!' : 'Export signals'}
-                >
-                  {justExported ? <Check className="w-5 h-5" /> : <Download className="w-5 h-5" />}
+                  <RotateCcw className="w-5 h-5" />
                 </button>
               </div>
             </motion.div>
@@ -370,7 +299,7 @@ export default function SignalsPage() {
               className="bg-[#0a0a0c]/80 rounded-2xl shadow-xl border border-[#D4AF37]/20 p-8 mb-10 overflow-hidden relative backdrop-blur-md"
             >
               <div className="absolute top-0 right-0 p-4 opacity-[0.02] pointer-events-none">
-                <RefreshCw className="w-40 h-40" />
+                <Loader2 className="w-40 h-40 animate-spin text-[#D4AF37]" />
               </div>
               
               <div className="flex flex-col lg:flex-row gap-10 items-start">
@@ -470,7 +399,7 @@ export default function SignalsPage() {
                     >
                       {isConnecting ? (
                         <>
-                          <RefreshCw className="w-4 h-4 animate-spin" />
+                          <Loader2 className="w-4 h-4 animate-spin" />
                           Login en cours...
                         </>
                       ) : (
