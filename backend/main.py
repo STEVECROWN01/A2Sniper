@@ -1591,38 +1591,55 @@ async def resolution_loop():
                         # For PUT:  win if exit_price < entry_price
                         # Tie (exit == entry): no result (skip, will retry next loop)
                         try:
-                            # Fetch candles around the expiry time.
-                            # Use the SAME timeframe as the signal's expiry:
-                            #   - 5min expiry → fetch M5 candles (close at ts + 300s)
-                            #   - 3min expiry → fetch M1 candles (close at ts + 60s)
-                            #   - 1min expiry → fetch M1 candles
-                            expiry_minutes = s.expiration or 5
-                            if expiry_minutes >= 5:
-                                expiry_tf = "5m"
-                                expiry_candle_seconds = 300
-                            else:
-                                expiry_tf = "1m"
-                                expiry_candle_seconds = 60
-
-                            df_expiry = await po_scanner.get_candles(s.pair, timeframe=expiry_tf, count=5)
-                            if df_expiry is not None and not df_expiry.empty:
-                                # Find the candle whose timestamp matches the expiry minute
-                                # The candle containing expiry_time has its close at the
-                                # end of that interval. We want the close price of the candle
-                                # that was closing at expiry_time.
+                            # C2 FIX: Always use M1 candles for exit price resolution.
+                            # Previously, for 5-min expiry signals, the system fetched M5
+                            # candles and picked the last one that CLOSED BEFORE expiry.
+                            # For a signal emitted at 12:03:30 with 5-min expiry (expires
+                            # at 12:08:30), this selected the M5 closing at 12:05:00 —
+                            # 3.5 minutes BEFORE actual expiry. PO pays on the price at
+                            # 12:08:30, not 12:05:00.
+                            #
+                            # FIX: Use M1 candles (60-second resolution). Find the M1
+                            # candle that CONTAINS the expiry timestamp (candle_open <=
+                            # expiry < candle_open + 60). Its close is the price at most
+                            # 60s from actual expiry — much better than 3.5 min off.
+                            # Also try the live tick buffer for the most precise price.
+                            df_m1_expiry = await po_scanner.get_candles(s.pair, timeframe="1m", count=10)
+                            if df_m1_expiry is not None and not df_m1_expiry.empty:
                                 expiry_ts = expiry_time.timestamp()
-                                # Convert candle index (datetime) to timestamp for comparison
-                                df_expiry_ts = df_expiry.index.astype(np.int64) // 10**9
-                                # Find the last candle that CLOSED at or before expiry_time
-                                # A candle closes at its timestamp + candle_seconds
-                                candle_close_ts = df_expiry_ts.values + expiry_candle_seconds
-                                # Get the candle whose close is closest to (but not after) expiry
-                                valid_candles = df_expiry[candle_close_ts <= expiry_ts + 30]  # 30s tolerance
-                                if not valid_candles.empty:
-                                    current_price = float(valid_candles.iloc[-1]['close'])
+                                df_m1_ts = df_m1_expiry.index.astype(np.int64) // 10**9
+                                # Find the M1 candle that CONTAINS expiry_ts:
+                                # candle_open <= expiry_ts < candle_open + 60
+                                # This candle's close is the price at candle_open + 60,
+                                # which is at most 60s after expiry.
+                                candle_open_ts = df_m1_ts.values
+                                candle_close_ts = candle_open_ts + 60
+                                # The candle containing expiry is the last one where
+                                # candle_open <= expiry_ts
+                                containing_candles = df_m1_expiry[candle_open_ts <= expiry_ts]
+                                if not containing_candles.empty:
+                                    # If the containing candle has already closed (close_ts <= now),
+                                    # use its close price. If it hasn't closed yet (we're within
+                                    # the same minute), use the latest tick or the last completed candle.
+                                    last_containing = containing_candles.iloc[-1]
+                                    last_containing_close_ts = candle_open_ts[containing_candles.index.get_loc(containing_candles.index[-1])] + 60
+                                    if last_containing_close_ts <= now.timestamp():
+                                        # Candle has closed — use its close
+                                        current_price = float(last_containing['close'])
+                                    else:
+                                        # Candle hasn't closed yet — try live tick first
+                                        live_exit = await po_scanner.get_current_price(s.pair)
+                                        if live_exit and live_exit > 0:
+                                            current_price = live_exit
+                                        else:
+                                            # Fall back to last completed M1 candle close
+                                            completed = df_m1_expiry[candle_close_ts <= expiry_ts + 30]
+                                            if not completed.empty:
+                                                current_price = float(completed.iloc[-1]['close'])
+                                            else:
+                                                current_price = await po_scanner.get_current_price(s.pair)
                                 else:
-                                    # Fallback: use the last candle's close
-                                    current_price = float(df_expiry.iloc[-1]['close'])
+                                    current_price = await po_scanner.get_current_price(s.pair)
                             else:
                                 current_price = await po_scanner.get_current_price(s.pair)
                         except Exception as price_err:

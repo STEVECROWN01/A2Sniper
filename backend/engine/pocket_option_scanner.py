@@ -2458,39 +2458,21 @@ class PocketOptionScanner:
                         # expiries, we need the entry_price to match what the
                         # user sees on the chart RIGHT NOW.
                         #
-                        # We append a synthetic M1 candle at the current
-                        # timestamp with OHLC = latest tick price. This makes
-                        # the resample produce an M5 candle for the current
-                        # 5-min window whose close = latest tick price.
-                        latest_tick_price = self._get_latest_tick_price(asset)
-                        if latest_tick_price is not None:
-                            now_ts = pd.Timestamp(datetime.now(timezone.utc))
-                            # Round down to current minute boundary
-                            now_minute = now_ts.floor('min')
-                            # Only inject if we don't already have this minute
-                            # in the M1 cache (otherwise resample would dedupe)
-                            if now_minute not in df_resample.index:
-                                live_row = pd.DataFrame(
-                                    {'open': [latest_tick_price],
-                                     'high': [latest_tick_price],
-                                     'low': [latest_tick_price],
-                                     'close': [latest_tick_price],
-                                     'volume': [0.0]},
-                                    index=pd.DatetimeIndex([now_minute], name='time', tz='UTC')
-                                )
-                                df_resample = pd.concat([df_resample, live_row])
-                                logger.debug(
-                                    f"[SCANNER-LIVE-TICK-INJECT] asset={asset} "
-                                    f"price={latest_tick_price:.5f} at {now_minute.isoformat()}"
-                                )
+                        # C1 FIX: Removed live tick injection.
+                        # The engine should analyze the last COMPLETED M5 candle,
+                        # not an in-progress one. Indicators (RSI, ADX, BB, EMA)
+                        # must be calculated on closed candles — otherwise they
+                        # flicker second-by-second and produce phantom signals.
+                        #
+                        # Entry price freshness is handled separately by
+                        # _emit_candidate() which calls get_current_price() at
+                        # emission time. So we don't need the live tick in the
+                        # M5 candle data.
 
                         df_m5 = df_resample.resample('5min').agg({
                             'open': 'first', 'high': 'max', 'low': 'min',
                             'close': 'last', 'volume': 'sum'
                         }).dropna()
-
-                        # Drop the synthetic live-tick row from the M1 cache
-                        # (we only injected it into df_resample, a copy)
                         if not df_m5.empty:
                             # Cache the resampled M5 data with a fresh timestamp
                             # so subsequent calls within the TTL window can
@@ -2765,6 +2747,16 @@ class PocketOptionScanner:
             if ticks:
                 # ticks is a list of (ts, price) tuples; last entry is the latest
                 try:
+                    # H3 FIX: freshness check — reject ticks older than 30s.
+                    # If PO stopped sending ticks for this pair (inactive, WS
+                    # hiccup, OTC market closed), the last tick could be from
+                    # minutes or hours ago. Using it as entry_price would be
+                    # wildly wrong vs what PO's chart shows.
+                    tick_ts = float(ticks[-1][0])
+                    age_s = datetime.now(timezone.utc).timestamp() - tick_ts
+                    if age_s > 30:
+                        logger.debug(f"[SCANNER] Stale tick for {cand}: {age_s:.0f}s old — ignoring")
+                        continue
                     return float(ticks[-1][1])
                 except (IndexError, ValueError, TypeError):
                     continue
