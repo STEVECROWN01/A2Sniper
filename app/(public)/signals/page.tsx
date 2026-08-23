@@ -163,6 +163,22 @@ export default function SignalsPage() {
     };
   }, [signals, totalSignals, totalActive, totalWon, totalLost]);
 
+  // Load resetTimestamp from localStorage on mount — this makes the reset
+  // persist across page reloads and Railway redeploys. Without this, the
+  // resetTimestamp in the Zustand store gets wiped on page reload, and all
+  // old signals come back.
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('a2sniper_reset_timestamp');
+      if (saved) {
+        const ts = Number(saved);
+        if (ts && ts > 0) {
+          useAppStore.setState({ resetTimestamp: ts });
+        }
+      }
+    }
+  }, []);
+
   useEffect(() => {
     const store = useAppStore.getState();
     if (store.fetchSignals) store.fetchSignals();
@@ -224,7 +240,8 @@ export default function SignalsPage() {
   const handleReset = () => {
     // Set resetTimestamp — all signals older than NOW will be filtered out
     // by fetchSignals on every subsequent poll. This persists across the 5s
-    // polling cycle — only NEW signals emitted after this moment will appear.
+    // polling cycle AND across page reloads / Railway redeploys (saved to
+    // localStorage so it survives frontend restarts).
     const now = Date.now();
     useAppStore.setState({
       resetTimestamp: now,
@@ -234,6 +251,10 @@ export default function SignalsPage() {
       totalWon: 0,
       totalLost: 0,
     });
+    // Persist to localStorage so the reset survives page reloads and redeploys
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('a2sniper_reset_timestamp', String(now));
+    }
     setExpiredSignalIds(new Set());
     toast.success('Stats reset to zero. Fresh start!');
   };
