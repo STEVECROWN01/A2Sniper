@@ -219,17 +219,17 @@ def generate_ace_signal(df: pd.DataFrame, payout: float, fast_mode: bool = False
             logger.info(f"[ACE] Price too far from EMA21 ({ema21_dist_atr:.2f} ATR) — waiting for pullback")
             return None
 
-        # ─── PUT SIGNALS RE-ENABLED in trend continuation ─────────
-        # Previously PUTs were disabled here due to alleged OTC bullish bias
-        # that gave trend-continuation PUTs a 36.4% win rate (vs CALLs 62.5%).
+        # ─── DISABLE PUT SIGNALS IN TREND CONTINUATION ────────────
+        # CONFIRMED BY USER TRADING FEEDBACK: OTC feeds have a bullish bias
+        # — price drifts upward even in "downtrends," killing PUT signals
+        # over the 3-min expiry. ACE trend continuation PUTs previously
+        # had a 36.4% win rate (vs CALLs 62.5%). User reported catastrophic
+        # losses after commit aa2e28a briefly re-enabled PUTs.
         #
-        # Disabling PUTs capped the engine's win rate at ~50% by preventing
-        # the engine from profiting on bearish trends.
-        #
-        # Compensating measure for any residual OTC bullish bias:
-        # PUTs require BOTH bonuses (level AND M5 alignment) — i.e., full
-        # confluence A+ setups only. CALLs still allow at least 1 bonus.
-        # This makes PUTs selective but functional.
+        # Only CALL signals are emitted from trend continuation.
+        if direction == 'PUT':
+            logger.info("[ACE] Trend continuation PUT disabled (36.4% WR — OTC bullish bias, confirmed by live trading). Only CALLs emitted in this strategy.")
+            return None
 
         # ─── CONFIRMATION: candle closed in trend direction ───────
         if direction == 'CALL':
@@ -445,12 +445,13 @@ def generate_ace_signal(df: pd.DataFrame, payout: float, fast_mode: bool = False
             return result
 
         # PUT: price pierced above upper BB
-        # RE-ENABLED — PUTs were previously disabled here due to alleged OTC
-        # bullish bias. They are now re-enabled with the standard PUT
-        # confirmation chain (close back inside band + RSI overbought +
-        # reversal candle + M5 DOWNTREND alignment as a bonus).
+        # DISABLED: OTC feeds have a bullish bias — PUT signals underperform.
+        # CONFIRMED BY USER TRADING FEEDBACK: catastrophic losses after
+        # commit aa2e28a briefly re-enabled PUTs. Only CALL signals
+        # (lower BB pierce + reversal) are emitted.
         if curr_high >= bbu and bbu > 0:
-            logger.info(f"[ACE] Price pierced upper BB ({curr_high:.5f} >= {bbu:.5f}) — PUT signal evaluation")
+            logger.info(f"[ACE] Price pierced upper BB ({curr_high:.5f} >= {bbu:.5f}) — PUT disabled (OTC bullish bias, confirmed by live trading). Skipping.")
+            return None
 
             # Candle must close back inside the band (below BBU)
             if close >= bbu:

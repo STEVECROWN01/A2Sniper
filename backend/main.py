@@ -855,72 +855,47 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False, return_can
     #   replace generate_ace_signal() with generate_sniper_signal(df, payout, strict_mode=False)
     df_with_indicators.attrs['pair'] = pair
 
-    # ═══ MOMENTUM ENGINE — 1-minute expiry, highest documented winrate ═══
-    # The momentum_engine (75-88% claimed winrate, 1-min expiry) was previously
-    # imported but NEVER called. It is the ONLY engine that supports BOTH
-    # CALL and PUT signals natively and is the most likely to lift the
-    # portfolio win rate above 70%.
+    # ═══ ENGINE SELECTION: ACE → Sniper (3-min expiry, reversal setups) ═══
+    # NOTE: The momentum_engine (1-min expiry, claimed 75-88% winrate) was
+    # briefly activated as the primary engine in commit aa2e28a, but user
+    # trading feedback was catastrophic — every live trade with 1-min signals
+    # lost. The claimed 75-88% winrate appears to be fictional, just like
+    # ACE/Sniper's hardcoded estimates. Additionally, 1-min expiry leaves
+    # only ~10-17s for the user to place a trade after notification (17-28%
+    # of the trade window), which means momentum has often already peaked.
     #
-    # Strategy: try momentum FIRST. If a momentum setup is found, use it
-    # (1-min expiry — momentum persists for ~60s). If no momentum setup,
-    # fall through to ACE (3-min) then Sniper (3-min) for reversal setups.
-    try:
-        if generate_momentum_signal is None:
-            raise RuntimeError("momentum_engine not imported")
-        momentum_result = generate_momentum_signal(df_with_indicators, payout, min_factors=4)
-        if momentum_result is not None:
-            logger.info(
-                f"[{pair}] MOMENTUM signal found — using momentum "
-                f"(dir={momentum_result['direction']}, score={momentum_result['score']}/7, "
-                f"wr={momentum_result['winrate']}%, expiry=1m)"
-            )
-            # Tag the result so downstream code knows which engine produced it
-            momentum_result['engine_source'] = 'momentum'
-            sniper_result = momentum_result
-            # Skip ACE/Sniper — momentum takes priority
-            if strict_mode:
-                logger.info(f"[{pair}] ACE/Sniper skipped — momentum engine found a setup first")
-            else:
-                logger.info(f"[{pair}] ACE/Sniper skipped — momentum engine found a setup first")
-            # Jump past the ACE/Sniper blocks
-            engine_result = momentum_result
+    # Reverted to ACE → Sniper (3-min expiry) which gave the user consistent
+    # wins before the C5 fix. Momentum engine remains imported and available
+    # for future A/B testing behind a feature flag, but is NOT called by default.
+    if strict_mode:
+        # Signals page → ACE first, then Option D (strict) fallback.
+        engine_result = generate_ace_signal(df_with_indicators, payout)
+        if engine_result is not None:
+            logger.info(f"[{pair}] ACE signal found — using ACE (3m expiry, reversal setup)")
         else:
-            engine_result = None
-    except Exception as mom_err:
-        logger.warning(f"[{pair}] Momentum engine error: {mom_err}")
-        engine_result = None
-
-    # ═══ FALLBACK: ACE → Sniper (3-min expiry, reversal setups) ═══
-    if engine_result is None:
-        if strict_mode:
-            # Signals page → ACE first, then Option D (strict) fallback.
-            engine_result = generate_ace_signal(df_with_indicators, payout)
-            if engine_result is not None:
-                logger.info(f"[{pair}] ACE signal found — using ACE (3m expiry, reversal setup)")
-            else:
-                logger.info(f"[{pair}] No ACE signal — falling back to Option D (pattern + BOTH bonuses)")
-                engine_result = generate_sniper_signal(df_with_indicators, payout, strict_mode=True)
-                if engine_result is None:
-                    logger.info(
-                        f"[{pair}] No Option D signal either — no pattern at key level. "
-                        f"candles={len(df_with_indicators)}, mode=signals page"
-                    )
-                    return None
+            logger.info(f"[{pair}] No ACE signal — falling back to Option D (pattern + BOTH bonuses)")
+            engine_result = generate_sniper_signal(df_with_indicators, payout, strict_mode=True)
+            if engine_result is None:
+                logger.info(
+                    f"[{pair}] No Option D signal either — no pattern at key level. "
+                    f"candles={len(df_with_indicators)}, mode=signals page"
+                )
+                return None
+    else:
+        # Bot → ACE first, then Option C (looser) fallback
+        engine_result = generate_ace_signal(df_with_indicators, payout)
+        if engine_result is not None:
+            logger.info(f"[{pair}] ACE signal found — using ACE (3m expiry, reversal setup)")
         else:
-            # Bot → ACE first, then Option C (looser) fallback
-            engine_result = generate_ace_signal(df_with_indicators, payout)
-            if engine_result is not None:
-                logger.info(f"[{pair}] ACE signal found — using ACE (3m expiry, reversal setup)")
-            else:
-                logger.info(f"[{pair}] No ACE signal — falling back to Option C (pattern + 1 bonus)")
-                engine_result = generate_sniper_signal(df_with_indicators, payout, strict_mode=False)
-                if engine_result is None:
-                    logger.info(
-                        f"[{pair}] No Option C signal either — no pattern at key level. "
-                        f"candles={len(df_with_indicators)}, mode=bot"
-                    )
-                    return None
-        engine_result.setdefault('engine_source', 'ace_or_sniper')
+            logger.info(f"[{pair}] No ACE signal — falling back to Option C (pattern + 1 bonus)")
+            engine_result = generate_sniper_signal(df_with_indicators, payout, strict_mode=False)
+            if engine_result is None:
+                logger.info(
+                    f"[{pair}] No Option C signal either — no pattern at key level. "
+                    f"candles={len(df_with_indicators)}, mode=bot"
+                )
+                return None
+    engine_result.setdefault('engine_source', 'ace_or_sniper')
 
     sniper_result = engine_result
 

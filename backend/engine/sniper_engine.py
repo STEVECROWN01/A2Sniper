@@ -405,24 +405,19 @@ def generate_sniper_signal(df: pd.DataFrame, payout: float, min_factors: int = 4
         logger.info(f"[PRICE-ACTION] No candlestick pattern on last candle — skipping")
         return None
 
-    # ─── PUT SIGNALS RE-ENABLED (with tighter confirmation) ────────────
-    # Previously PUT signals were disabled across all engines due to an
-    # alleged "OTC bullish bias" that caused PUTs to underperform.
+    # ─── PUT SIGNALS DISABLED (OTC bullish bias confirmed by user feedback) ───
+    # The user's pre-fix trading history showed consistent wins with CALL-only
+    # signals. After commit aa2e28a briefly re-enabled PUTs, the user reported
+    # catastrophic losses — confirming that on Pocket Option OTC feeds, PUT
+    # signals systematically underperform (the broker-controlled feed drifts
+    # upward even during "bearish" periods, killing PUT signals over 3-min expiry).
     #
-    # Disabling PUTs structurally capped the win rate at ~50% because the
-    # engine could only take one side of the market. With PUTs re-enabled,
-    # the engine can profit from bearish moves too.
-    #
-    # To compensate for any residual OTC bullish bias, PUT signals now
-    # require a STRONGER candlestick pattern: shooting_star or bearish_engulfing
-    # only (no pin_bar_bear). The weaker pin_bar_bear pattern is allowed for
-    # CALLs only.
-    PUT_STRONG_PATTERNS = {'shooting_star', 'bearish_engulfing'}
-    if pattern_direction == 'PUT' and pattern not in PUT_STRONG_PATTERNS:
-        logger.info(
-            f"[PRICE-ACTION] Weak PUT pattern ({pattern}) — skipping. "
-            f"PUT requires strong pattern ({PUT_STRONG_PATTERNS})."
-        )
+    # This is the original behavior, restored. Only CALL signals are emitted.
+    # The Sniper engine's pattern detector still runs for both directions
+    # (so the engine doesn't crash if it encounters a bearish pattern), but
+    # any PUT-direction pattern is filtered out here.
+    if pattern_direction == 'PUT':
+        logger.info(f"[PRICE-ACTION] PUT pattern detected ({pattern}) — disabled (OTC bullish bias, confirmed by live trading). Only CALLs emitted.")
         return None
 
     logger.info(f"[PRICE-ACTION] Pattern: {pattern} ({pattern_direction}) — {pattern_result['description']}")
