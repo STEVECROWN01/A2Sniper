@@ -855,41 +855,72 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False, return_can
     #   replace generate_ace_signal() with generate_sniper_signal(df, payout, strict_mode=False)
     df_with_indicators.attrs['pair'] = pair
 
-    if strict_mode:
-        # Signals page → ACE first, then Option D (strict) fallback.
-        # C3 FIX: was passing strict_mode=False to the Sniper engine in
-        # BOTH branches. Now the strict path uses strict_mode=True (Option D:
-        # pattern + BOTH bonuses = higher quality, fewer but better signals).
-        engine_result = generate_ace_signal(df_with_indicators, payout)
-        if engine_result is not None:
-            logger.info(f"[{pair}] ACE signal found — using ACE (higher win rate)")
+    # ═══ MOMENTUM ENGINE — 1-minute expiry, highest documented winrate ═══
+    # The momentum_engine (75-88% claimed winrate, 1-min expiry) was previously
+    # imported but NEVER called. It is the ONLY engine that supports BOTH
+    # CALL and PUT signals natively and is the most likely to lift the
+    # portfolio win rate above 70%.
+    #
+    # Strategy: try momentum FIRST. If a momentum setup is found, use it
+    # (1-min expiry — momentum persists for ~60s). If no momentum setup,
+    # fall through to ACE (3-min) then Sniper (3-min) for reversal setups.
+    try:
+        if generate_momentum_signal is None:
+            raise RuntimeError("momentum_engine not imported")
+        momentum_result = generate_momentum_signal(df_with_indicators, payout, min_factors=4)
+        if momentum_result is not None:
+            logger.info(
+                f"[{pair}] MOMENTUM signal found — using momentum "
+                f"(dir={momentum_result['direction']}, score={momentum_result['score']}/7, "
+                f"wr={momentum_result['winrate']}%, expiry=1m)"
+            )
+            # Tag the result so downstream code knows which engine produced it
+            momentum_result['engine_source'] = 'momentum'
+            sniper_result = momentum_result
+            # Skip ACE/Sniper — momentum takes priority
+            if strict_mode:
+                logger.info(f"[{pair}] ACE/Sniper skipped — momentum engine found a setup first")
+            else:
+                logger.info(f"[{pair}] ACE/Sniper skipped — momentum engine found a setup first")
+            # Jump past the ACE/Sniper blocks
+            engine_result = momentum_result
         else:
-            logger.info(f"[{pair}] No ACE signal — falling back to Option D (pattern + BOTH bonuses)")
-            engine_result = generate_sniper_signal(df_with_indicators, payout, strict_mode=True)
-            if engine_result is None:
-                logger.info(
-                    f"[{pair}] No Option C signal either — no pattern at key level. "
-                    f"candles={len(df_with_indicators)}, mode=signals page (ACE→Option C fallback)"
-                )
-                return None
-    else:
-        # Bot → ACE first (with full M15 trend confirmation), then FALLBACK
-        # to Option C if ACE finds nothing. The fast_mode parameter was removed
-        # — the M15 resample takes <1ms on M5 data, so there's no performance
-        # reason to skip it. Both bot and signals page now get the same quality.
-        engine_result = generate_ace_signal(df_with_indicators, payout)
-        if engine_result is not None:
-            logger.info(f"[{pair}] ACE signal found — using ACE (higher win rate)")
+            engine_result = None
+    except Exception as mom_err:
+        logger.warning(f"[{pair}] Momentum engine error: {mom_err}")
+        engine_result = None
+
+    # ═══ FALLBACK: ACE → Sniper (3-min expiry, reversal setups) ═══
+    if engine_result is None:
+        if strict_mode:
+            # Signals page → ACE first, then Option D (strict) fallback.
+            engine_result = generate_ace_signal(df_with_indicators, payout)
+            if engine_result is not None:
+                logger.info(f"[{pair}] ACE signal found — using ACE (3m expiry, reversal setup)")
+            else:
+                logger.info(f"[{pair}] No ACE signal — falling back to Option D (pattern + BOTH bonuses)")
+                engine_result = generate_sniper_signal(df_with_indicators, payout, strict_mode=True)
+                if engine_result is None:
+                    logger.info(
+                        f"[{pair}] No Option D signal either — no pattern at key level. "
+                        f"candles={len(df_with_indicators)}, mode=signals page"
+                    )
+                    return None
         else:
-            # ACE found nothing → fall back to Option C (pattern + 1 bonus)
-            logger.info(f"[{pair}] No ACE signal — falling back to Option C (pattern + 1 bonus)")
-            engine_result = generate_sniper_signal(df_with_indicators, payout, strict_mode=False)
-            if engine_result is None:
-                logger.info(
-                    f"[{pair}] No Option C signal either — no pattern at key level. "
-                    f"candles={len(df_with_indicators)}, mode=bot (ACE→Option C fallback)"
-                )
-                return None
+            # Bot → ACE first, then Option C (looser) fallback
+            engine_result = generate_ace_signal(df_with_indicators, payout)
+            if engine_result is not None:
+                logger.info(f"[{pair}] ACE signal found — using ACE (3m expiry, reversal setup)")
+            else:
+                logger.info(f"[{pair}] No ACE signal — falling back to Option C (pattern + 1 bonus)")
+                engine_result = generate_sniper_signal(df_with_indicators, payout, strict_mode=False)
+                if engine_result is None:
+                    logger.info(
+                        f"[{pair}] No Option C signal either — no pattern at key level. "
+                        f"candles={len(df_with_indicators)}, mode=bot"
+                    )
+                    return None
+        engine_result.setdefault('engine_source', 'ace_or_sniper')
 
     sniper_result = engine_result
 
@@ -1078,14 +1109,48 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False, return_can
     monitor.record_signal(signal['id'], pair, signal['direction'], signal['winrate'])
     increment_session_trade_count()
     _record_successful_emission()
+    # FIX H1: Bot force path must also update the global 30s emission gate.
+    # Previously this only set the per-pair dedup, allowing the background
+    # loop to emit a SECOND signal on a different pair within 30s — causing
+    # duplicate signals visible to the user within seconds of each other.
+    register_background_emission()
 
     logger.info(
         f"[SNIPER-EMITTED] id={signal['id']} pair={signal['pair']} "
         f"mode={sniper_result.get('mode', 'UNKNOWN')} direction={signal['direction']} "
-        f"score={signal['score']}/7 winrate={signal['winrate']}% "
+        f"score={signal['score']}/{sniper_result.get('max_score', 4)} winrate={signal['winrate']}% "
         f"expiration={signal['expiration']}m payout={signal['payout']}% "
+        f"engine={sniper_result.get('engine_source', 'unknown')} "
         f"session={signal['session_id']} trade={_session_state['trade_count']}/{TRADES_PER_SESSION}"
     )
+
+    # FIX H2: Bot force path must also push Telegram + Web Push notifications.
+    # Previously only the background _emit_candidate path sent these, so a
+    # user who clicked "GET SIGNAL" in Telegram would get the reply in chat
+    # but other subscribers (web push, other Telegram chats) would NOT be
+    # notified. Mirror the same fire-and-forget dispatch used by _emit_candidate.
+    try:
+        signal_msg = f"""🎯 <b>A2SNIPER SIGNAL SUR DEMANDE</b>
+━━━━━━━━━━━━━━━━━━━━━
+📊 Paire : <b>{signal['pair']}</b>
+🟢 Direction : <b>{signal['direction']}</b>
+⌛ Expiration : <b>{signal['expiration']}m</b>
+💰 Payout : <b>{signal['payout']}%</b>
+🎯 Winrate : <b>{signal['winrate'] if signal['winrate'] else '—'}%</b>
+📈 Prix d'entrée : <code>{signal['entry_price']}</code>
+
+🏗️ Structure : <i>{signal.get('smc_structure', '—')}</i>
+⚡ Confluence : <i>{signal.get('fibonacci', '—')}</i>
+
+Zéro Simulation. 100% Real-Market."""
+        asyncio.create_task(telegram_bot.send_signal(signal_msg))
+    except Exception as tg_err:
+        logger.warning(f"[SIGNAL-TELEGRAM-ERROR] pair={pair} err={tg_err}")
+
+    try:
+        asyncio.create_task(_send_push_notifications_for_signal(signal))
+    except Exception as push_err:
+        logger.warning(f"[SIGNAL-PUSH-ERROR] pair={pair} err={push_err}")
 
     return signal
 
@@ -1224,7 +1289,7 @@ async def _emit_candidate(candidate: dict, force: bool = False) -> dict:
 
     logger.info(
         f"[SNIPER-EMITTED] id={signal['id']} pair={signal['pair']} "
-        f"direction={signal['direction']} score={signal['score']}/7 "
+        f"direction={signal['direction']} score={signal['score']}/{signal.get('max_score', candidate.get('max_score', 4))} "
         f"winrate={signal['winrate']}% expiration={signal['expiration']}m "
         f"payout={signal['payout']}% session={signal['session_id']} "
         f"trade={_session_state['trade_count']}/{TRADES_PER_SESSION}"
@@ -1610,45 +1675,51 @@ async def resolution_loop():
                     
                     if now >= expiry_time:
                         # ─── ACCURATE WIN/LOSS DETERMINATION ───────────────
-                        # BUG FIX: Previously this called get_current_price() which returns
-                        # the price at RESOLUTION time (up to 10s AFTER expiry). This caused
-                        # incorrect win/loss results — the price at expiry moment is what
-                        # determines the outcome, not the price 10s later.
+                        # Pocket Option pays based on the price AT the exact
+                        # expiry moment. The closest available proxy for that
+                        # price is the CLOSE of the M1 candle that CONTAINS
+                        # the expiry timestamp (within ±1 second).
                         #
-                        # FIX: Fetch the candle that contains the expiry timestamp and use
-                        # its CLOSE price. For 1-minute candles, the close of the candle
-                        # at expiry_time is the exit price. This matches what PO uses to
-                        # determine win/loss on their platform.
+                        # The previous implementation called get_current_price()
+                        # which returns the live tick price at RESOLUTION time
+                        # (~10 seconds AFTER expiry because the loop sleeps 10s).
+                        # That introduced a 10-second bias that could flip wins
+                        # to losses and vice versa — particularly on fast-moving
+                        # pairs like EURUSD_otc where 10s = 2-5 pips.
                         #
-                        # For CALL: win if exit_price > entry_price
-                        # For PUT:  win if exit_price < entry_price
-                        # Tie (exit == entry): no result (skip, will retry next loop)
+                        # FIX: try M1 candle close FIRST (accurate to ±1s),
+                        # fall back to live tick only if no M1 data available.
                         try:
-                            # H-1 FIX: Always try live tick FIRST (closest to actual expiry).
-                            # The previous logic used M1 candle close which could be ±30s off.
-                            # Live tick at resolution time (~10s after expiry) is the closest
-                            # available price to what PO actually pays out on.
-                            current_price = await po_scanner.get_current_price(s.pair)
-                            if not current_price or current_price <= 0:
-                                # Fall back to M1 candle close if no live tick available
-                                df_m1_expiry = await po_scanner.get_candles(s.pair, timeframe="1m", count=10)
-                                if df_m1_expiry is not None and not df_m1_expiry.empty:
-                                    expiry_ts = expiry_time.timestamp()
-                                    df_m1_ts = df_m1_expiry.index.astype(np.int64) // 10**9
-                                    candle_open_ts = df_m1_ts.values
-                                    # Find the M1 candle that CONTAINS expiry_ts:
-                                    # candle_open <= expiry_ts < candle_open + 60
-                                    actual_containing = df_m1_expiry[
-                                        (candle_open_ts <= expiry_ts) &
-                                        (candle_open_ts + 60 > expiry_ts)
-                                    ]
-                                    if not actual_containing.empty:
-                                        current_price = float(actual_containing.iloc[-1]['close'])
-                                    else:
-                                        # Fall back to last candle close
-                                        current_price = float(df_m1_expiry.iloc[-1]['close'])
+                            current_price = None
+                            df_m1_expiry = await po_scanner.get_candles(s.pair, timeframe="1m", count=10)
+                            if df_m1_expiry is not None and not df_m1_expiry.empty:
+                                expiry_ts = expiry_time.timestamp()
+                                df_m1_ts = df_m1_expiry.index.astype(np.int64) // 10**9
+                                candle_open_ts = df_m1_ts.values
+                                # Find the M1 candle that CONTAINS expiry_ts:
+                                # candle_open <= expiry_ts < candle_open + 60
+                                actual_containing = df_m1_expiry[
+                                    (candle_open_ts <= expiry_ts) &
+                                    (candle_open_ts + 60 > expiry_ts)
+                                ]
+                                if not actual_containing.empty:
+                                    current_price = float(actual_containing.iloc[-1]['close'])
+                                    logger.debug(
+                                        f"[RESULT-CHECK] {s.id} using M1 candle close "
+                                        f"for expiry (entry={s.entry_price}, exit={current_price})"
+                                    )
                                 else:
-                                    current_price = await po_scanner.get_current_price(s.pair)
+                                    # Fall back to last candle close
+                                    current_price = float(df_m1_expiry.iloc[-1]['close'])
+                            # If M1 data unavailable, fall back to live tick
+                            # (less accurate, but better than leaving signal unresolved)
+                            if not current_price or current_price <= 0:
+                                current_price = await po_scanner.get_current_price(s.pair)
+                                if current_price and current_price > 0:
+                                    logger.warning(
+                                        f"[RESULT-CHECK] {s.id} fell back to live tick "
+                                        f"(M1 data unavailable) — result may be biased by ~10s"
+                                    )
                         except Exception as price_err:
                             logger.warning(f"[RESULT-CHECK] Error fetching expiry price for {s.id}: {price_err}")
                             current_price = await po_scanner.get_current_price(s.pair)
@@ -2358,8 +2429,11 @@ async def get_signals(pair: str = None, limit: int = 200, offset: int = 0, crede
                 else:
                     status = "EXPIRED"
 
-                # Ensure winrate is never 0 or null (minimum 70%)
-                sig_winrate = s.winrate if s.winrate and s.winrate > 0 else 70
+                # Use the engine-reported winrate directly. If missing/0/None,
+                # display as null so the user knows the engine did not score it
+                # (previously this defaulted to 70, which masked engine failures
+                # and made it impossible to know the real win rate).
+                sig_winrate = s.winrate if s.winrate and s.winrate > 0 else None
 
                 # Extract analysis fields from analysis_details JSON if available
                 details = s.analysis_details or {}

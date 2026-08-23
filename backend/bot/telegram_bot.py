@@ -966,7 +966,32 @@ Le trading sur options binaires et Forex comporte un niveau de risque très éle
         This bypasses the Premium+ ACL gate (because the user already has market
         access via the dashboard) and uses the force-mode analyzer so the strict
         filters don't reject the on-demand request.
+
+        FIX H7: Added a 60s per-user/per-pair cooldown to prevent spam-clicking
+        the pair button from exhausting CPU, polluting the DB, and bypassing
+        the daily signal count cap. Without this, a single user could fire
+        100+ signal requests per second.
         """
+        # FIX H7: Per-user + per-pair 60-second cooldown
+        if not hasattr(self, '_on_demand_cooldown'):
+            self._on_demand_cooldown = {}  # (user_id, pair) -> last_request_ts
+        import time as _time
+        cooldown_key = (user_id, pair)
+        now_ts = _time.time()
+        last_ts = self._on_demand_cooldown.get(cooldown_key, 0)
+        remaining = 60 - (now_ts - last_ts)
+        if remaining > 0:
+            return (
+                f"⏳ <b>Cooldown actif pour {pair}.</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━━\n"
+                f"Veuillez patienter <b>{int(remaining)}s</b> avant de demander "
+                f"un nouveau signal sur cette paire.\n\n"
+                f"<i>Cela évite la surcharge du moteur et garantit la fraîcheur des signaux.</i>"
+            )
+        # Record this request time BEFORE running the analysis so a slow
+        # analysis doesn't allow a parallel request to slip through.
+        self._on_demand_cooldown[cooldown_key] = now_ts
+
         if not self.scanner or not self.scanner.is_connected:
             return "🔴 Le système est actuellement DÉCONNECTÉ du marché. Impossible de générer un signal."
 
@@ -1016,9 +1041,10 @@ Le trading sur options binaires et Forex comporte un niveau de risque très éle
                         f"🟢 Direction : <b>{signal['direction']}</b>\n"
                         f"⌛ Expiration : <b>{signal['expiration']}m</b>\n"
                         f"💰 Payout : <b>{payout_display}</b>\n"
-                        f"🎯 Score : <b>{signal['score']}/10</b> | Winrate : <b>{signal['winrate']}%</b>\n"
+                        f"🎯 Score : <b>{signal['score']}/{signal.get('max_score', 4)}</b> | Winrate : <b>{signal['winrate'] if signal['winrate'] else '—'}%</b>\n"
                         f"📈 Prix d'entrée : <code>{signal['entry_price']}</code>\n"
-                        f"🏗️ Structure : <i>{signal.get('smc_structure', '—')}</i>\n\n"
+                        f"🏗️ Structure : <i>{signal.get('smc_structure', '—')}</i>\n"
+                        f"⚙️ Engine : <i>{signal.get('engine_source', '—')}</i>\n\n"
                         f"<i>Données 100% live — vérifiables sur Pocket Option.</i>\n"
                         f"⏰ Valable jusqu'à l'expiration indiquée. Agissez vite."
                     )
@@ -1358,9 +1384,15 @@ Le trading sur options binaires et Forex comporte un niveau de risque très éle
                                     chat_id = str(message['chat']['id'])
                                     text = message['text']
                                     logger.info(f"[TELEGRAM] Commande {text} de {chat_id}")
-                                    
-                                    self.subscribed_chats.add(chat_id)
-                                    self._save_state()
+
+                                    # FIX H8: Auto-subscription to broadcast push removed.
+                                    # Previously ANY chat that sent ANY message was added
+                                    # to subscribed_chats — giving free access to all
+                                    # background signal pushes without authentication.
+                                    # Now subscription is ONLY granted by /start (which
+                                    # is where the proper onboarding + auth happens).
+                                    # The chat_id will be added to subscribed_chats
+                                    # inside cmd_start when the user sends /start.
                                     reply = await self.handle_command(chat_id, text)
                                     if reply:
                                         if isinstance(reply, dict):

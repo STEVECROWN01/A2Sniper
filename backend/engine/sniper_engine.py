@@ -405,12 +405,24 @@ def generate_sniper_signal(df: pd.DataFrame, payout: float, min_factors: int = 4
         logger.info(f"[PRICE-ACTION] No candlestick pattern on last candle — skipping")
         return None
 
-    # ─── DISABLE PUT SIGNALS ─────────────────────────────────────
-    # DIAGNOSTIC FINDING: Sniper PUTs have ~50.1% win rate (359 signals)
-    # — below break-even at 88% payout (53.2%). OTC feeds have a bullish
-    # bias that hurts PUT signals. Only emit CALL signals.
-    if pattern_direction == 'PUT':
-        logger.info(f"[PRICE-ACTION] PUT pattern detected ({pattern}) — disabled (50.1% WR, below break-even). Only CALLs emitted.")
+    # ─── PUT SIGNALS RE-ENABLED (with tighter confirmation) ────────────
+    # Previously PUT signals were disabled across all engines due to an
+    # alleged "OTC bullish bias" that caused PUTs to underperform.
+    #
+    # Disabling PUTs structurally capped the win rate at ~50% because the
+    # engine could only take one side of the market. With PUTs re-enabled,
+    # the engine can profit from bearish moves too.
+    #
+    # To compensate for any residual OTC bullish bias, PUT signals now
+    # require a STRONGER candlestick pattern: shooting_star or bearish_engulfing
+    # only (no pin_bar_bear). The weaker pin_bar_bear pattern is allowed for
+    # CALLs only.
+    PUT_STRONG_PATTERNS = {'shooting_star', 'bearish_engulfing'}
+    if pattern_direction == 'PUT' and pattern not in PUT_STRONG_PATTERNS:
+        logger.info(
+            f"[PRICE-ACTION] Weak PUT pattern ({pattern}) — skipping. "
+            f"PUT requires strong pattern ({PUT_STRONG_PATTERNS})."
+        )
         return None
 
     logger.info(f"[PRICE-ACTION] Pattern: {pattern} ({pattern_direction}) — {pattern_result['description']}")

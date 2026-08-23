@@ -206,7 +206,7 @@ Timestamp: ${signal.timestamp.toLocaleString('en-US')}
         <div className="grid grid-cols-2 gap-3 mb-4 font-bold">
           <div className="bg-[#050507] p-2.5 rounded-xl border border-white/5">
             <p className="text-[8px] text-gray-500 uppercase tracking-wider mb-0.5">Winrate</p>
-            <p className="text-sm font-black text-gray-200">{signal.winrate}%</p>
+            <p className="text-sm font-black text-gray-200">{signal.winrate ? `${signal.winrate}%` : '—'}</p>
           </div>
           <div className="bg-[#050507] p-2.5 rounded-xl border border-white/5">
             <p className="text-[8px] text-gray-500 uppercase tracking-wider mb-0.5">Payout</p>
@@ -328,7 +328,7 @@ Timestamp: ${signal.timestamp.toLocaleString('en-US')}
                 <div className="grid grid-cols-2 gap-4">
                   <div className="p-3 bg-[#050507] rounded-xl border border-white/5">
                     <p className="text-[9px] text-gray-500 font-bold uppercase tracking-wider mb-1">Winrate</p>
-                    <p className="text-md font-black text-gray-200">{signal.winrate}%</p>
+                    <p className="text-md font-black text-gray-200">{signal.winrate ? `${signal.winrate}%` : '—'}</p>
                   </div>
                   <div className="p-3 bg-[#050507] rounded-xl border border-white/5">
                     <p className="text-[9px] text-gray-500 font-bold uppercase tracking-wider mb-1">Payout</p>

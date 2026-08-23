@@ -773,11 +773,15 @@ Zero Simulation. 100% Real-Market.`;
                       </div>
 
                       <div className="grid grid-cols-2 gap-3 mb-4">
-                        {/* WINRATE — just "WINRATE", real value from market analysis */}
+                        {/* WINRATE — real value from market analysis.
+                            FIX FE-C1: Removed the hardcoded '70%' fallback for missing/zero winrate.
+                            Previously any signal with no winrate was shown as "70%", masking
+                            engine failures. Now we show "—" so the user knows the engine
+                            did not produce a confident score. */}
                         <div className="bg-white/5 p-2.5 rounded-xl border border-white/10 text-center backdrop-blur-sm">
                           <p className="text-[9px] text-gray-400 font-black uppercase tracking-wider mb-1">Winrate</p>
                           <p className={`text-lg font-black ${message.pair_data.direction === 'CALL' ? 'text-green-400' : 'text-red-400'}`}>
-                            {Number(message.pair_data.winrate) > 0 ? `${message.pair_data.winrate}%` : '70%'}
+                            {Number(message.pair_data.winrate) > 0 ? `${message.pair_data.winrate}%` : '—'}
                           </p>
                         </div>
                         {/* EXPIRATION / EXPIRED — real-time countdown, then elapsed time after expiry */}

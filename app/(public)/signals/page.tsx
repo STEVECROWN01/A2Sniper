@@ -563,19 +563,22 @@ export default function SignalsPage() {
                     <option value="PUT">PUT</option>
                   </select>
 
-                  {/* Winrate Filter */}
+                  {/* Winrate Filter
+                      FIX H4: Removed the 75/80/85/90/95%+ options because the
+                      engine's documented maximum winrate is 68% (ACE) / 78%
+                      (Sniper with full confluence) / 88% (Momentum 7/7).
+                      Selecting >70% would always return 0 results and confuse
+                      the user into thinking "no signals available" when in
+                      reality the filter was unreachable. */}
                   <select
                     value={minWinrate}
                     onChange={(e) => setMinWinrate(Number(e.target.value))}
                     className="w-full px-4 py-2.5 bg-[#050507] border border-white/5 rounded-xl focus:outline-none focus:border-[#D4AF37] text-xs font-bold text-white"
                   >
                     <option value="0">All Winrates</option>
+                    <option value="60">60%+</option>
+                    <option value="65">65%+</option>
                     <option value="70">70%+</option>
-                    <option value="75">75%+</option>
-                    <option value="80">80%+</option>
-                    <option value="85">85%+</option>
-                    <option value="90">90%+</option>
-                    <option value="95">95%+</option>
                   </select>
 
                   {/* Payout Filter */}

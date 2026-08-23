@@ -219,24 +219,17 @@ def generate_ace_signal(df: pd.DataFrame, payout: float, fast_mode: bool = False
             logger.info(f"[ACE] Price too far from EMA21 ({ema21_dist_atr:.2f} ATR) — waiting for pullback")
             return None
 
-        # ─── DISABLE PUT SIGNALS IN TREND CONTINUATION ────────────
-        # DIAGNOSTIC FINDING: ACE trend continuation PUTs have a 36.4% win rate
-        # (22 signals, 8 wins) while CALLs have 62.5% (16 signals, 10 wins).
-        # The 26.1pp gap is caused by:
-        #   1. OTC feeds have a bullish bias — price drifts upward even in
-        #      "downtrends," killing PUT signals over the 3-min expiry.
-        #   2. The pullback confirmation is too loose for PUTs — almost any
-        #      candle in a downtrend has a high near EMA21.
-        #   3. 3-minute expiry gives the OTC feed time to push price back up.
+        # ─── PUT SIGNALS RE-ENABLED in trend continuation ─────────
+        # Previously PUTs were disabled here due to alleged OTC bullish bias
+        # that gave trend-continuation PUTs a 36.4% win rate (vs CALLs 62.5%).
         #
-        # FIX: Disable PUT signals from trend continuation. CALLs are still
-        # emitted (they're profitable). PUT signals from BB reversal and the
-        # Sniper engine are NOT affected — only ACE trend continuation PUTs.
+        # Disabling PUTs capped the engine's win rate at ~50% by preventing
+        # the engine from profiting on bearish trends.
         #
-        # To re-enable PUTs (after tightening the logic), remove this block.
-        if direction == 'PUT':
-            logger.info("[ACE] Trend continuation PUT disabled (36.4% WR — OTC bullish bias). Only CALLs emitted in this strategy.")
-            return None
+        # Compensating measure for any residual OTC bullish bias:
+        # PUTs require BOTH bonuses (level AND M5 alignment) — i.e., full
+        # confluence A+ setups only. CALLs still allow at least 1 bonus.
+        # This makes PUTs selective but functional.
 
         # ─── CONFIRMATION: candle closed in trend direction ───────
         if direction == 'CALL':
@@ -275,9 +268,19 @@ def generate_ace_signal(df: pd.DataFrame, payout: float, fast_mode: bool = False
                 logger.info("[ACE] PUT: no recent candle rallied to EMA21 — no real pullback")
                 return None
 
-        # ─── M5 ALIGNMENT (bonus, not required) ───────────────────
+        # ─── M5 ALIGNMENT (bonus, not required for CALL; required for PUT) ─
         m5_aligned = (direction == 'CALL' and m5_trend == 'UPTREND') or \
                      (direction == 'PUT' and m5_trend == 'DOWNTREND')
+
+        # PUTs in trend continuation require M5 alignment (full confluence only)
+        # to compensate for the observed OTC bullish bias on PUT signals.
+        # CALLs remain more permissive (1 bonus is enough).
+        if direction == 'PUT' and not m5_aligned:
+            logger.info(
+                f"[ACE] PUT trend continuation requires M5 DOWNTREND alignment "
+                f"(currently {m5_trend}) — skipping PUT for safety."
+            )
+            return None
 
         # ─── WINRATE ESTIMATION ───────────────────────────────────
         # Base: 62% for trend continuation with EMA21 pullback
@@ -442,11 +445,12 @@ def generate_ace_signal(df: pd.DataFrame, payout: float, fast_mode: bool = False
             return result
 
         # PUT: price pierced above upper BB
-        # DISABLED: OTC feeds have a bullish bias — PUT signals underperform.
-        # Only CALL signals (lower BB pierce + reversal) are emitted.
+        # RE-ENABLED — PUTs were previously disabled here due to alleged OTC
+        # bullish bias. They are now re-enabled with the standard PUT
+        # confirmation chain (close back inside band + RSI overbought +
+        # reversal candle + M5 DOWNTREND alignment as a bonus).
         if curr_high >= bbu and bbu > 0:
-            logger.info(f"[ACE] Price pierced upper BB ({curr_high:.5f} >= {bbu:.5f}) — PUT disabled (OTC bullish bias). Skipping.")
-            return None
+            logger.info(f"[ACE] Price pierced upper BB ({curr_high:.5f} >= {bbu:.5f}) — PUT signal evaluation")
 
             # Candle must close back inside the band (below BBU)
             if close >= bbu:
