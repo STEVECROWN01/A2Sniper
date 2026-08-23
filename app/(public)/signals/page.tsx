@@ -221,16 +221,18 @@ export default function SignalsPage() {
   };
 
   const handleReset = () => {
-    // Reset all stats to zero for a fresh trading session.
-    const store = useAppStore.getState();
-    store.setSignals([]);
+    // Set resetTimestamp — all signals older than NOW will be filtered out
+    // by fetchSignals on every subsequent poll. This persists across the 5s
+    // polling cycle — only NEW signals emitted after this moment will appear.
+    const now = Date.now();
     useAppStore.setState({
+      resetTimestamp: now,
+      signals: [],
       totalSignals: 0,
       totalActive: 0,
       totalWon: 0,
       totalLost: 0,
     });
-    // Also clear client-side expired signal tracking
     setExpiredSignalIds(new Set());
     toast.success('Stats reset to zero. Fresh start!');
   };

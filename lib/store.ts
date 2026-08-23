@@ -69,6 +69,7 @@ interface AppState {
   totalActive: number;
   totalWon: number;
   totalLost: number;
+  resetTimestamp: number | null; // When user clicks reset, signals older than this are hidden
   userStats: UserStats;
   selectedPairs: string[];
   isAuthenticated: boolean;
@@ -139,6 +140,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   totalActive: 0,
   totalWon: 0,
   totalLost: 0,
+  resetTimestamp: null,
   userStats: mockUserStats,
   selectedPairs: ['EUR/USD OTC', 'GBP/USD OTC', 'USD/JPY OTC'],
   isAuthenticated: false,
@@ -291,7 +293,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         }
 
         const data = await res.json();
-        const parsedSignals = (data.signals || []).map((s: Record<string, unknown>) => {
+        const allParsedSignals = (data.signals || []).map((s: Record<string, unknown>) => {
           let tsStr = s.timestamp as string | undefined;
           if (tsStr && !tsStr.endsWith('Z') && !tsStr.includes('+')) {
             tsStr = tsStr + 'Z';
@@ -310,8 +312,20 @@ export const useAppStore = create<AppState>((set, get) => ({
           } as Signal;
         });
 
+        // Filter: only show signals newer than the reset timestamp.
+        // This makes the reset button persistent across 5s polling cycles.
+        const resetTs = get().resetTimestamp;
+        const parsedSignals = resetTs
+          ? allParsedSignals.filter((s: Signal) => s.timestamp.getTime() > resetTs)
+          : allParsedSignals;
+
+        // Recalculate counts from the filtered list (ignore backend totals
+        // when reset is active — they include pre-reset signals)
+        const displayActive = parsedSignals.filter((s: Signal) => s.status === 'ACTIVE').length;
+        const displayWon = parsedSignals.filter((s: Signal) => s.status === 'WON').length;
+        const displayLost = parsedSignals.filter((s: Signal) => s.status === 'LOST').length;
+
         // ─── NEW SIGNAL DETECTION + SOUND NOTIFICATION ──────────────
-        // Detect if there's a new signal (one whose ID isn't in the current list).
         // If so, play the user's selected notification sound.
         // This fires when the page is open and the backend emits a new signal.
         // (When the page is closed, the service worker handles it via Web Push.)
@@ -337,12 +351,11 @@ export const useAppStore = create<AppState>((set, get) => ({
 
         set({
           signals: parsedSignals,
-          // Capture aggregate counts from backend — these are SQL COUNT(*) results,
-          // accurate regardless of the `?limit=500` pagination above.
-          totalSignals: typeof data.total === 'number' ? data.total : parsedSignals.length,
-          totalActive: typeof data.active_count === 'number' ? data.active_count : 0,
-          totalWon: typeof data.won_count === 'number' ? data.won_count : 0,
-          totalLost: typeof data.lost_count === 'number' ? data.lost_count : 0,
+          // If reset is active, use filtered counts. Otherwise use backend totals.
+          totalSignals: resetTs ? parsedSignals.length : (typeof data.total === 'number' ? data.total : parsedSignals.length),
+          totalActive: resetTs ? displayActive : (typeof data.active_count === 'number' ? data.active_count : 0),
+          totalWon: resetTs ? displayWon : (typeof data.won_count === 'number' ? data.won_count : 0),
+          totalLost: resetTs ? displayLost : (typeof data.lost_count === 'number' ? data.lost_count : 0),
           liveStatus: data.live_status || 'DISCONNECTED'
         });
       }
