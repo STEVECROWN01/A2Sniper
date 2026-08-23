@@ -259,7 +259,7 @@ export default function SignalsPage() {
                 </p>
               </div>
               
-              <div className="flex items-center space-x-3 flex-wrap">
+              <div className="flex items-center space-x-3 flex-nowrap">
                 <div 
                   title={liveStatus === 'LIVE' ? "ANALYSIS BASED ON REAL DATA" : "SYSTEM DISCONNECTED FROM MARKET"}
                   className="flex items-center px-3 py-2 bg-[#0a0a0c] rounded-xl border border-white/5 shadow-sm cursor-help transition-all"
@@ -269,7 +269,7 @@ export default function SignalsPage() {
                     <span className={`relative inline-flex rounded-full h-3 w-3 ${liveStatus === 'LIVE' ? 'bg-green-500' : 'bg-red-500'}`}></span>
                   </span>
                   <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">
-                    {liveStatus === 'LIVE' ? 'MARKET LIVE' : 'DISCONNECTED'}
+                    {liveStatus === 'LIVE' ? 'LIVE' : 'DISCONNECTED'}
                   </span>
                 </div>
 
