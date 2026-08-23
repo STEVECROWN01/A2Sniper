@@ -20,6 +20,7 @@ export default function SignalsPage() {
   const [ssid, setSsidState] = useState('');
   const [isConnecting, setIsConnecting] = useState(false);
   const [connectError, setConnectError] = useState('');
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
 
   // ─── Persist filters in localStorage so they survive page navigation ───
   // When the user sets filters and leaves the page, then comes back, the
@@ -283,8 +284,8 @@ export default function SignalsPage() {
                 )}
 
                 <button
-                  onClick={handleReset}
-                  className="p-2 bg-[#0a0a0c] text-red-400 border border-white/5 rounded-xl hover:bg-red-500/10 hover:border-red-500/30 transition-colors"
+                  onClick={() => setShowResetConfirm(true)}
+                  className="p-2 bg-[#0a0a0c] text-red-400 border border-white/5 rounded-xl hover:bg-red-500/10 hover:border-red-500/30 transition-colors flex-shrink-0"
                   title="Reset stats to zero"
                 >
                   <RotateCcw className="w-5 h-5" />
@@ -605,6 +606,48 @@ export default function SignalsPage() {
               )}
             </>
           )}
+
+      {/* Reset Confirmation Modal */}
+      {showResetConfirm && (
+        <div
+          className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4"
+          onClick={() => setShowResetConfirm(false)}
+        >
+          <motion.div
+            initial={{ scale: 0.9, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            className="bg-[#0a0a0c] border border-red-500/20 rounded-2xl p-6 max-w-sm w-full shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 rounded-full bg-red-500/10 flex items-center justify-center">
+                <RotateCcw className="w-5 h-5 text-red-400" />
+              </div>
+              <h2 className="text-lg font-black text-white uppercase tracking-tight">Reset Stats?</h2>
+            </div>
+            <p className="text-sm text-gray-400 mb-6">
+              This will clear all signals, wins, losses, and win rate to zero. Only new signals emitted after this point will appear. This action cannot be undone.
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowResetConfirm(false)}
+                className="flex-1 py-3 bg-white/5 text-gray-300 rounded-xl text-xs font-black uppercase tracking-wider hover:bg-white/10 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  handleReset();
+                  setShowResetConfirm(false);
+                }}
+                className="flex-1 py-3 bg-red-600 text-white rounded-xl text-xs font-black uppercase tracking-wider hover:bg-red-700 transition-colors"
+              >
+                Reset
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      )}
     </div>
   );
 }
