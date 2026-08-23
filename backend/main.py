@@ -2330,7 +2330,13 @@ async def request_live_signal(request: Request, credentials: HTTPAuthorizationCr
 
 
 @app.get("/api/signals")
-async def get_signals(pair: str = None, limit: int = 200, offset: int = 0, credentials: HTTPAuthorizationCredentials = Security(security)):
+async def get_signals(
+    pair: str = None,
+    limit: int = 200,
+    offset: int = 0,
+    since: float = None,
+    credentials: HTTPAuthorizationCredentials = Security(security),
+):
     # Validate token type and check revocation
     payload = decode_access_token(credentials.credentials)
     _jti = payload.get("jti")
@@ -2340,6 +2346,20 @@ async def get_signals(pair: str = None, limit: int = 200, offset: int = 0, crede
     # Validate and clamp — allow up to 2000 for full history browsing
     limit = max(1, min(limit, 2000))
     offset = max(0, offset)
+
+    # `since` is a unix timestamp (seconds) used to filter signals by timestamp.
+    # When the user clicks "Reset" on the signals page, the frontend persists
+    # the reset timestamp in localStorage and sends it here on every poll so
+    # the SQL COUNT queries (total/won/lost/active) reflect ONLY signals
+    # emitted AFTER the reset. This is what makes the stat cards accurate
+    # past the 100-row API limit — the backend counts ALL matching rows
+    # in the database, not just the slice returned for the cards list.
+    since_dt = None
+    if since is not None and since > 0:
+        try:
+            since_dt = datetime.fromtimestamp(float(since), tz=timezone.utc)
+        except (ValueError, OSError, OverflowError):
+            since_dt = None  # Invalid timestamp — ignore the filter
 
     # Build the output list — try DB first, fall back to in-memory deque
     output = []
@@ -2362,6 +2382,13 @@ async def get_signals(pair: str = None, limit: int = 200, offset: int = 0, crede
             )
             if pair:
                 count_query = count_query.where(SignalRecord.pair == pair)
+            # Apply `since` filter so the COUNT reflects only signals after
+            # the user's last reset (the user clicked "Reset" — they want
+            # stats only for signals emitted AFTER that point). Without this,
+            # the COUNT would include pre-reset signals and ignore the user's
+            # intent to start counting fresh.
+            if since_dt is not None:
+                count_query = count_query.where(SignalRecord.timestamp >= since_dt)
             count_result = await session.execute(count_query)
             count_row = count_result.one()
             total_in_db = count_row.total or 0
@@ -2377,6 +2404,8 @@ async def get_signals(pair: str = None, limit: int = 200, offset: int = 0, crede
             )
             if pair:
                 active_query = active_query.where(SignalRecord.pair == pair)
+            # Active count is always relative to "now" — never filtered by `since`
+            # because an active signal is by definition recent (within ~3 min).
             active_result = await session.execute(active_query)
             active_count = active_result.scalar() or 0
 
@@ -2384,6 +2413,10 @@ async def get_signals(pair: str = None, limit: int = 200, offset: int = 0, crede
             query = select(SignalRecord).order_by(SignalRecord.timestamp.desc()).offset(offset).limit(limit)
             if pair:
                 query = query.where(SignalRecord.pair == pair)
+            # Apply the same `since` filter to the LIST query so the cards
+            # shown on the signals page also respect the reset.
+            if since_dt is not None:
+                query = query.where(SignalRecord.timestamp >= since_dt)
             result = await session.execute(query)
             signals = result.scalars().all()
 

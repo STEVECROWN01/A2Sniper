@@ -275,12 +275,20 @@ export const useAppStore = create<AppState>((set, get) => ({
     try {
       const url = get().getApiUrl();
       const startTime = Date.now();
-      // Request the 100 most-recent signals — enough for the signals page grid
-      // + the current session's 10 trade-dot visualization. Aggregate counts
-      // (total/won/lost/active) come separately from the backend, so stat
-      // cards stay accurate regardless of this limit. Was 500 — too heavy
-      // for 1-5s polling, caused event-loop contention.
-      const res = await fetch(`${url}/api/signals?limit=100`, { credentials: 'include' });
+      // Request the 100 most-recent signals for the cards grid.
+      //
+      // STAT-CARD ACCURACY: total / won / lost counts come from the backend's
+      // SQL COUNT queries (counting ALL matching rows in the database, not
+      // just this 100-slice). Previously, when the user had clicked "Reset",
+      // the frontend fell back to using `parsedSignals.length` for the totals
+      // — which capped the stat cards at 100 (the API limit). Now we send
+      // `since=<resetTimestamp>` to the backend so the SQL COUNT queries
+      // filter by timestamp server-side, and we ALWAYS trust the backend
+      // totals. This means the stat cards show the real number of signals
+      // emitted since the user's last reset, even if that number is 500+.
+      const resetTs = get().resetTimestamp;
+      const sinceParam = resetTs && resetTs > 0 ? `&since=${Math.floor(resetTs / 1000)}` : '';
+      const res = await fetch(`${url}/api/signals?limit=100${sinceParam}`, { credentials: 'include' });
       if (res.ok) {
         // Calculate clock offset from HTTP Date header
         const serverDateStr = res.headers.get('Date');
@@ -351,11 +359,17 @@ export const useAppStore = create<AppState>((set, get) => ({
 
         set({
           signals: parsedSignals,
-          // If reset is active, use filtered counts. Otherwise use backend totals.
-          totalSignals: resetTs ? parsedSignals.length : (typeof data.total === 'number' ? data.total : parsedSignals.length),
-          totalActive: resetTs ? displayActive : (typeof data.active_count === 'number' ? data.active_count : 0),
-          totalWon: resetTs ? displayWon : (typeof data.won_count === 'number' ? data.won_count : 0),
-          totalLost: resetTs ? displayLost : (typeof data.lost_count === 'number' ? data.lost_count : 0),
+          // ALWAYS trust backend totals. The backend now filters its SQL
+          // COUNT queries by `since=<resetTs>` (when provided), so the
+          // totals reflect the user's reset intent server-side — counting
+          // ALL matching rows in the database, not just the 100-slice
+          // returned for the cards grid. Previously when `resetTs` was
+          // active, the code fell back to `parsedSignals.length` which
+          // capped the stat cards at 100 (the API limit).
+          totalSignals: typeof data.total === 'number' ? data.total : parsedSignals.length,
+          totalActive: typeof data.active_count === 'number' ? data.active_count : displayActive,
+          totalWon: typeof data.won_count === 'number' ? data.won_count : displayWon,
+          totalLost: typeof data.lost_count === 'number' ? data.lost_count : displayLost,
           liveStatus: data.live_status || 'DISCONNECTED'
         });
       }
