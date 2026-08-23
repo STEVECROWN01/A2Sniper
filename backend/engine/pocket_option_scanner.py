@@ -1968,10 +1968,16 @@ class PocketOptionScanner:
                 df["volume"] = np.nan
 
             cache_key = f"{asset_norm}_{tf_str}"
+            # M-2 FIX: drop the in-progress (current) candle from WS response.
+            # PO's loadHistoryPeriod typically includes the current minute whose
+            # close = last tick price. This undermines C1 (engine should analyze
+            # completed candles only).
+            now_ts_check = datetime.now(timezone.utc).timestamp()
+            if not df.empty:
+                last_close_ts = df.index[-1].timestamp() + tf_sec
+                if last_close_ts > now_ts_check:
+                    df = df.iloc[:-1]
             # Mark this cache entry as coming from an authoritative source
-            # (WS loadHistoryPeriod). The staleness guard in get_candles()
-            # trusts ws_or_rest sources for M5_CACHE_TTL_SECONDS before
-            # re-resampling from M1 (which is continuously updated by ticks).
             df.attrs['source'] = 'ws_or_rest'
             df.attrs['last_updated'] = datetime.now(timezone.utc).timestamp()
             self._candles_cache[cache_key] = df

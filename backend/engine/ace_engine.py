@@ -82,7 +82,14 @@ def _get_m15_trend(df: pd.DataFrame) -> str:
         df_m15['EMA_21'] = df_m15['close'].ewm(span=21, adjust=False).mean()
         df_m15['EMA_9'] = df_m15['close'].ewm(span=9, adjust=False).mean()
 
-        last_m15 = df_m15.iloc[-1]
+        # H-2 FIX: use the last COMPLETED M15 candle (iloc[-2]), not the
+        # in-progress one (iloc[-1]). The resample's last row is the current
+        # 15-min window which may only have 1-2 of the 3 M5 candles — using
+        # it makes the EMA9/EMA21 flip-flop within the same 15-min window.
+        if len(df_m15) >= 2:
+            last_m15 = df_m15.iloc[-2]
+        else:
+            return 'RANGE'
         last_ema9 = float(last_m15['EMA_9'])
         last_ema21 = float(last_m15['EMA_21'])
         last_close = float(last_m15['close'])

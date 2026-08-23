@@ -1136,14 +1136,20 @@ async def _emit_candidate(candidate: dict, force: bool = False) -> dict:
         pass
     if live_price and live_price > 0:
         candidate_price = candidate['entry_price']
-        price_move = abs(live_price - candidate_price)
-        # Get ATR from the candidate's analysis details if available
+        direction = candidate['direction']
+        # M-5 FIX: direction-aware re-validation. Was using abs(price_move) which
+        # rejected favorable moves (price went UP for a CALL = good, but was rejected).
+        # Now: only reject if price moved AGAINST the signal direction.
+        if direction == 'CALL':
+            adverse_move = candidate_price - live_price  # positive = price went down (bad for CALL)
+        else:
+            adverse_move = live_price - candidate_price  # positive = price went up (bad for PUT)
         candidate_atr = candidate.get('analysis_details', {}).get('atr', 0) or 0
-        if candidate_atr and candidate_atr > 0:
-            move_atr = price_move / candidate_atr
-            if move_atr > 0.5:
+        if candidate_atr and candidate_atr > 0 and adverse_move > 0:
+            adverse_atr = adverse_move / candidate_atr
+            if adverse_atr > 0.5:
                 logger.info(
-                    f"[EMIT-SKIP] {pair} — price moved {move_atr:.2f} ATR since candidate creation "
+                    f"[EMIT-SKIP] {pair} — price moved {adverse_atr:.2f} ATR AGAINST {direction} "
                     f"(candidate={candidate_price:.5f}, live={live_price:.5f}, ATR={candidate_atr:.5f}). "
                     f"Signal no longer valid — skipping emission."
                 )
@@ -1465,9 +1471,23 @@ async def trading_loop():
                             failed = 0
                             for symbol in forex_symbols:
                                 try:
-                                    df = await po_scanner._fetch_candles_http(symbol, 60, 100)
+                                    # C-1 FIX: fetch 500 candles (not 100) and MERGE with
+                                    # existing tick-aggregated cache instead of overwriting.
+                                    # Was: _fetch_candles_http(symbol, 60, 100) → 100 M1 →
+                                    # 20 M5 after resample → engine needs 35 → starved.
+                                    df = await po_scanner._fetch_candles_http(symbol, 60, 500)
                                     if df is not None and not df.empty:
-                                        po_scanner._candles_cache[f"{symbol}_1m"] = df
+                                        cache_key = f"{symbol}_1m"
+                                        existing = po_scanner._candles_cache.get(cache_key)
+                                        if existing is not None and not existing.empty:
+                                            # C-2 FIX: concat REST first, tick-aggregated last,
+                                            # keep='last' → tick-aggregated wins for dupes
+                                            merged = pd.concat([df, existing])
+                                            merged = merged[~merged.index.duplicated(keep='last')]
+                                            merged = merged.sort_index().tail(500)
+                                            po_scanner._candles_cache[cache_key] = merged
+                                        else:
+                                            po_scanner._candles_cache[cache_key] = df
                                         refreshed += 1
                                     else:
                                         failed += 1
@@ -1528,7 +1548,9 @@ async def trading_loop():
             # a flood. If multiple pairs qualified, only the highest-scoring
             # one is emitted. The rest are discarded; next 5s scan starts fresh.
             if candidates:
-                best = max(candidates, key=lambda c: c.get('score', 0))
+                # M-1 FIX: select by winrate (primary), score (tiebreaker).
+                # Was: max by score only — ACE score 4 (WR 65) beat Sniper score 4 (WR 78).
+                best = max(candidates, key=lambda c: (c.get('winrate', 0), c.get('score', 0)))
                 if can_emit_background_signal():
                     logger.info(
                         f"[GATE-OPEN] Emitting best candidate: {best['pair']} "
@@ -1602,57 +1624,31 @@ async def resolution_loop():
                         # For PUT:  win if exit_price < entry_price
                         # Tie (exit == entry): no result (skip, will retry next loop)
                         try:
-                            # C2 FIX: Always use M1 candles for exit price resolution.
-                            # Previously, for 5-min expiry signals, the system fetched M5
-                            # candles and picked the last one that CLOSED BEFORE expiry.
-                            # For a signal emitted at 12:03:30 with 5-min expiry (expires
-                            # at 12:08:30), this selected the M5 closing at 12:05:00 —
-                            # 3.5 minutes BEFORE actual expiry. PO pays on the price at
-                            # 12:08:30, not 12:05:00.
-                            #
-                            # FIX: Use M1 candles (60-second resolution). Find the M1
-                            # candle that CONTAINS the expiry timestamp (candle_open <=
-                            # expiry < candle_open + 60). Its close is the price at most
-                            # 60s from actual expiry — much better than 3.5 min off.
-                            # Also try the live tick buffer for the most precise price.
-                            df_m1_expiry = await po_scanner.get_candles(s.pair, timeframe="1m", count=10)
-                            if df_m1_expiry is not None and not df_m1_expiry.empty:
-                                expiry_ts = expiry_time.timestamp()
-                                df_m1_ts = df_m1_expiry.index.astype(np.int64) // 10**9
-                                # Find the M1 candle that CONTAINS expiry_ts:
-                                # candle_open <= expiry_ts < candle_open + 60
-                                # This candle's close is the price at candle_open + 60,
-                                # which is at most 60s after expiry.
-                                candle_open_ts = df_m1_ts.values
-                                candle_close_ts = candle_open_ts + 60
-                                # The candle containing expiry is the last one where
-                                # candle_open <= expiry_ts
-                                containing_candles = df_m1_expiry[candle_open_ts <= expiry_ts]
-                                if not containing_candles.empty:
-                                    # If the containing candle has already closed (close_ts <= now),
-                                    # use its close price. If it hasn't closed yet (we're within
-                                    # the same minute), use the latest tick or the last completed candle.
-                                    last_containing = containing_candles.iloc[-1]
-                                    last_containing_close_ts = candle_open_ts[containing_candles.index.get_loc(containing_candles.index[-1])] + 60
-                                    if last_containing_close_ts <= now.timestamp():
-                                        # Candle has closed — use its close
-                                        current_price = float(last_containing['close'])
+                            # H-1 FIX: Always try live tick FIRST (closest to actual expiry).
+                            # The previous logic used M1 candle close which could be ±30s off.
+                            # Live tick at resolution time (~10s after expiry) is the closest
+                            # available price to what PO actually pays out on.
+                            current_price = await po_scanner.get_current_price(s.pair)
+                            if not current_price or current_price <= 0:
+                                # Fall back to M1 candle close if no live tick available
+                                df_m1_expiry = await po_scanner.get_candles(s.pair, timeframe="1m", count=10)
+                                if df_m1_expiry is not None and not df_m1_expiry.empty:
+                                    expiry_ts = expiry_time.timestamp()
+                                    df_m1_ts = df_m1_expiry.index.astype(np.int64) // 10**9
+                                    candle_open_ts = df_m1_ts.values
+                                    # Find the M1 candle that CONTAINS expiry_ts:
+                                    # candle_open <= expiry_ts < candle_open + 60
+                                    actual_containing = df_m1_expiry[
+                                        (candle_open_ts <= expiry_ts) &
+                                        (candle_open_ts + 60 > expiry_ts)
+                                    ]
+                                    if not actual_containing.empty:
+                                        current_price = float(actual_containing.iloc[-1]['close'])
                                     else:
-                                        # Candle hasn't closed yet — try live tick first
-                                        live_exit = await po_scanner.get_current_price(s.pair)
-                                        if live_exit and live_exit > 0:
-                                            current_price = live_exit
-                                        else:
-                                            # Fall back to last completed M1 candle close
-                                            completed = df_m1_expiry[candle_close_ts <= expiry_ts + 30]
-                                            if not completed.empty:
-                                                current_price = float(completed.iloc[-1]['close'])
-                                            else:
-                                                current_price = await po_scanner.get_current_price(s.pair)
+                                        # Fall back to last candle close
+                                        current_price = float(df_m1_expiry.iloc[-1]['close'])
                                 else:
                                     current_price = await po_scanner.get_current_price(s.pair)
-                            else:
-                                current_price = await po_scanner.get_current_price(s.pair)
                         except Exception as price_err:
                             logger.warning(f"[RESULT-CHECK] Error fetching expiry price for {s.id}: {price_err}")
                             current_price = await po_scanner.get_current_price(s.pair)
@@ -1666,7 +1662,13 @@ async def resolution_loop():
                                 is_win = None  # Unknown direction
                             # Tie (equal price) is treated as no result
                             if current_price == s.entry_price:
-                                logger.info(f"Tie detected for {s.id}: entry={s.entry_price}, exit={current_price}")
+                                # M-6 FIX: max 3 retries for ties, then mark as no-result
+                                s.tie_count = (getattr(s, 'tie_count', 0) or 0) + 1
+                                if s.tie_count >= 3:
+                                    s.is_win = None
+                                    logger.info(f"Tie persisted for {s.id} after 3 attempts — marking no-result")
+                                else:
+                                    logger.info(f"Tie detected for {s.id} (attempt {s.tie_count}/3): entry={s.entry_price}, exit={current_price}")
                                 continue
                             s.is_win = is_win
 

@@ -265,15 +265,18 @@ def get_m5_trend(df_m1: pd.DataFrame) -> str:
         # Calculate EMA21 on M15
         df_m15['EMA_21'] = df_m15['close'].ewm(span=21, adjust=False).mean()
 
-        last_m15_close = float(df_m15.iloc[-1]['close'])
-        last_m15_ema = float(df_m15.iloc[-1]['EMA_21'])
+        # H-2 FIX: use last COMPLETED M15 (iloc[-2]), not in-progress (iloc[-1])
+        if len(df_m15) < 2:
+            return 'RANGE'
+        last_m15_close = float(df_m15.iloc[-2]['close'])
+        last_m15_ema = float(df_m15.iloc[-2]['EMA_21'])
 
         if np.isnan(last_m15_ema) or last_m15_ema <= 0:
             return 'RANGE'
 
         # Also check EMA9 vs EMA21 for trend direction
         df_m15['EMA_9'] = df_m15['close'].ewm(span=9, adjust=False).mean()
-        last_m15_ema9 = float(df_m15.iloc[-1]['EMA_9'])
+        last_m15_ema9 = float(df_m15.iloc[-2]['EMA_9'])
 
         if np.isnan(last_m15_ema9):
             return 'RANGE'
