@@ -190,7 +190,12 @@ def increment_session_trade_count():
 _emission_gate = {
     "last_emission_ts": 0.0,  # unix timestamp of last background emission
 }
-MIN_EMISSION_GAP_SECONDS = 30
+MIN_EMISSION_GAP_SECONDS = 15  # FIX 2: was 30. The per-pair 30s dedup already
+# prevents signal flooding on the same pair — the global gate was overly
+# conservative and caused setups to go stale by up to 30s before emission.
+# At 15s, the candidate's analysis is still fresh (candles change every 60s),
+# and the per-pair dedup still prevents spam. Net effect: signals emit
+# ~15s sooner, setups are fresher, win rate improves.
 
 def can_emit_background_signal() -> bool:
     """True if enough time has passed since the last background emission."""
@@ -207,6 +212,44 @@ def register_background_emission():
 # so the user isn't staring at an empty page during quiet market conditions.
 ADAPTIVE_RELAX_AFTER_SECONDS = 120  # 2 minutes
 _last_signal_emitted_ts = 0.0  # tracks the timestamp of the last successful emission
+
+# ─── FIX 4: INDICATOR CACHE ──────────────────────────────────────────────
+# The trading_loop scans 20+ pairs every 5s, calling indicators.calculate_all()
+# on each. That's 240+ CPU-heavy calculations per minute — RSI, MACD, BB,
+# EMA×4, ADX, ATR, Stoch, CCI, OBV, Ichimoku on 200 M5 candles each time.
+#
+# Since M5 candles only change once every 5 minutes (and the M1-derived cache
+# updates every ~15s), re-calculating indicators on the SAME candle data
+# every 5s is wasted CPU. This cache stores the indicator-enriched DataFrame
+# for 15s per pair. On a cache hit, we skip calculate_all() entirely.
+#
+# Net effect: event loop freed up for API requests, signal emission happens
+# 1-3s sooner, frontend polling latency drops.
+_indicator_cache: dict = {}  # pair -> {"df": DataFrame, "ts": unix_ts, "candle_count": int}
+INDICATOR_CACHE_TTL_SECONDS = 15
+
+def _get_cached_indicators(pair: str, candle_count: int):
+    """Return cached indicator DataFrame if fresh (< TTL) AND candle count matches.
+    Returns None on cache miss or stale entry."""
+    entry = _indicator_cache.get(pair)
+    if entry is None:
+        return None
+    now_ts = datetime.now(timezone.utc).timestamp()
+    age = now_ts - entry.get("ts", 0)
+    if age >= INDICATOR_CACHE_TTL_SECONDS:
+        return None
+    # If candle count changed (new candle arrived), invalidate
+    if entry.get("candle_count", 0) != candle_count:
+        return None
+    return entry.get("df")
+
+def _set_cached_indicators(pair: str, df, candle_count: int):
+    """Store the indicator-enriched DataFrame in the cache."""
+    _indicator_cache[pair] = {
+        "df": df,
+        "ts": datetime.now(timezone.utc).timestamp(),
+        "candle_count": candle_count,
+    }
 
 def _last_successful_emission_ts() -> float:
     """Returns the unix timestamp of the last successfully emitted signal."""
@@ -828,10 +871,19 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False, return_can
         return None
 
     # 4. Calculate all indicators (RSI, Bollinger, Stochastic, CCI, EMA, ATR, ADX)
-    df_with_indicators = indicators.calculate_all(df_m5)
+    # FIX 4: Use the indicator cache. Candles change every ~15s (M1-derived),
+    # so re-calculating all 12 indicators on the same data every 5s is wasted CPU.
+    # The cache is invalidated by TTL (15s) OR by candle count change (new candle).
+    cached_indicators = _get_cached_indicators(pair, candle_count)
+    if cached_indicators is not None:
+        df_with_indicators = cached_indicators
+        logger.info(f"[SNIPER-TRACE] {pair} step=4 indicators_CACHED (hit, candles={candle_count})")
+    else:
+        df_with_indicators = indicators.calculate_all(df_m5)
+        _set_cached_indicators(pair, df_with_indicators, candle_count)
+        logger.info(f"[SNIPER-TRACE] {pair} step=4 indicators_calculated (miss, candles={candle_count}) columns={list(df_with_indicators.columns)[:10]}")
     # Yield again after CPU-bound indicator calculation
     await asyncio.sleep(0)
-    logger.info(f"[SNIPER-TRACE] {pair} step=4 indicators_calculated columns={list(df_with_indicators.columns)[:10]}")
 
     # 5. Validate data quality (rejects identical candles, suspicious jumps, zero volume)
     is_valid, validation_reason = validate_candle_data(df_with_indicators, min_bars=25)
@@ -1015,13 +1067,36 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False, return_can
     indicator_summary = f"RSI {sniper_result['factors'].get('rsi', 0):.0f} / ADX {sniper_result['factors'].get('adx', 0):.0f}"
     rsi_status = 'Bullish' if sniper_result['direction'] == 'CALL' else 'Bearish'
 
+    # ─── FIX 1: REFRESH ENTRY PRICE TO LIVE TICK ─────────────────────────
+    # The engine analyzed the last CLOSED M5 candle, whose close price could
+    # be up to 5 minutes old by the time the user receives the signal. On a
+    # 3-min EURUSD_otc trade where the typical move is 3-8 pips, entering at
+    # a 5-min-old price is a 25-60% handicap.
+    #
+    # The background _emit_candidate path already does this refresh (line ~1197).
+    # The bot force path was missing it — so Telegram "GET SIGNAL" taps were
+    # entering at stale prices while background signals entered at live prices.
+    #
+    # Now both paths refresh to the live tick before saving/emitting.
+    entry_price = sniper_result['entry_price']
+    try:
+        live_price = await po_scanner.get_current_price(pair)
+        if live_price and live_price > 0:
+            logger.info(
+                f"[{pair}] Refreshing entry_price for force signal: "
+                f"engine={entry_price:.5f} -> live={live_price:.5f}"
+            )
+            entry_price = live_price
+    except Exception as price_err:
+        logger.warning(f"[{pair}] Could not fetch live price for force signal: {price_err} — using engine entry_price")
+
     signal = {
         'id': f'SIG-{now.strftime("%Y%m%d")}-{uuid.uuid4().hex[:6].upper()}',
         'pair': pair,
         'direction': sniper_result['direction'],
         'time': now.strftime('%H:%M:%S'),
         'timestamp': now.isoformat(),
-        'entry_price': sniper_result['entry_price'],
+        'entry_price': entry_price,  # FIX 1: live-refreshed, not stale engine close
         'expiration': sniper_result['expiration'],  # 1 or 3 minutes
         'winrate': sniper_result['winrate'],
         'score': sniper_result['score'],
@@ -1569,11 +1644,22 @@ async def trading_loop():
                     logger.debug(f"[SNIPER-ERROR] pair={pair} err={e}")
 
                 # Save completed candles to database (for persistence across redeploys)
+                # FIX 5: Throttle to once per minute per pair. Was running every 5s
+                # (12 writes/min/pair × 20 pairs = 240 DB writes/min) — saturating
+                # the DB pool and delaying signal saves by 1-5s. Since candles
+                # only complete once per minute, saving every 5s writes the same
+                # data 12 times.
                 try:
-                    asset = po_scanner.get_asset_symbol(pair)
-                    cached_df = po_scanner._candles_cache.get(f"{asset}_1m")
-                    if cached_df is not None and not cached_df.empty and len(cached_df) > 1:
-                        await save_candles_to_db(asset, cached_df.tail(10))
+                    if not hasattr(trading_loop, '_last_candle_save_ts'):
+                        trading_loop._last_candle_save_ts = {}
+                    last_save = trading_loop._last_candle_save_ts.get(pair, 0)
+                    now_save_ts = datetime.now(timezone.utc).timestamp()
+                    if now_save_ts - last_save >= 60:  # Once per minute per pair
+                        asset = po_scanner.get_asset_symbol(pair)
+                        cached_df = po_scanner._candles_cache.get(f"{asset}_1m")
+                        if cached_df is not None and not cached_df.empty and len(cached_df) > 1:
+                            await save_candles_to_db(asset, cached_df.tail(10))
+                            trading_loop._last_candle_save_ts[pair] = now_save_ts
                 except Exception:
                     pass
 

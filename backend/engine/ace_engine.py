@@ -76,7 +76,13 @@ def _get_m15_trend(df: pd.DataFrame) -> str:
             'close': 'last', 'volume': 'sum'
         }).dropna()
 
-        if len(df_m15) < 3:
+        if len(df_m15) < 21:
+            # FIX 3: was 3. EMA21 needs at least 21 data points to stabilize.
+            # With <21 candles, the EMA value is essentially random and
+            # produces false UPTREND/DOWNTREND signals that inflate the
+            # engine's confidence in weak setups. Returning RANGE here
+            # doesn't block the signal — it just doesn't add the M5 bonus,
+            # so the engine is more conservative when data is insufficient.
             return 'RANGE'
 
         df_m15['EMA_21'] = df_m15['close'].ewm(span=21, adjust=False).mean()

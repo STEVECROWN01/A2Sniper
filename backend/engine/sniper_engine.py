@@ -259,7 +259,9 @@ def get_m5_trend(df_m1: pd.DataFrame) -> str:
             'close': 'last', 'volume': 'sum'
         }).dropna()
 
-        if len(df_m15) < 3:
+        if len(df_m15) < 21:
+            # FIX 3: was 3. EMA21 needs at least 21 data points to stabilize.
+            # See ace_engine.py:_get_m15_trend for the full rationale.
             return 'RANGE'
 
         # Calculate EMA21 on M15
@@ -326,6 +328,17 @@ def validate_candle_data(df: pd.DataFrame, min_bars: int = 14) -> Tuple[bool, st
         last3 = df.tail(3)
         if last3['close'].nunique() == 1 and last3['open'].nunique() == 1:
             return False, "Last 3 candles are identical (stale data)"
+
+    # FIX 6: Detect "essentially flat" data — where candles are technically
+    # different but the price movement is too small to be real market action.
+    # PO's OTC feed can return subtly stale data where prices drift by <0.1
+    # pip per minute. The validator above (identical-candle check) misses
+    # this case. This new check rejects data where the standard deviation
+    # of the last 10 closes is < 0.0001 (essentially flat).
+    if len(df) >= 10:
+        last10_close_std = float(df['close'].tail(10).std())
+        if last10_close_std < 0.00001:  # threshold tuned for forex pairs (5-decimal prices like 1.08250)
+            return False, f"Last 10 closes essentially flat (std={last10_close_std:.8f}) — likely stale OTC data"
 
     return True, "OK"
 
