@@ -333,12 +333,20 @@ def validate_candle_data(df: pd.DataFrame, min_bars: int = 14) -> Tuple[bool, st
     # different but the price movement is too small to be real market action.
     # PO's OTC feed can return subtly stale data where prices drift by <0.1
     # pip per minute. The validator above (identical-candle check) misses
-    # this case. This new check rejects data where the standard deviation
-    # of the last 10 closes is < 0.0001 (essentially flat).
+    # this case.
+    #
+    # The threshold is RELATIVE to the average close price (percentage-based)
+    # so it works for both 5-decimal pairs (EURUSD 1.08250) and 3-decimal
+    # JPY pairs (USDJPY 110.456). A std < 0.001% of the price means the
+    # market is essentially flat — likely stale OTC data.
     if len(df) >= 10:
-        last10_close_std = float(df['close'].tail(10).std())
-        if last10_close_std < 0.00001:  # threshold tuned for forex pairs (5-decimal prices like 1.08250)
-            return False, f"Last 10 closes essentially flat (std={last10_close_std:.8f}) — likely stale OTC data"
+        last10_close = df['close'].tail(10)
+        last10_close_std = float(last10_close.std())
+        avg_close = float(last10_close.mean())
+        if avg_close > 0:
+            relative_std = last10_close_std / avg_close
+            if relative_std < 0.00001:  # 0.001% — essentially flat for any pair
+                return False, f"Last 10 closes essentially flat (std={last10_close_std:.8f}, rel_std={relative_std:.8f}) — likely stale OTC data"
 
     return True, "OK"
 

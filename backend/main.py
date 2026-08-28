@@ -225,12 +225,19 @@ _last_signal_emitted_ts = 0.0  # tracks the timestamp of the last successful emi
 #
 # Net effect: event loop freed up for API requests, signal emission happens
 # 1-3s sooner, frontend polling latency drops.
-_indicator_cache: dict = {}  # pair -> {"df": DataFrame, "ts": unix_ts, "candle_count": int}
+_indicator_cache: dict = {}  # pair -> {"df": DataFrame, "ts": unix_ts, "candle_count": int, "last_close_hash": int}
 INDICATOR_CACHE_TTL_SECONDS = 15
 
-def _get_cached_indicators(pair: str, candle_count: int):
-    """Return cached indicator DataFrame if fresh (< TTL) AND candle count matches.
-    Returns None on cache miss or stale entry."""
+def _get_cached_indicators(pair: str, candle_count: int, last_close_hash: int):
+    """Return cached indicator DataFrame if fresh (< TTL) AND candle count AND
+    last-close-price hash all match. Returns None on cache miss or stale entry.
+
+    The last_close_hash catches the case where the M5 candle count is unchanged
+    but the in-progress M5 candle's close price has updated (because new ticks
+    arrived and the M5 cache was re-resampled from M1). Without this check,
+    the cache would return indicators computed on OLD M5 data while the live
+    M5 close has moved — producing stale signals.
+    """
     entry = _indicator_cache.get(pair)
     if entry is None:
         return None
@@ -241,14 +248,19 @@ def _get_cached_indicators(pair: str, candle_count: int):
     # If candle count changed (new candle arrived), invalidate
     if entry.get("candle_count", 0) != candle_count:
         return None
+    # If last close price hash changed (in-progress candle's close updated),
+    # invalidate — indicators must be recalculated on the new close.
+    if entry.get("last_close_hash", 0) != last_close_hash:
+        return None
     return entry.get("df")
 
-def _set_cached_indicators(pair: str, df, candle_count: int):
+def _set_cached_indicators(pair: str, df, candle_count: int, last_close_hash: int):
     """Store the indicator-enriched DataFrame in the cache."""
     _indicator_cache[pair] = {
         "df": df,
         "ts": datetime.now(timezone.utc).timestamp(),
         "candle_count": candle_count,
+        "last_close_hash": last_close_hash,
     }
 
 def _last_successful_emission_ts() -> float:
@@ -873,15 +885,21 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False, return_can
     # 4. Calculate all indicators (RSI, Bollinger, Stochastic, CCI, EMA, ATR, ADX)
     # FIX 4: Use the indicator cache. Candles change every ~15s (M1-derived),
     # so re-calculating all 12 indicators on the same data every 5s is wasted CPU.
-    # The cache is invalidated by TTL (15s) OR by candle count change (new candle).
-    cached_indicators = _get_cached_indicators(pair, candle_count)
+    # The cache is invalidated by TTL (15s) OR by candle count change (new candle)
+    # OR by last-close-price change (in-progress M5 candle's close updated by ticks).
+    try:
+        last_close_value = float(df_m5['close'].iloc[-1])
+        last_close_hash = hash(round(last_close_value, 7))  # 7 decimals = pip-level precision
+    except Exception:
+        last_close_hash = 0
+    cached_indicators = _get_cached_indicators(pair, candle_count, last_close_hash)
     if cached_indicators is not None:
         df_with_indicators = cached_indicators
-        logger.info(f"[SNIPER-TRACE] {pair} step=4 indicators_CACHED (hit, candles={candle_count})")
+        logger.info(f"[SNIPER-TRACE] {pair} step=4 indicators_CACHED (hit, candles={candle_count}, close={last_close_value:.5f})")
     else:
         df_with_indicators = indicators.calculate_all(df_m5)
-        _set_cached_indicators(pair, df_with_indicators, candle_count)
-        logger.info(f"[SNIPER-TRACE] {pair} step=4 indicators_calculated (miss, candles={candle_count}) columns={list(df_with_indicators.columns)[:10]}")
+        _set_cached_indicators(pair, df_with_indicators, candle_count, last_close_hash)
+        logger.info(f"[SNIPER-TRACE] {pair} step=4 indicators_calculated (miss, candles={candle_count}, close={last_close_value:.5f}) columns={list(df_with_indicators.columns)[:10]}")
     # Yield again after CPU-bound indicator calculation
     await asyncio.sleep(0)
 
