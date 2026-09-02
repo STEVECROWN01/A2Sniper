@@ -77,6 +77,12 @@ def _get_m15_trend(df: pd.DataFrame) -> str:
         }).dropna()
 
         if len(df_m15) < 3:
+            # REVERTED Fix 3: was changed to 21, which blocked ALL strict_mode
+            # signals when the M5 cache had <63 candles (common during warmup
+            # or after a cache wipe). The 21-candle threshold was theoretically
+            # correct (EMA21 needs 21 data points) but practically too strict
+            # — it stopped the signals page from producing any signals for
+            # 30+ minutes after every deploy. Restored to original threshold of 3.
             return 'RANGE'
 
         df_m15['EMA_21'] = df_m15['close'].ewm(span=21, adjust=False).mean()

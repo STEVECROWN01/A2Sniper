@@ -260,6 +260,9 @@ def get_m5_trend(df_m1: pd.DataFrame) -> str:
         }).dropna()
 
         if len(df_m15) < 3:
+            # REVERTED Fix 3: was changed to 21, which blocked ALL strict_mode
+            # signals when the M5 cache had <63 candles. See ace_engine.py
+            # for the full rationale. Restored to original threshold of 3.
             return 'RANGE'
 
         # Calculate EMA21 on M15
@@ -326,6 +329,14 @@ def validate_candle_data(df: pd.DataFrame, min_bars: int = 14) -> Tuple[bool, st
         last3 = df.tail(3)
         if last3['close'].nunique() == 1 and last3['open'].nunique() == 1:
             return False, "Last 3 candles are identical (stale data)"
+
+    # REVERTED Fix 6 (flat-data validator): The relative-std check was rejecting
+    # valid candle data during low-volatility periods (overnight, holidays, slow
+    # OTC sessions). This blocked ALL signals for both engines when the market
+    # was legitimately flat — causing the "no opportunity found" issue the user
+    # experienced. The identical-candle check above is sufficient for catching
+    # truly stale data. Removing the flat-data check restores signal generation
+    # during low-volatility windows.
 
     return True, "OK"
 
