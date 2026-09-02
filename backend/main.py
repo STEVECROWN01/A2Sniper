@@ -190,12 +190,7 @@ def increment_session_trade_count():
 _emission_gate = {
     "last_emission_ts": 0.0,  # unix timestamp of last background emission
 }
-MIN_EMISSION_GAP_SECONDS = 15  # FIX 2: was 30. The per-pair 30s dedup already
-# prevents signal flooding on the same pair — the global gate was overly
-# conservative and caused setups to go stale by up to 30s before emission.
-# At 15s, the candidate's analysis is still fresh (candles change every 60s),
-# and the per-pair dedup still prevents spam. Net effect: signals emit
-# ~15s sooner, setups are fresher, win rate improves.
+MIN_EMISSION_GAP_SECONDS = 30
 
 def can_emit_background_signal() -> bool:
     """True if enough time has passed since the last background emission."""
@@ -212,56 +207,6 @@ def register_background_emission():
 # so the user isn't staring at an empty page during quiet market conditions.
 ADAPTIVE_RELAX_AFTER_SECONDS = 120  # 2 minutes
 _last_signal_emitted_ts = 0.0  # tracks the timestamp of the last successful emission
-
-# ─── FIX 4: INDICATOR CACHE ──────────────────────────────────────────────
-# The trading_loop scans 20+ pairs every 5s, calling indicators.calculate_all()
-# on each. That's 240+ CPU-heavy calculations per minute — RSI, MACD, BB,
-# EMA×4, ADX, ATR, Stoch, CCI, OBV, Ichimoku on 200 M5 candles each time.
-#
-# Since M5 candles only change once every 5 minutes (and the M1-derived cache
-# updates every ~15s), re-calculating indicators on the SAME candle data
-# every 5s is wasted CPU. This cache stores the indicator-enriched DataFrame
-# for 15s per pair. On a cache hit, we skip calculate_all() entirely.
-#
-# Net effect: event loop freed up for API requests, signal emission happens
-# 1-3s sooner, frontend polling latency drops.
-_indicator_cache: dict = {}  # pair -> {"df": DataFrame, "ts": unix_ts, "candle_count": int, "last_close_hash": int}
-INDICATOR_CACHE_TTL_SECONDS = 15
-
-def _get_cached_indicators(pair: str, candle_count: int, last_close_hash: int):
-    """Return cached indicator DataFrame if fresh (< TTL) AND candle count AND
-    last-close-price hash all match. Returns None on cache miss or stale entry.
-
-    The last_close_hash catches the case where the M5 candle count is unchanged
-    but the in-progress M5 candle's close price has updated (because new ticks
-    arrived and the M5 cache was re-resampled from M1). Without this check,
-    the cache would return indicators computed on OLD M5 data while the live
-    M5 close has moved — producing stale signals.
-    """
-    entry = _indicator_cache.get(pair)
-    if entry is None:
-        return None
-    now_ts = datetime.now(timezone.utc).timestamp()
-    age = now_ts - entry.get("ts", 0)
-    if age >= INDICATOR_CACHE_TTL_SECONDS:
-        return None
-    # If candle count changed (new candle arrived), invalidate
-    if entry.get("candle_count", 0) != candle_count:
-        return None
-    # If last close price hash changed (in-progress candle's close updated),
-    # invalidate — indicators must be recalculated on the new close.
-    if entry.get("last_close_hash", 0) != last_close_hash:
-        return None
-    return entry.get("df")
-
-def _set_cached_indicators(pair: str, df, candle_count: int, last_close_hash: int):
-    """Store the indicator-enriched DataFrame in the cache."""
-    _indicator_cache[pair] = {
-        "df": df,
-        "ts": datetime.now(timezone.utc).timestamp(),
-        "candle_count": candle_count,
-        "last_close_hash": last_close_hash,
-    }
 
 def _last_successful_emission_ts() -> float:
     """Returns the unix timestamp of the last successfully emitted signal."""
@@ -883,25 +828,10 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False, return_can
         return None
 
     # 4. Calculate all indicators (RSI, Bollinger, Stochastic, CCI, EMA, ATR, ADX)
-    # FIX 4: Use the indicator cache. Candles change every ~15s (M1-derived),
-    # so re-calculating all 12 indicators on the same data every 5s is wasted CPU.
-    # The cache is invalidated by TTL (15s) OR by candle count change (new candle)
-    # OR by last-close-price change (in-progress M5 candle's close updated by ticks).
-    try:
-        last_close_value = float(df_m5['close'].iloc[-1])
-        last_close_hash = hash(round(last_close_value, 7))  # 7 decimals = pip-level precision
-    except Exception:
-        last_close_hash = 0
-    cached_indicators = _get_cached_indicators(pair, candle_count, last_close_hash)
-    if cached_indicators is not None:
-        df_with_indicators = cached_indicators
-        logger.info(f"[SNIPER-TRACE] {pair} step=4 indicators_CACHED (hit, candles={candle_count}, close={last_close_value:.5f})")
-    else:
-        df_with_indicators = indicators.calculate_all(df_m5)
-        _set_cached_indicators(pair, df_with_indicators, candle_count, last_close_hash)
-        logger.info(f"[SNIPER-TRACE] {pair} step=4 indicators_calculated (miss, candles={candle_count}, close={last_close_value:.5f}) columns={list(df_with_indicators.columns)[:10]}")
+    df_with_indicators = indicators.calculate_all(df_m5)
     # Yield again after CPU-bound indicator calculation
     await asyncio.sleep(0)
+    logger.info(f"[SNIPER-TRACE] {pair} step=4 indicators_calculated columns={list(df_with_indicators.columns)[:10]}")
 
     # 5. Validate data quality (rejects identical candles, suspicious jumps, zero volume)
     is_valid, validation_reason = validate_candle_data(df_with_indicators, min_bars=25)
@@ -946,22 +876,10 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False, return_can
             logger.info(f"[{pair}] No ACE signal — falling back to Option D (pattern + BOTH bonuses)")
             engine_result = generate_sniper_signal(df_with_indicators, payout, strict_mode=True)
             if engine_result is None:
-                # DIAGNOSTIC: log the key indicators so we can see WHY no signal.
-                try:
-                    last_row = df_with_indicators.iloc[-1]
-                    adx_val = float(last_row.get('ADX_14', 0)) if 'ADX_14' in df_with_indicators.columns else 0
-                    rsi_val = float(last_row.get('RSI_14', 50)) if 'RSI_14' in df_with_indicators.columns else 50
-                    atr_val = float(last_row.get('ATRr_14', 0)) if 'ATRr_14' in df_with_indicators.columns else 0
-                    close_val = float(last_row['close'])
-                    logger.info(
-                        f"[{pair}] ❌ NO SIGNAL (strict) — diagnostics: "
-                        f"candles={len(df_with_indicators)} close={close_val:.5f} "
-                        f"ADX={adx_val:.1f} RSI={rsi_val:.1f} ATR={atr_val:.5f} "
-                        f"mode=signals_page. "
-                        f"Likely cause: {'ADX 18-22 (transitional)' if 18 <= adx_val <= 22 else 'no pattern at level + M5 aligned'}"
-                    )
-                except Exception as diag_err:
-                    logger.info(f"[{pair}] No Option D signal either — diagnostics failed: {diag_err}")
+                logger.info(
+                    f"[{pair}] No Option D signal either — no pattern at key level. "
+                    f"candles={len(df_with_indicators)}, mode=signals page"
+                )
                 return None
     else:
         # Bot → ACE first, then Option C (looser) fallback
@@ -972,23 +890,10 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False, return_can
             logger.info(f"[{pair}] No ACE signal — falling back to Option C (pattern + 1 bonus)")
             engine_result = generate_sniper_signal(df_with_indicators, payout, strict_mode=False)
             if engine_result is None:
-                # DIAGNOSTIC: log the key indicators so we can see WHY no signal.
-                # This is critical for debugging "no opportunity found" issues.
-                try:
-                    last_row = df_with_indicators.iloc[-1]
-                    adx_val = float(last_row.get('ADX_14', 0)) if 'ADX_14' in df_with_indicators.columns else 0
-                    rsi_val = float(last_row.get('RSI_14', 50)) if 'RSI_14' in df_with_indicators.columns else 50
-                    atr_val = float(last_row.get('ATRr_14', 0)) if 'ATRr_14' in df_with_indicators.columns else 0
-                    close_val = float(last_row['close'])
-                    logger.info(
-                        f"[{pair}] ❌ NO SIGNAL — diagnostics: "
-                        f"candles={len(df_with_indicators)} close={close_val:.5f} "
-                        f"ADX={adx_val:.1f} RSI={rsi_val:.1f} ATR={atr_val:.5f} "
-                        f"mode=bot. "
-                        f"Likely cause: {'ADX 18-22 (transitional, ACE skips)' if 18 <= adx_val <= 22 else 'no candlestick pattern at key level'}"
-                    )
-                except Exception as diag_err:
-                    logger.info(f"[{pair}] No Option C signal either — diagnostics failed: {diag_err}")
+                logger.info(
+                    f"[{pair}] No Option C signal either — no pattern at key level. "
+                    f"candles={len(df_with_indicators)}, mode=bot"
+                )
                 return None
     engine_result.setdefault('engine_source', 'ace_or_sniper')
 
@@ -1110,36 +1015,13 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False, return_can
     indicator_summary = f"RSI {sniper_result['factors'].get('rsi', 0):.0f} / ADX {sniper_result['factors'].get('adx', 0):.0f}"
     rsi_status = 'Bullish' if sniper_result['direction'] == 'CALL' else 'Bearish'
 
-    # ─── FIX 1: REFRESH ENTRY PRICE TO LIVE TICK ─────────────────────────
-    # The engine analyzed the last CLOSED M5 candle, whose close price could
-    # be up to 5 minutes old by the time the user receives the signal. On a
-    # 3-min EURUSD_otc trade where the typical move is 3-8 pips, entering at
-    # a 5-min-old price is a 25-60% handicap.
-    #
-    # The background _emit_candidate path already does this refresh (line ~1197).
-    # The bot force path was missing it — so Telegram "GET SIGNAL" taps were
-    # entering at stale prices while background signals entered at live prices.
-    #
-    # Now both paths refresh to the live tick before saving/emitting.
-    entry_price = sniper_result['entry_price']
-    try:
-        live_price = await po_scanner.get_current_price(pair)
-        if live_price and live_price > 0:
-            logger.info(
-                f"[{pair}] Refreshing entry_price for force signal: "
-                f"engine={entry_price:.5f} -> live={live_price:.5f}"
-            )
-            entry_price = live_price
-    except Exception as price_err:
-        logger.warning(f"[{pair}] Could not fetch live price for force signal: {price_err} — using engine entry_price")
-
     signal = {
         'id': f'SIG-{now.strftime("%Y%m%d")}-{uuid.uuid4().hex[:6].upper()}',
         'pair': pair,
         'direction': sniper_result['direction'],
         'time': now.strftime('%H:%M:%S'),
         'timestamp': now.isoformat(),
-        'entry_price': entry_price,  # FIX 1: live-refreshed, not stale engine close
+        'entry_price': sniper_result['entry_price'],
         'expiration': sniper_result['expiration'],  # 1 or 3 minutes
         'winrate': sniper_result['winrate'],
         'score': sniper_result['score'],
@@ -1687,22 +1569,11 @@ async def trading_loop():
                     logger.debug(f"[SNIPER-ERROR] pair={pair} err={e}")
 
                 # Save completed candles to database (for persistence across redeploys)
-                # FIX 5: Throttle to once per minute per pair. Was running every 5s
-                # (12 writes/min/pair × 20 pairs = 240 DB writes/min) — saturating
-                # the DB pool and delaying signal saves by 1-5s. Since candles
-                # only complete once per minute, saving every 5s writes the same
-                # data 12 times.
                 try:
-                    if not hasattr(trading_loop, '_last_candle_save_ts'):
-                        trading_loop._last_candle_save_ts = {}
-                    last_save = trading_loop._last_candle_save_ts.get(pair, 0)
-                    now_save_ts = datetime.now(timezone.utc).timestamp()
-                    if now_save_ts - last_save >= 60:  # Once per minute per pair
-                        asset = po_scanner.get_asset_symbol(pair)
-                        cached_df = po_scanner._candles_cache.get(f"{asset}_1m")
-                        if cached_df is not None and not cached_df.empty and len(cached_df) > 1:
-                            await save_candles_to_db(asset, cached_df.tail(10))
-                            trading_loop._last_candle_save_ts[pair] = now_save_ts
+                    asset = po_scanner.get_asset_symbol(pair)
+                    cached_df = po_scanner._candles_cache.get(f"{asset}_1m")
+                    if cached_df is not None and not cached_df.empty and len(cached_df) > 1:
+                        await save_candles_to_db(asset, cached_df.tail(10))
                 except Exception:
                     pass
 
