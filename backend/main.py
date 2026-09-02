@@ -946,22 +946,10 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False, return_can
             logger.info(f"[{pair}] No ACE signal — falling back to Option D (pattern + BOTH bonuses)")
             engine_result = generate_sniper_signal(df_with_indicators, payout, strict_mode=True)
             if engine_result is None:
-                # DIAGNOSTIC: log the key indicators so we can see WHY no signal.
-                try:
-                    last_row = df_with_indicators.iloc[-1]
-                    adx_val = float(last_row.get('ADX_14', 0)) if 'ADX_14' in df_with_indicators.columns else 0
-                    rsi_val = float(last_row.get('RSI_14', 50)) if 'RSI_14' in df_with_indicators.columns else 50
-                    atr_val = float(last_row.get('ATRr_14', 0)) if 'ATRr_14' in df_with_indicators.columns else 0
-                    close_val = float(last_row['close'])
-                    logger.info(
-                        f"[{pair}] ❌ NO SIGNAL (strict) — diagnostics: "
-                        f"candles={len(df_with_indicators)} close={close_val:.5f} "
-                        f"ADX={adx_val:.1f} RSI={rsi_val:.1f} ATR={atr_val:.5f} "
-                        f"mode=signals_page. "
-                        f"Likely cause: {'ADX 18-22 (transitional)' if 18 <= adx_val <= 22 else 'no pattern at level + M5 aligned'}"
-                    )
-                except Exception as diag_err:
-                    logger.info(f"[{pair}] No Option D signal either — diagnostics failed: {diag_err}")
+                logger.info(
+                    f"[{pair}] No Option D signal either — no pattern at key level. "
+                    f"candles={len(df_with_indicators)}, mode=signals page"
+                )
                 return None
     else:
         # Bot → ACE first, then Option C (looser) fallback
@@ -972,23 +960,10 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False, return_can
             logger.info(f"[{pair}] No ACE signal — falling back to Option C (pattern + 1 bonus)")
             engine_result = generate_sniper_signal(df_with_indicators, payout, strict_mode=False)
             if engine_result is None:
-                # DIAGNOSTIC: log the key indicators so we can see WHY no signal.
-                # This is critical for debugging "no opportunity found" issues.
-                try:
-                    last_row = df_with_indicators.iloc[-1]
-                    adx_val = float(last_row.get('ADX_14', 0)) if 'ADX_14' in df_with_indicators.columns else 0
-                    rsi_val = float(last_row.get('RSI_14', 50)) if 'RSI_14' in df_with_indicators.columns else 50
-                    atr_val = float(last_row.get('ATRr_14', 0)) if 'ATRr_14' in df_with_indicators.columns else 0
-                    close_val = float(last_row['close'])
-                    logger.info(
-                        f"[{pair}] ❌ NO SIGNAL — diagnostics: "
-                        f"candles={len(df_with_indicators)} close={close_val:.5f} "
-                        f"ADX={adx_val:.1f} RSI={rsi_val:.1f} ATR={atr_val:.5f} "
-                        f"mode=bot. "
-                        f"Likely cause: {'ADX 18-22 (transitional, ACE skips)' if 18 <= adx_val <= 22 else 'no candlestick pattern at key level'}"
-                    )
-                except Exception as diag_err:
-                    logger.info(f"[{pair}] No Option C signal either — diagnostics failed: {diag_err}")
+                logger.info(
+                    f"[{pair}] No Option C signal either — no pattern at key level. "
+                    f"candles={len(df_with_indicators)}, mode=bot"
+                )
                 return None
     engine_result.setdefault('engine_source', 'ace_or_sniper')
 

@@ -259,10 +259,9 @@ def get_m5_trend(df_m1: pd.DataFrame) -> str:
             'close': 'last', 'volume': 'sum'
         }).dropna()
 
-        if len(df_m15) < 3:
-            # REVERTED Fix 3: was changed to 21, which blocked ALL strict_mode
-            # signals when the M5 cache had <63 candles. See ace_engine.py
-            # for the full rationale. Restored to original threshold of 3.
+        if len(df_m15) < 21:
+            # FIX 3: was 3. EMA21 needs at least 21 data points to stabilize.
+            # See ace_engine.py:_get_m15_trend for the full rationale.
             return 'RANGE'
 
         # Calculate EMA21 on M15
@@ -330,13 +329,24 @@ def validate_candle_data(df: pd.DataFrame, min_bars: int = 14) -> Tuple[bool, st
         if last3['close'].nunique() == 1 and last3['open'].nunique() == 1:
             return False, "Last 3 candles are identical (stale data)"
 
-    # REVERTED Fix 6 (flat-data validator): The relative-std check was rejecting
-    # valid candle data during low-volatility periods (overnight, holidays, slow
-    # OTC sessions). This blocked ALL signals for both engines when the market
-    # was legitimately flat — causing the "no opportunity found" issue the user
-    # experienced. The identical-candle check above is sufficient for catching
-    # truly stale data. Removing the flat-data check restores signal generation
-    # during low-volatility windows.
+    # FIX 6: Detect "essentially flat" data — where candles are technically
+    # different but the price movement is too small to be real market action.
+    # PO's OTC feed can return subtly stale data where prices drift by <0.1
+    # pip per minute. The validator above (identical-candle check) misses
+    # this case.
+    #
+    # The threshold is RELATIVE to the average close price (percentage-based)
+    # so it works for both 5-decimal pairs (EURUSD 1.08250) and 3-decimal
+    # JPY pairs (USDJPY 110.456). A std < 0.001% of the price means the
+    # market is essentially flat — likely stale OTC data.
+    if len(df) >= 10:
+        last10_close = df['close'].tail(10)
+        last10_close_std = float(last10_close.std())
+        avg_close = float(last10_close.mean())
+        if avg_close > 0:
+            relative_std = last10_close_std / avg_close
+            if relative_std < 0.00001:  # 0.001% — essentially flat for any pair
+                return False, f"Last 10 closes essentially flat (std={last10_close_std:.8f}, rel_std={relative_std:.8f}) — likely stale OTC data"
 
     return True, "OK"
 
