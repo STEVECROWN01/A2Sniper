@@ -1753,94 +1753,121 @@ async def resolution_loop():
                     s_timestamp = s.timestamp.replace(tzinfo=timezone.utc) if s.timestamp.tzinfo is None else s.timestamp
                     # Expiry = signal timestamp + EXECUTION LATENCY + expiration minutes
                     #
-                    # EXECUTION LATENCY FIX:
-                    # The signal timestamp is when the SYSTEM emitted the signal.
-                    # But the user places the trade on Pocket Option 10-30 seconds
-                    # LATER (time to: receive notification → read it → switch to PO →
-                    # place trade). So the user's actual trade expires 10-30 seconds
-                    # AFTER what the system calculates.
+                    # EXECUTION LATENCY (confirmed by user):
+                    # The user places the trade on Pocket Option EXACTLY 15 seconds
+                    # after the system produces the signal (always — they wait for
+                    # the countdown to reach 2:45, then place the trade).
+                    #
+                    # So the user's PO trade expires at:
+                    #   signal_time + 15 seconds + expiration_minutes
                     #
                     # Before this fix: system checked price at signal_time + 3 min
-                    #                  PO actually expired at (signal_time + ~20s) + 3 min
-                    #                  → 15-20 second discrepancy → wrong win/loss
+                    #                  PO actually expired at signal_time + 15s + 3 min
+                    #                  → 15-second discrepancy → wrong win/loss
                     #
-                    # After this fix: system checks at signal_time + 20s + 3 min
+                    # After this fix: system checks at signal_time + 15s + 3 min
                     #                 → matches when the user's PO trade actually expires
                     #
-                    # This is why the user saw "I won on PO but system shows loss"
-                    # (system checked too early, price hadn't moved yet) and
-                    # "I lost on PO but system shows win" (system checked too early,
-                    # price hadn't dropped yet).
-                    EXECUTION_LATENCY_SECONDS = 20  # realistic: notification → read → switch to PO → place trade
+                    # Win/loss rules (matching Pocket Option exactly):
+                    #   CALL: WIN if exit_price > entry_price, LOSS if exit < entry, NULL if equal
+                    #   PUT:  WIN if exit_price < entry_price, LOSS if exit > entry, NULL if equal
+                    #   NULL = trade is refunded (tie / break-even)
+                    EXECUTION_LATENCY_SECONDS = 15  # user places trade exactly 15s after signal
                     expiry_time = s_timestamp + timedelta(seconds=EXECUTION_LATENCY_SECONDS) + timedelta(minutes=s.expiration or 1)
                     
                     if now >= expiry_time:
-                        # ─── ACCURATE WIN/LOSS DETERMINATION ───────────────
-                        # Pocket Option pays based on the price AT the exact
-                        # expiry moment. The closest available proxy for that
-                        # price is the CLOSE of the M1 candle that CONTAINS
-                        # the expiry timestamp (within ±1 second).
+                        # ─── ACCURATE WIN/LOSS DETERMINATION (matches Pocket Option) ─
                         #
-                        # The previous implementation called get_current_price()
-                        # which returns the live tick price at RESOLUTION time
-                        # (~10 seconds AFTER expiry because the loop sleeps 10s).
-                        # That introduced a 10-second bias that could flip wins
-                        # to losses and vice versa — particularly on fast-moving
-                        # pairs like EURUSD_otc where 10s = 2-5 pips.
+                        # User confirmed:
+                        #   1. They place the trade EXACTLY 15 seconds after the signal
+                        #   2. PO locks the ENTRY PRICE at the moment they click "Buy"
+                        #   3. PO expires at: (signal_time + 15s) + expiration_minutes
+                        #   4. Win/loss rules:
+                        #        CALL: WIN if exit > entry, LOSS if exit < entry, NULL if equal (refund)
+                        #        PUT:  WIN if exit < entry, LOSS if exit > entry, NULL if equal (refund)
                         #
-                        # FIX: try M1 candle close FIRST (accurate to ±1s),
-                        # fall back to live tick only if no M1 data available.
+                        # So we need TWO prices:
+                        #   - entry_price = price at (signal_time + 15s) — when user clicked "Buy"
+                        #   - exit_price  = price at (signal_time + 15s + expiration_minutes)
+                        #
+                        # We use the CLOSE of the M1 candle that CONTAINS each timestamp
+                        # (accurate to ±1 second).
+                        #
+                        # The stored s.entry_price is the price at signal_time (T+0), which
+                        # is NOT what the user actually entered at. We must recompute the
+                        # REAL entry price at T+15s for accurate win/loss.
                         try:
-                            current_price = None
-                            df_m1_expiry = await po_scanner.get_candles(s.pair, timeframe="1m", count=10)
+                            exit_price = None
+                            real_entry_price = None
+                            df_m1_expiry = await po_scanner.get_candles(s.pair, timeframe="1m", count=15)
                             if df_m1_expiry is not None and not df_m1_expiry.empty:
-                                expiry_ts = expiry_time.timestamp()
                                 df_m1_ts = df_m1_expiry.index.astype(np.int64) // 10**9
                                 candle_open_ts = df_m1_ts.values
-                                # Find the M1 candle that CONTAINS expiry_ts:
-                                # candle_open <= expiry_ts < candle_open + 60
-                                actual_containing = df_m1_expiry[
+
+                                # ── Compute REAL entry price (at signal_time + 15s) ──
+                                entry_check_ts = (s_timestamp + timedelta(seconds=EXECUTION_LATENCY_SECONDS)).timestamp()
+                                entry_containing = df_m1_expiry[
+                                    (candle_open_ts <= entry_check_ts) &
+                                    (candle_open_ts + 60 > entry_check_ts)
+                                ]
+                                if not entry_containing.empty:
+                                    real_entry_price = float(entry_containing.iloc[-1]['close'])
+                                else:
+                                    # Fall back to nearest candle after entry_check_ts
+                                    nearest_entry = df_m1_expiry[df_m1_expiry.index >= s_timestamp + timedelta(seconds=EXECUTION_LATENCY_SECONDS)]
+                                    if not nearest_entry.empty:
+                                        real_entry_price = float(nearest_entry.iloc[0]['close'])
+
+                                # ── Compute EXIT price (at expiry_time = signal_time + 15s + expiration) ──
+                                expiry_ts = expiry_time.timestamp()
+                                exit_containing = df_m1_expiry[
                                     (candle_open_ts <= expiry_ts) &
                                     (candle_open_ts + 60 > expiry_ts)
                                 ]
-                                if not actual_containing.empty:
-                                    current_price = float(actual_containing.iloc[-1]['close'])
-                                    logger.debug(
-                                        f"[RESULT-CHECK] {s.id} using M1 candle close "
-                                        f"for expiry (entry={s.entry_price}, exit={current_price})"
-                                    )
+                                if not exit_containing.empty:
+                                    exit_price = float(exit_containing.iloc[-1]['close'])
                                 else:
                                     # Fall back to last candle close
-                                    current_price = float(df_m1_expiry.iloc[-1]['close'])
+                                    exit_price = float(df_m1_expiry.iloc[-1]['close'])
+
+                                logger.debug(
+                                    f"[RESULT-CHECK] {s.id} entry@T+15s={real_entry_price}, "
+                                    f"exit@expiry={exit_price} (stored_entry={s.entry_price})"
+                                )
+
                             # If M1 data unavailable, fall back to live tick
-                            # (less accurate, but better than leaving signal unresolved)
-                            if not current_price or current_price <= 0:
-                                current_price = await po_scanner.get_current_price(s.pair)
-                                if current_price and current_price > 0:
+                            if not exit_price or exit_price <= 0:
+                                exit_price = await po_scanner.get_current_price(s.pair)
+                                real_entry_price = s.entry_price  # fall back to stored entry
+                                if exit_price and exit_price > 0:
                                     logger.warning(
                                         f"[RESULT-CHECK] {s.id} fell back to live tick "
-                                        f"(M1 data unavailable) — result may be biased by ~10s"
+                                        f"(M1 data unavailable) — result may be biased"
                                     )
                         except Exception as price_err:
-                            logger.warning(f"[RESULT-CHECK] Error fetching expiry price for {s.id}: {price_err}")
-                            current_price = await po_scanner.get_current_price(s.pair)
+                            logger.warning(f"[RESULT-CHECK] Error fetching prices for {s.id}: {price_err}")
+                            exit_price = await po_scanner.get_current_price(s.pair)
+                            real_entry_price = s.entry_price  # fall back to stored entry
 
-                        if current_price:
+                        if exit_price and real_entry_price:
+                            # Win/loss rules — matching Pocket Option EXACTLY:
+                            #   CALL: WIN if exit > entry, LOSS if exit < entry, NULL if equal (refund)
+                            #   PUT:  WIN if exit < entry, LOSS if exit > entry, NULL if equal (refund)
                             if s.direction == 'CALL':
-                                is_win = current_price > s.entry_price
+                                is_win = exit_price > real_entry_price
                             elif s.direction == 'PUT':
-                                is_win = current_price < s.entry_price
+                                is_win = exit_price < real_entry_price
                             else:
                                 is_win = None  # Unknown direction
-                            # Tie (equal price) is treated as no result
-                            if current_price == s.entry_price:
+                            # Tie (equal price) = refund on Pocket Option
+                            if exit_price == real_entry_price:
                                 # M-6 FIX: max 3 retries for ties, then mark as no-result
                                 s.tie_count = (getattr(s, 'tie_count', 0) or 0) + 1
                                 if s.tie_count >= 3:
                                     s.is_win = None
-                                    logger.info(f"Tie persisted for {s.id} after 3 attempts — marking no-result")
+                                    logger.info(f"Tie persisted for {s.id} after 3 attempts — marking no-result (refund on PO)")
                                 else:
-                                    logger.info(f"Tie detected for {s.id} (attempt {s.tie_count}/3): entry={s.entry_price}, exit={current_price}")
+                                    logger.info(f"Tie detected for {s.id} (attempt {s.tie_count}/3): entry@T+15s={real_entry_price}, exit={exit_price}")
                                 continue
                             s.is_win = is_win
 
@@ -1866,8 +1893,11 @@ async def resolution_loop():
                             logger.info(
                                 f"🏁 SIGNAL RESOLVED: {s.id} ({s.pair}) -> "
                                 f"{'WON' if is_win else 'LOST'} "
-                                f"(Direction: {s.direction}, Entry: {s.entry_price}, "
-                                f"Exit at expiry: {current_price}, Expiry: {expiry_time.isoformat()})"
+                                f"(Direction: {s.direction}, "
+                                f"Stored entry@T+0: {s.entry_price}, "
+                                f"Real entry@T+15s: {real_entry_price}, "
+                                f"Exit at expiry: {exit_price}, "
+                                f"Expiry: {expiry_time.isoformat()})"
                             )
                         else:
                             logger.warning(f"Cannot resolve {s.id}: No price for {s.pair}")
@@ -4844,6 +4874,190 @@ async def admin_run_backtest(request: Request, admin_payload = Depends(require_a
         'data_source': 'DB (real PO OTC candles)' if len(df) > 500 else 'CSV (synthetic fallback)',
         'candles_analyzed': len(df),
         'summary': summary,
+    }
+
+
+@app.get("/api/admin/backtest/pairs")
+async def admin_list_backtest_pairs(admin_payload = Depends(require_admin)):
+    """List all pairs that have candle data in the DB available for backtesting.
+
+    Returns each pair with its candle count and date range, so you can
+    choose which pairs to backtest on the admin page.
+    """
+    try:
+        async with AsyncSessionLocal() as session:
+            from sqlalchemy import func as sql_func
+            # Get all pairs with their candle counts and date ranges
+            result = await session.execute(
+                select(
+                    CandleRecord.pair,
+                    sql_func.count(CandleRecord.id).label('count'),
+                    sql_func.min(CandleRecord.timestamp).label('first_ts'),
+                    sql_func.max(CandleRecord.timestamp).label('last_ts'),
+                ).group_by(CandleRecord.pair).order_by(sql_func.count(CandleRecord.id).desc())
+            )
+            rows = result.all()
+
+        pairs = []
+        for row in rows:
+            pairs.append({
+                'pair': row.pair,
+                'candle_count': row.count,
+                'first_candle': datetime.fromtimestamp(row.first_ts, tz=timezone.utc).isoformat() if row.first_ts else None,
+                'last_candle': datetime.fromtimestamp(row.last_ts, tz=timezone.utc).isoformat() if row.last_ts else None,
+                'has_enough_data': row.count >= 50,
+            })
+
+        return {
+            'status': 'success',
+            'pairs': pairs,
+            'total_pairs': len(pairs),
+            'pairs_with_enough_data': sum(1 for p in pairs if p['has_enough_data']),
+        }
+    except Exception as e:
+        logger.error(f"[ADMIN-BACKTEST] Error listing pairs: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error listing pairs: {e}")
+
+
+@app.post("/api/admin/backtest/run-multi")
+async def admin_run_multi_backtest(request: Request, admin_payload = Depends(require_admin)):
+    """Run backtest on MULTIPLE pairs at once.
+
+    Body: {
+        pairs: list[str] (e.g., ["EURUSD_otc", "GBPUSD_otc", ...]) — required
+        engine: str ("ace" | "sniper") — defaults to "ace"
+        strict_mode: bool (sniper only) — defaults to false
+        payout: float — defaults to 80
+        step: int — defaults to 1
+    }
+
+    Returns:
+      - Per-pair summary
+      - AGGREGATE win rate across all pairs (the real performance number)
+      - Per-hour breakdown aggregated across all pairs
+      - Per-direction (CALL/PUT) breakdown
+
+    This is the proper way to backtest — across multiple pairs, multiple days,
+    multiple weeks — to get a statistically significant performance number.
+    """
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+
+    pairs = data.get('pairs', [])
+    engine = data.get('engine', 'ace')
+    strict_mode = data.get('strict_mode', False)
+    payout = float(data.get('payout', 80))
+    step = int(data.get('step', 1))
+
+    if not pairs or not isinstance(pairs, list):
+        raise HTTPException(status_code=400, detail="pairs must be a non-empty list")
+    if engine not in ('ace', 'sniper'):
+        raise HTTPException(status_code=400, detail="engine must be 'ace' or 'sniper'")
+    if step < 1 or step > 100:
+        raise HTTPException(status_code=400, detail="step must be between 1 and 100")
+    if len(pairs) > 20:
+        raise HTTPException(status_code=400, detail="max 20 pairs per request")
+
+    from engine.backtest import Backtester
+
+    per_pair_summaries = []
+    all_results = []
+    skipped_pairs = []
+
+    for pair_name in pairs:
+        try:
+            bt = Backtester(pair=pair_name, payout=payout)
+            df = await bt._load_data()
+            if df is None or len(df) < 50:
+                skipped_pairs.append({
+                    'pair': pair_name,
+                    'reason': f'insufficient data ({len(df) if df is not None else 0} candles, need 50)',
+                })
+                continue
+
+            df = bt._prepare_indicators(df)
+            results = bt.run_backtest(df, engine=engine, strict_mode=strict_mode, step=step)
+            summary = bt.summary(results)
+
+            per_pair_summaries.append({
+                'pair': pair_name,
+                'summary': summary,
+            })
+            all_results.extend(results)
+        except Exception as e:
+            skipped_pairs.append({'pair': pair_name, 'reason': str(e)})
+
+    # Aggregate stats across all pairs
+    if all_results:
+        resolved = [r for r in all_results if r.get('actual_win') is not None]
+        wins = sum(1 for r in resolved if r['actual_win'] is True)
+        losses = sum(1 for r in resolved if r['actual_win'] is False)
+        ties = sum(1 for r in all_results if r.get('is_tie'))
+        total = len(resolved)
+        actual_winrate = round(wins / total * 100, 1) if total > 0 else 0
+        avg_claimed = round(sum(r.get('claimed_winrate', 0) for r in all_results) / len(all_results), 1) if all_results else 0
+        break_even = round(100 / (100 + payout) * 100, 1)
+
+        # P&L
+        stake_pct = 1.0
+        pnl_per_win = stake_pct * (payout / 100)
+        pnl_per_loss = -stake_pct
+        total_pnl = round(sum(pnl_per_win if r['actual_win'] else pnl_per_loss for r in resolved), 2)
+
+        # Per-direction
+        calls = [r for r in resolved if r['direction'] == 'CALL']
+        puts = [r for r in resolved if r['direction'] == 'PUT']
+        call_wr = round(sum(1 for r in calls if r['actual_win']) / len(calls) * 100, 1) if calls else 0
+        put_wr = round(sum(1 for r in puts if r['actual_win']) / len(puts) * 100, 1) if puts else 0
+
+        # Per-hour (aggregate across all pairs)
+        import pandas as pd
+        df_results = pd.DataFrame(all_results)
+        df_results['entry_time'] = pd.to_datetime(df_results['timestamp'])
+        df_results['utc_hour'] = df_results['entry_time'].dt.hour
+        hourly = []
+        for hour in range(24):
+            hour_signals = df_results[df_results['utc_hour'] == hour]
+            hour_resolved = hour_signals[hour_signals['actual_win'].notna()]
+            if len(hour_resolved) > 0:
+                hour_wins = sum(1 for _, r in hour_resolved.iterrows() if r['actual_win'])
+                hourly.append({
+                    'hour': hour,
+                    'signals': len(hour_resolved),
+                    'wins': hour_wins,
+                    'winrate': round(hour_wins / len(hour_resolved) * 100, 1),
+                })
+    else:
+        wins = losses = ties = total = 0
+        actual_winrate = avg_claimed = break_even = total_pnl = call_wr = put_wr = 0
+        hourly = []
+
+    return {
+        'status': 'success',
+        'pairs_requested': len(pairs),
+        'pairs_analyzed': len(per_pair_summaries),
+        'pairs_skipped': len(skipped_pairs),
+        'aggregate': {
+            'total_signals': len(all_results),
+            'resolved': total,
+            'wins': wins,
+            'losses': losses,
+            'ties': ties,
+            'actual_winrate': actual_winrate,
+            'avg_claimed_winrate': avg_claimed,
+            'break_even_winrate': break_even,
+            'profitable': actual_winrate > break_even,
+            'pnl_simulation_pct': total_pnl,
+            'call_signals': len(calls) if all_results else 0,
+            'call_winrate': call_wr,
+            'put_signals': len(puts) if all_results else 0,
+            'put_winrate': put_wr,
+            'hourly_breakdown': hourly,
+        },
+        'per_pair': per_pair_summaries,
+        'skipped_pairs': skipped_pairs,
     }
 
 

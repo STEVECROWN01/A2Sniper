@@ -217,40 +217,45 @@ class Backtester:
             score = int(signal.get('score', 0))
             classification = signal.get('classification', '')
 
-            # ─── MODEL EXECUTION LATENCY ──────────────────────────────
-            # In reality, the user places the trade ~20 seconds after the
-            # candle closes (backend emit → frontend poll → user reads →
-            # switches to po.trade → places trade).
+            # ─── MODEL EXECUTION LATENCY (15 SECONDS — matches user behavior) ──
+            # User confirmed: they place the trade EXACTLY 15 seconds after the
+            # signal is produced. So:
+            #   - ENTRY price = price at (candle_close_time + 15s) — when user clicks "Buy"
+            #   - EXIT price  = price at (candle_close_time + 15s + expiration_minutes)
             #
-            # On M5 data: 20s after close is still WITHIN the same M5 candle's
-            # timeframe. The price 20s after close ≈ the close price itself
-            # (within 1-3 pips). So we use the close price as the entry price.
+            # The stored signal['entry_price'] is the candle close (T+0), but the
+            # user's actual entry is at T+15s — which can differ by 1-5 pips on
+            # volatile pairs. We must use the REAL entry price for accurate win/loss.
             #
-            # On M1 data: 20s after close is 1/3 of the way into the NEXT M1
-            # candle. We use the next candle's open as a proxy (1 min after
-            # close — overestimates the latency slightly, but it's the most
-            # granular data available without tick-level history).
+            # How we approximate T+15s on different data granularities:
+            #   - M1 data: 15s = 25% into the NEXT M1 candle. We use the next
+            #     candle's open as a proxy (≈60s after close — slightly overestimates
+            #     the latency, but it's the most granular data available).
+            #   - M5 data: 15s after close is still WITHIN the same M5 candle's
+            #     timeframe (3% of the 5-min window). The price 15s after close ≈
+            #     the close price itself (within 1-2 pips). So we use close price.
             #
-            # The exit price is always the close of the candle `candles_forward`
-            # candles ahead (e.g., 1 M5 candle = 5 min later).
+            # The exit price is the close of the candle `candles_forward` candles
+            # ahead (e.g., 1 M5 candle = 5 min later).
             if median_minutes <= 2:
-                # M1 data: use next candle's open (≈1 min after close)
+                # M1 data: use next candle's open as proxy for entry at T+15s
                 if i + 1 < len(df):
                     next_candle = df.iloc[i + 1]
                     entry_price = float(next_candle['open'])
                 else:
                     entry_price = candle_close_price
             else:
-                # M5+ data: 20s after close ≈ close price (negligible slippage)
-                # Use the close price directly — the 20s latency on a 5-min
-                # candle is only 6.7% of the trade window, and the price
-                # 20s after close is within the bid-ask spread of the close.
+                # M5+ data: 15s after close ≈ close price (negligible slippage)
                 entry_price = candle_close_price
 
             entry_slippage = entry_price - candle_close_price  # positive = worse for CALL, better for PUT
 
             # Exit: look forward `candles_forward` candles from the signal candle.
-            # On M5 with 5min expiry: 1 candle forward = the next M5 candle's close.
+            # On M5 with 3-min expiry: we need to look forward 1 candle (5 min).
+            # NOTE: This is approximate — for a 3-min expiry on M5 data, the exit
+            # actually happens 3 minutes after entry (T+15s+3min), which is mid-way
+            # through the next M5 candle. Using the next candle's close overestimates
+            # by 2 minutes. This is a known limitation of M5-only backtesting.
             exit_idx = i + candles_forward
             if exit_idx >= len(df):
                 continue  # Not enough data to resolve
@@ -258,7 +263,9 @@ class Backtester:
             exit_price = float(df.iloc[exit_idx]['close'])
             exit_time = df.index[exit_idx]
 
-            # Determine outcome (binary option: strictly above/below entry)
+            # Determine outcome (matching Pocket Option rules EXACTLY):
+            #   CALL: WIN if exit > entry, LOSS if exit < entry, NULL (refund) if equal
+            #   PUT:  WIN if exit < entry, LOSS if exit > entry, NULL (refund) if equal
             if direction == 'CALL':
                 is_win = exit_price > entry_price
             elif direction == 'PUT':
@@ -266,7 +273,7 @@ class Backtester:
             else:
                 continue
 
-            # Tie (exact same price — rare but possible)
+            # Tie (equal price) = refund on Pocket Option — excluded from win/loss stats
             is_tie = exit_price == entry_price
 
             results.append({
