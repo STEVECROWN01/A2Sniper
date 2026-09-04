@@ -3838,8 +3838,14 @@ def _verify_admin_credentials(email: str, password: str) -> bool:
 
     Returns True only if BOTH email and password match. If ADMIN_EMAIL or
     ADMIN_PASSWORD env vars are unset, returns False (refuse all admin logins).
+
+    Email comparison is CASE-INSENSITIVE (both sides lowercased) — so
+    'Admin@example.com' in the env var matches 'admin@example.com' typed by
+    the user. This was a bug: previously only the user input was lowercased,
+    so any uppercase letters in the env var caused login to fail with
+    'Invalid admin credentials' even when the email was correct.
     """
-    expected_email = os.environ.get("ADMIN_EMAIL", "").strip()
+    expected_email = os.environ.get("ADMIN_EMAIL", "").strip().lower()  # FIX: lowercase both sides
     expected_password = os.environ.get("ADMIN_PASSWORD", "")
     if not expected_email or not expected_password:
         logger.error("[ADMIN-AUTH] ADMIN_EMAIL or ADMIN_PASSWORD env var not set — refusing admin login.")
@@ -3895,9 +3901,19 @@ async def admin_login_initiate(request: Request):
         raise HTTPException(status_code=400, detail="Email and password are required")
 
     if not _verify_admin_credentials(email, password):
-        # Log the attempt (without revealing which field was wrong) and return
-        # a generic error. Add a small delay to slow down brute-force attempts.
-        logger.warning(f"[ADMIN-AUTH] Failed initiate for email={email[:3]}*** (bad credentials)")
+        # Log the attempt with diagnostic info (without leaking the password).
+        # This helps diagnose whether the email or password mismatched.
+        expected_email_env = os.environ.get("ADMIN_EMAIL", "").strip().lower()
+        expected_pw_set = bool(os.environ.get("ADMIN_PASSWORD", ""))
+        email_match = email == expected_email_env if expected_email_env else False
+        logger.warning(
+            f"[ADMIN-AUTH] Failed initiate — "
+            f"entered_email={email[:3]}***, "
+            f"env_email_set={bool(expected_email_env)}, "
+            f"env_email_match={email_match}, "
+            f"env_pw_set={expected_pw_set}, "
+            f"entered_pw_length={len(password)}"
+        )
         await asyncio.sleep(0.5)
         raise HTTPException(status_code=401, detail="Invalid admin credentials")
 
