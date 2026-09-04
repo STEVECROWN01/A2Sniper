@@ -225,16 +225,11 @@ def generate_ace_signal(df: pd.DataFrame, payout: float, fast_mode: bool = False
             logger.info(f"[ACE] Price too far from EMA21 ({ema21_dist_atr:.2f} ATR) — waiting for pullback")
             return None
 
-        # ─── DISABLE PUT SIGNALS IN TREND CONTINUATION ────────────
-        # CONFIRMED BY USER TRADING FEEDBACK: OTC feeds have a bullish bias
-        # — price drifts upward even in "downtrends," killing PUT signals
-        # over the 3-min expiry. ACE trend continuation PUTs previously
-        # had a 36.4% win rate (vs CALLs 62.5%). User reported catastrophic
-        # losses after commit aa2e28a briefly re-enabled PUTs.
-        #
+        # ─── PUT signals NOT emitted (OTC bullish bias — confirmed by live trading) ─
+        # ACE trend continuation PUTs had a 36.4% win rate (vs CALLs 62.5%).
         # Only CALL signals are emitted from trend continuation.
         if direction == 'PUT':
-            logger.info("[ACE] Trend continuation PUT disabled (36.4% WR — OTC bullish bias, confirmed by live trading). Only CALLs emitted in this strategy.")
+            logger.info("[ACE] Trend continuation PUT — CALL-only engine, skipping.")
             return None
 
         # ─── CONFIRMATION: candle closed in trend direction ───────
@@ -450,94 +445,11 @@ def generate_ace_signal(df: pd.DataFrame, payout: float, fast_mode: bool = False
             result['payout'] = payout
             return result
 
-        # PUT: price pierced above upper BB
-        # DISABLED: OTC feeds have a bullish bias — PUT signals underperform.
-        # CONFIRMED BY USER TRADING FEEDBACK: catastrophic losses after
-        # commit aa2e28a briefly re-enabled PUTs. Only CALL signals
-        # (lower BB pierce + reversal) are emitted.
-        if curr_high >= bbu and bbu > 0:
-            logger.info(f"[ACE] Price pierced upper BB ({curr_high:.5f} >= {bbu:.5f}) — PUT disabled (OTC bullish bias, confirmed by live trading). Skipping.")
-            return None
-
-            # Candle must close back inside the band (below BBU)
-            if close >= bbu:
-                logger.info("[ACE] PUT: close still above BBU — no recovery, skipping")
-                return None
-
-            # RSI must be overbought (> 60 — relaxed from 65)
-            # H5 FIX: restored from 60 to 70 (industry standard overbought).
-            if rsi <= 70:
-                logger.info(f"[ACE] PUT: RSI={rsi:.1f} not overbought (> 65 needed), skipping")
-                return None
-
-            # Reversal candle confirmation
-            has_reversal = _detect_reversal_candle(df, 'PUT')
-            if not has_reversal:
-                logger.info("[ACE] PUT: no reversal candle (shooting star/engulfing), skipping")
-                return None
-
-            # ─── WINRATE ───────────────────────────────────────────
-            winrate = 58
-            if rsi > 75:
-                winrate += 3  # Deeply overbought
-            if m5_trend == 'DOWNTREND':
-                winrate += 2  # M5 aligned (bonus)
-
-            winrate = min(winrate, 65)
-
-            classification = f'ACE BB Reversal (PUT, ADX={adx:.0f}, RSI={rsi:.0f}, BBU pierce'
-            if m5_trend == 'DOWNTREND':
-                classification += ', M5 downtrend'
-            classification += ')'
-
-            factors_hit = ['bbu_pierce', f'rsi_overbought_{rsi:.0f}', 'reversal_candle']
-            factors_description = [
-                f'Price pierced upper Bollinger Band ({bbu:.5f}) and closed back inside ({close:.5f})',
-                f'RSI={rsi:.1f} (overbought)',
-                'Reversal candle detected (shooting star or bearish engulfing)',
-            ]
-            if m5_trend == 'DOWNTREND':
-                factors_hit.append('m5_downtrend')
-                factors_description.append('M5 timeframe: DOWNTREND')
-
-            logger.info(
-                f"[ACE-SIGNAL] PUT — BB Reversal, ADX={adx:.1f}, RSI={rsi:.1f}, "
-                f"BBU pierce + recovery, winrate={winrate}%"
-            )
-
-            result = {
-                'direction': 'PUT',
-                'score': 3,
-                'max_score': 4,
-                'winrate': winrate,
-                'expiration': 3,
-                'entry_price': close,
-                'classification': classification,
-                'factors': {
-                    'factors_hit': factors_hit,
-                    'factors_description': factors_description,
-                    'call_score': 0,
-                    'put_score': 3,
-                    'rsi': rsi,
-                    'adx': adx,
-                    'ema21': ema21,
-                    'ema9': ema9,
-                    'atr': atr,
-                    'm5_trend': m5_trend,
-                    'm5_aligned': m5_trend == 'DOWNTREND',
-                    'strategy': 'bb_reversal',
-                    'bbl': bbl,
-                    'bbu': bbu,
-                    'stoch_k': float(last.get('STOCH_K', 50)) if 'STOCH_K' in df.columns else 50,
-                    'cci': float(last.get('CCI_20', 0)) if 'CCI_20' in df.columns else 0,
-                    'reversal_pattern': 'shooting_star_or_engulfing',
-                },
-                'mode': 'ACE',
-                'timestamp': datetime.now(timezone.utc).isoformat(),
-            }
-
-            result['payout'] = payout
-            return result
+        # PUT BB reversal code has been REMOVED.
+        # PUT signals are not emitted on Pocket Option OTC (OTC bullish bias —
+        # confirmed by live trading). The entire PUT BB reversal block (formerly
+        # lines 448-535) was dead code after the early return and has been deleted.
+        # Only CALL signals (lower BB pierce + reversal) are emitted.
 
         logger.info("[ACE] No BB pierce detected — price not at band extreme, skipping")
         return None

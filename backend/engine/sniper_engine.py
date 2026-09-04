@@ -426,19 +426,13 @@ def generate_sniper_signal(df: pd.DataFrame, payout: float, min_factors: int = 4
         logger.info(f"[PRICE-ACTION] No candlestick pattern on last candle — skipping")
         return None
 
-    # ─── PUT SIGNALS DISABLED (OTC bullish bias confirmed by user feedback) ───
-    # The user's pre-fix trading history showed consistent wins with CALL-only
-    # signals. After commit aa2e28a briefly re-enabled PUTs, the user reported
-    # catastrophic losses — confirming that on Pocket Option OTC feeds, PUT
-    # signals systematically underperform (the broker-controlled feed drifts
-    # upward even during "bearish" periods, killing PUT signals over 3-min expiry).
-    #
-    # This is the original behavior, restored. Only CALL signals are emitted.
-    # The Sniper engine's pattern detector still runs for both directions
-    # (so the engine doesn't crash if it encounters a bearish pattern), but
-    # any PUT-direction pattern is filtered out here.
+    # PUT signals are NOT emitted on Pocket Option OTC (OTC feeds have a bullish
+    # bias — confirmed by live trading). The pattern detector still detects PUT
+    # patterns, but we only proceed with CALL patterns. PUT patterns fall through
+    # naturally (no level_match for PUT, no M5 alignment for PUT) and return None
+    # at the confluence check below.
     if pattern_direction == 'PUT':
-        logger.info(f"[PRICE-ACTION] PUT pattern detected ({pattern}) — disabled (OTC bullish bias, confirmed by live trading). Only CALLs emitted.")
+        logger.info(f"[PRICE-ACTION] PUT pattern detected ({pattern}) — CALL-only engine, skipping.")
         return None
 
     logger.info(f"[PRICE-ACTION] Pattern: {pattern} ({pattern_direction}) — {pattern_result['description']}")

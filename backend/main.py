@@ -937,35 +937,38 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False, return_can
     # Reverted to ACE → Sniper (3-min expiry) which gave the user consistent
     # wins before the C5 fix. Momentum engine remains imported and available
     # for future A/B testing behind a feature flag, but is NOT called by default.
+    # ═══ ENGINE SELECTION: ACE ONLY (Sniper fallback REMOVED) ════════
+    # The Sniper fallback was REMOVED because it produced fake/low-quality
+    # signals that lost 80% of trades (proven by backtest: 18.9% win rate
+    # over 1,611 signals). When ACE finds nothing, the system returns NO
+    # signal — this is correct behavior. Better to have no signal than a
+    # bad signal that loses money.
+    #
+    # The momentum_engine was also briefly tested and caused catastrophic
+    # live trading losses — it is NOT called.
     if strict_mode:
-        # Signals page → ACE first, then Option D (strict) fallback.
+        # Signals page → ACE only
         engine_result = generate_ace_signal(df_with_indicators, payout)
         if engine_result is not None:
             logger.info(f"[{pair}] ACE signal found — using ACE (3m expiry, reversal setup)")
         else:
-            logger.info(f"[{pair}] No ACE signal — falling back to Option D (pattern + BOTH bonuses)")
-            engine_result = generate_sniper_signal(df_with_indicators, payout, strict_mode=True)
-            if engine_result is None:
-                logger.info(
-                    f"[{pair}] No Option D signal either — no pattern at key level. "
-                    f"candles={len(df_with_indicators)}, mode=signals page"
-                )
-                return None
+            logger.info(
+                f"[{pair}] No ACE signal — no signal emitted (Sniper fallback removed). "
+                f"candles={len(df_with_indicators)}, mode=signals page"
+            )
+            return None
     else:
-        # Bot → ACE first, then Option C (looser) fallback
+        # Bot → ACE only
         engine_result = generate_ace_signal(df_with_indicators, payout)
         if engine_result is not None:
             logger.info(f"[{pair}] ACE signal found — using ACE (3m expiry, reversal setup)")
         else:
-            logger.info(f"[{pair}] No ACE signal — falling back to Option C (pattern + 1 bonus)")
-            engine_result = generate_sniper_signal(df_with_indicators, payout, strict_mode=False)
-            if engine_result is None:
-                logger.info(
-                    f"[{pair}] No Option C signal either — no pattern at key level. "
-                    f"candles={len(df_with_indicators)}, mode=bot"
-                )
-                return None
-    engine_result.setdefault('engine_source', 'ace_or_sniper')
+            logger.info(
+                f"[{pair}] No ACE signal — no signal emitted (Sniper fallback removed). "
+                f"candles={len(df_with_indicators)}, mode=bot"
+            )
+            return None
+    engine_result.setdefault('engine_source', 'ace')
 
     sniper_result = engine_result
 
@@ -1748,9 +1751,28 @@ async def resolution_loop():
                 
                 for s in active_signals:
                     s_timestamp = s.timestamp.replace(tzinfo=timezone.utc) if s.timestamp.tzinfo is None else s.timestamp
-                    # Expiry = signal timestamp + expiration minutes (NOT candle boundary)
-                    # Each signal expires at its own time based on when it was generated.
-                    expiry_time = s_timestamp + timedelta(minutes=s.expiration or 1)
+                    # Expiry = signal timestamp + EXECUTION LATENCY + expiration minutes
+                    #
+                    # EXECUTION LATENCY FIX:
+                    # The signal timestamp is when the SYSTEM emitted the signal.
+                    # But the user places the trade on Pocket Option 10-30 seconds
+                    # LATER (time to: receive notification → read it → switch to PO →
+                    # place trade). So the user's actual trade expires 10-30 seconds
+                    # AFTER what the system calculates.
+                    #
+                    # Before this fix: system checked price at signal_time + 3 min
+                    #                  PO actually expired at (signal_time + ~20s) + 3 min
+                    #                  → 15-20 second discrepancy → wrong win/loss
+                    #
+                    # After this fix: system checks at signal_time + 20s + 3 min
+                    #                 → matches when the user's PO trade actually expires
+                    #
+                    # This is why the user saw "I won on PO but system shows loss"
+                    # (system checked too early, price hadn't moved yet) and
+                    # "I lost on PO but system shows win" (system checked too early,
+                    # price hadn't dropped yet).
+                    EXECUTION_LATENCY_SECONDS = 20  # realistic: notification → read → switch to PO → place trade
+                    expiry_time = s_timestamp + timedelta(seconds=EXECUTION_LATENCY_SECONDS) + timedelta(minutes=s.expiration or 1)
                     
                     if now >= expiry_time:
                         # ─── ACCURATE WIN/LOSS DETERMINATION ───────────────
