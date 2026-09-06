@@ -49,7 +49,16 @@ if _is_pg and '?' in DATABASE_URL:
     DATABASE_URL = DATABASE_URL.split('?')[0]
     logger.info(f"[DB] Stripped query parameters from DATABASE_URL for asyncpg compatibility")
 
-connect_args = {"statement_cache_size": 0} if _is_pg else {}
+# Supabase requires SSL — asyncpg needs sslmode=require to connect.
+# Without this, the connection fails with "Network is unreachable" or
+# "connection refused" because Supabase rejects non-SSL connections.
+if _is_pg:
+    connect_args = {
+        "statement_cache_size": 0,
+        "ssl": "require",  # Force SSL — required by Supabase
+    }
+else:
+    connect_args = {}
 
 engine = create_async_engine(
     DATABASE_URL,
