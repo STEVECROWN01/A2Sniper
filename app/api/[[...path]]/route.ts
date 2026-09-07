@@ -209,6 +209,19 @@ async function proxyRequest(request: NextRequest, path?: string[]) {
   // ====== TOKEN INJECTION ======
   // For non-auth endpoints, read the access token from cookie and inject Authorization header
   if (!TOKEN_AUTH_ENDPOINTS.includes(endpoint) && endpoint !== '/api/auth/logout') {
+    // ─── ADMIN TOKEN INJECTION ─────────────────────────────────
+    // For /api/admin/* endpoints, the admin frontend sends the admin_token
+    // cookie (set by /api/admin-login route handler). The backend's
+    // require_admin dependency reads the Authorization: Bearer header.
+    // We need to inject the admin_token cookie as the Authorization header
+    // so the backend can verify it.
+    if (endpoint.startsWith('/api/admin/')) {
+      const adminToken = request.cookies.get('admin_token')?.value;
+      if (adminToken) {
+        headers['authorization'] = `Bearer ${adminToken}`;
+      }
+    }
+
     let accessToken = request.cookies.get(ACCESS_TOKEN_COOKIE)?.value;
 
     // If access token is expired, try to refresh it first

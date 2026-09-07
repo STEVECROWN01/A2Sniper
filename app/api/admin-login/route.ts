@@ -4,13 +4,21 @@
  * The browser cannot set httpOnly cookies directly, so the frontend posts the
  * signed admin token (returned by the backend's /api/admin/login/verify) to
  * this same-origin route handler. We then set the httpOnly admin_token cookie
- * with a 10-minute TTL, scoped to /admin-dawes-stevens-2026.
+ * with a 10-minute TTL.
+ *
+ * IMPORTANT: The cookie path MUST be '/' (root), NOT '/admin-dawes-stevens-2026'.
+ * Why: the admin frontend makes API calls to /api/admin/* (e.g., /api/admin/config),
+ * and those calls go through the Vercel proxy (app/api/[[...path]]/route.ts) which
+ * forwards them to the backend. The backend reads the admin_token from the
+ * Authorization header — but the Vercel proxy reads it from the cookie and injects
+ * it into the header. If the cookie is scoped to /admin-dawes-stevens-2026, it is
+ * NOT sent on /api/admin/* requests, so the backend always sees "no token" → 401.
  *
  * Security:
  *   - httpOnly: not accessible to JS (XSS cannot exfiltrate)
  *   - secure: HTTPS only in production
- *   - sameSite=lax: sent on same-site navigations to /admin-dawes-stevens-2026/*
- *   - path=/admin-dawes-stevens-2026: only sent on admin routes (minimizes exposure)
+ *   - sameSite=lax: sent on same-site navigations and API calls
+ *   - path=/: sent on ALL requests (needed for /api/admin/* API calls)
  *
  * The cookie value is a signed JWT (HS256) produced by the backend using
  * ADMIN_SECRET_TOKEN. The edge middleware verifies it via crypto.subtle.
@@ -48,7 +56,8 @@ export async function POST(request: NextRequest) {
     httpOnly: true,
     secure: isProduction,
     sameSite: 'lax',
-    path: '/admin-dawes-stevens-2026',
+    path: '/',  // FIX: was '/admin-dawes-stevens-2026' — must be '/' so the
+                // cookie is sent on /api/admin/* API calls too
     maxAge: ADMIN_TOKEN_TTL_SECONDS,
   });
 
@@ -64,7 +73,7 @@ export async function DELETE() {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
     sameSite: 'lax',
-    path: '/admin-dawes-stevens-2026',
+    path: '/',  // FIX: must match the POST path so the cookie is properly deleted
     maxAge: 0, // delete
   });
   return response;
