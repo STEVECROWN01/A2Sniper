@@ -678,8 +678,32 @@ async def store_refresh_token(user_id: str, refresh_token: str, request: Request
 
 # Admin authentication dependency
 async def require_admin(credentials: HTTPAuthorizationCredentials = Security(security)):
-    """Verify the user is an admin. Must be used on all admin endpoints."""
+    """Verify the user is an admin. Must be used on all admin endpoints.
+
+    Two token types are accepted:
+    1. Admin tokens (signed with ADMIN_SECRET_TOKEN, purpose='admin')
+       — issued by /api/admin/login/verify after 2FA
+    2. Regular access tokens (signed with JWT_SECRET_KEY, type='access')
+       — issued by /api/auth/login, user must have is_admin=True
+    """
     token = credentials.credentials
+
+    # ─── Try admin token first (signed with ADMIN_SECRET_TOKEN) ───
+    admin_secret = os.environ.get("ADMIN_SECRET_TOKEN", "")
+    if admin_secret and len(admin_secret) >= 16:
+        try:
+            import jwt as pyjwt
+            payload = pyjwt.decode(token, admin_secret, algorithms=["HS256"])
+            if payload.get("purpose") == "admin":
+                # Valid admin token — grant access
+                logger.debug(f"[ADMIN-AUTH] Admin token verified for {payload.get('email', 'unknown')}")
+                return payload
+        except pyjwt.ExpiredSignatureError:
+            raise HTTPException(status_code=401, detail="Admin token expired — please log in again")
+        except pyjwt.InvalidTokenError:
+            pass  # Not an admin token — fall through to regular access token check
+
+    # ─── Fall back to regular access token (for is_admin users) ───
     payload = decode_access_token(token)
 
     # Check if token is revoked
