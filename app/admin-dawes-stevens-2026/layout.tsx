@@ -37,7 +37,7 @@ export default function AdminLayout({
 }) {
   const pathname = usePathname();
   const router = useRouter();
-  const { isAuthenticated, user, isInitialized } = useAppStore();
+  const { isInitialized } = useAppStore();
   const isLoginPage = pathname === '/admin-dawes-stevens-2026/login';
 
   // Dynamic system info (fetched from API)
@@ -92,13 +92,11 @@ export default function AdminLayout({
 
   // While checking admin auth status, show a loading state
   // (only on non-login pages — login page should always render immediately)
-  if (!isLoginPage && isAdminAuthed === null) {
-    return (
-      <div className="min-h-screen bg-[#050505] flex items-center justify-center">
-        <div className="text-[#D4AF37] text-sm font-mono animate-pulse">Verifying admin session...</div>
-      </div>
-    );
-  }
+  // NOTE: This conditional render is AFTER all hooks (including the fetchAdminInfo
+  // useEffect below) to comply with React's Rules of Hooks. The early return is
+  // done via a conditional in the main render, not a return statement, so all
+  // hooks are always called in the same order.
+  const showLoadingScreen = !isLoginPage && isAdminAuthed === null;
 
   // Fetch admin config for dynamic IP/2FA/uptime
   useEffect(() => {
@@ -192,6 +190,15 @@ export default function AdminLayout({
     }
     window.location.href = '/admin-dawes-stevens-2026/login';
   };
+
+  // Show loading screen while checking admin auth (on non-login pages only)
+  if (showLoadingScreen) {
+    return (
+      <div className="min-h-screen bg-[#050505] flex items-center justify-center">
+        <div className="text-[#D4AF37] text-sm font-mono animate-pulse">Verifying admin session...</div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[#050505] text-white font-mono flex">
