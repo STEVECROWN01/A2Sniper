@@ -46,15 +46,59 @@ export default function AdminLayout({
   const [uptime, setUptime] = useState<string>('...');
   const [serverStartTime, setServerStartTime] = useState<number | null>(null);
 
-  // Auth protection: redirect to admin login if not authenticated or not admin
+  // Auth protection: redirect to admin login if not authenticated via admin_token cookie.
+  //
+  // The admin login flow (email + password + OTP) sets an httpOnly `admin_token`
+  // cookie via the /api/admin-login route handler. It does NOT set the regular
+  // user auth store (isAuthenticated, user) — those are for regular users who
+  // logged in via /login (email/password or Google OAuth).
+  //
+  // Previously, this component checked `!isAuthenticated || !user?.is_admin`
+  // which was ALWAYS false for admin logins (because admin login doesn't set
+  // the regular user auth state). This caused an immediate redirect to login
+  // even though the admin_token cookie was valid.
+  //
+  // FIX: check for the admin_token cookie instead. Since the cookie is httpOnly,
+  // we can't read it directly in JS — but we CAN check if the admin API calls
+  // succeed (which means the cookie is present and valid). We use a simple
+  // "ping" to /api/admin/config: if 200, we're authenticated; if 401, redirect.
+  const [isAdminAuthed, setIsAdminAuthed] = useState<boolean | null>(null);
+
   useEffect(() => {
     if (!isInitialized) return;
     if (isLoginPage) return; // Don't redirect on login page itself
-    
-    if (!isAuthenticated || !user?.is_admin) {
-      router.push('/admin-dawes-stevens-2026/login');
-    }
-  }, [isAuthenticated, user, isInitialized, isLoginPage, router]);
+
+    // Check if the admin_token cookie is valid by pinging the admin API.
+    // The cookie is httpOnly so we can't read it directly — but if the API
+    // returns 200, the cookie is present and the token is valid.
+    const checkAdminAuth = async () => {
+      try {
+        const url = getApiUrl();
+        const res = await fetch(`${url}/api/admin/config`, { credentials: 'include' });
+        if (res.ok) {
+          setIsAdminAuthed(true);
+        } else {
+          setIsAdminAuthed(false);
+          router.push('/admin-dawes-stevens-2026/login');
+        }
+      } catch {
+        setIsAdminAuthed(false);
+        router.push('/admin-dawes-stevens-2026/login');
+      }
+    };
+
+    checkAdminAuth();
+  }, [isInitialized, isLoginPage, router]);
+
+  // While checking admin auth status, show a loading state
+  // (only on non-login pages — login page should always render immediately)
+  if (!isLoginPage && isAdminAuthed === null) {
+    return (
+      <div className="min-h-screen bg-[#050505] flex items-center justify-center">
+        <div className="text-[#D4AF37] text-sm font-mono animate-pulse">Verifying admin session...</div>
+      </div>
+    );
+  }
 
   // Fetch admin config for dynamic IP/2FA/uptime
   useEffect(() => {
