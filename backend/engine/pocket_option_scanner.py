@@ -1554,15 +1554,20 @@ class PocketOptionScanner:
             if not ticks:
                 continue
 
-            # Normalize asset name: ensure it has _otc suffix for consistency
-            # PO sends some symbols WITHOUT _otc (e.g., "AUDCAD") and others WITH ("AUDCAD_otc").
-            # The trading loop looks up pairs as "AUDCAD_otc" (via get_asset_symbol).
-            # Without normalization, the cache key "AUDCAD_1m" != "AUDCAD_otc_1m" → 0 candles found.
-            asset_norm = asset
-            if not asset_norm.endswith('_otc') and not asset_norm.endswith('_OTC'):
-                # Check if this looks like an OTC forex pair (6-letter forex without _otc)
-                if _FOREX_FILTER_AVAILABLE and _is_forex_pair(asset_norm):
-                    asset_norm = asset_norm + '_otc'
+            # Normalize asset name for case consistency, but DO NOT add _otc
+            # suffix to non-OTC symbols. OTC and non-OTC are DIFFERENT MARKETS
+            # with different prices. Mixing them would corrupt the candle data.
+            #
+            # PREVIOUSLY: the code added _otc to non-_otc symbols (e.g., "AUDCAD"
+            # → "AUDCAD_otc"). This mixed non-OTC ticks (price ~0.721) into the
+            # OTC candle cache (which should only have OTC ticks at ~0.749).
+            # The resulting M1 candles had wrong OHLC values, causing the
+            # resolution loop to compute wrong entry/exit prices.
+            #
+            # FIX: Only normalize the case. If PO sends "AUDCAD" (non-OTC), store
+            # under "AUDCAD_1m". If PO sends "AUDCAD_otc" (OTC), store under
+            # "AUDCAD_otc_1m". Never mix the two.
+            asset_norm = asset  # Keep the original symbol as-is
 
             # Sort by timestamp
             ticks.sort(key=lambda t: t[0])
@@ -2735,31 +2740,39 @@ class PocketOptionScanner:
         """Return the most recent live tick price for an asset, or None.
 
         Looks up the live tick buffer (populated by `_process_tick_stream`)
-        under multiple symbol variants (with/without _otc suffix, lower/upper
-        case). This is the FASTEST and most accurate way to get the current
-        market price — no candle aggregation lag, no resample lag.
+        under the EXACT symbol name only. Does NOT fall back to non-OTC
+        variants — OTC and non-OTC prices are completely different markets.
 
-        Used by `get_candles(timeframe='5m')` to inject the live tick as the
-        close of the current M5 candle, so the engine's `entry_price` matches
-        what the user sees on PO's chart.
+        FIX: Previously tried multiple symbol variants (AUDUSD_otc, audusd,
+        AUDUSD, etc.) and would fall through to the non-OTC tick if the OTC
+        tick was stale. This caused wildly wrong entry/exit prices because
+        non-OTC AUDUSD (0.721) is a different market than OTC AUDUSD_otc
+        (0.749). Now we ONLY use the exact symbol match — no cross-market
+        fallback.
         """
         if not self._tick_buffer:
             return None
-        # Build candidate asset names (same logic as get_payout)
-        base = asset
-        base_lower = base.lower()
-        candidates = [
-            asset,
-            base_lower,
-            base_lower.replace('_otc', ''),
-            base_lower.replace('_otc', '') + '_otc' if not base_lower.endswith('_otc') else base_lower,
-            # Also try WITHOUT _otc suffix in case PO sends ticks under the
-            # non-OTC symbol name (e.g. "AUDCAD" instead of "AUDCAD_otc")
-            base_lower.replace('_otc', '') if '_otc' in base_lower else base_lower,
-            # And try uppercase variants
-            base.upper(),
-            base.upper().replace('_OTC', ''),
-        ]
+
+        # Build candidate asset names — but NEVER mix OTC and non-OTC.
+        # If the asset is _otc, we ONLY try _otc variants (with case variations).
+        # If the asset is non-OTC, we ONLY try non-OTC variants.
+        is_otc = '_otc' in asset.lower()
+        if is_otc:
+            # OTC pair: only try OTC variants (different cases)
+            candidates = [
+                asset,                           # "AUDUSD_otc"
+                asset.lower(),                   # "audusd_otc"
+                asset.upper(),                   # "AUDUSD_OTC"
+                asset.lower().replace('_otc', '_OTC'),  # mixed case
+            ]
+        else:
+            # Non-OTC pair: only try non-OTC variants
+            candidates = [
+                asset,                           # "EURUSD"
+                asset.lower(),                   # "eurusd"
+                asset.upper(),                   # "EURUSD"
+            ]
+
         for cand in candidates:
             if not cand:
                 continue
