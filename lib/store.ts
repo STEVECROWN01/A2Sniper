@@ -70,6 +70,7 @@ interface AppState {
   totalWon: number;
   totalLost: number;
   resetTimestamp: number | null; // When user clicks reset, signals older than this are hidden
+  _seenSignalIds: Set<string>; // Track which signal IDs we've already played sound for (prevents ringing for all existing signals on page load)
   userStats: UserStats;
   selectedPairs: string[];
   isAuthenticated: boolean;
@@ -141,6 +142,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   totalWon: 0,
   totalLost: 0,
   resetTimestamp: null,
+  _seenSignalIds: new Set<string>(),
   userStats: mockUserStats,
   selectedPairs: ['EUR/USD OTC', 'GBP/USD OTC', 'USD/JPY OTC'],
   isAuthenticated: false,
@@ -334,15 +336,34 @@ export const useAppStore = create<AppState>((set, get) => ({
         const displayLost = parsedSignals.filter((s: Signal) => s.status === 'LOST').length;
 
         // ─── NEW SIGNAL DETECTION + SOUND NOTIFICATION ──────────────
-        // If so, play the user's selected notification sound.
-        // This fires when the page is open and the backend emits a new signal.
-        // (When the page is closed, the service worker handles it via Web Push.)
+        // Plays the user's selected notification sound when a NEW signal arrives.
+        //
+        // PREVIOUS BUG: The condition was `currentSignals.length > 0 && parsedSignals.length > 0`
+        // — this meant the sound ONLY played if there were already signals in the
+        // store. After a page reload, reset, or first load, `currentSignals` was
+        // empty, so the sound NEVER played even when new signals arrived.
+        //
+        // FIX: Track which signal IDs we've already "seen" (played sound for or
+        // silently acknowledged on first load). This way:
+        // - On first load: existing signals are silently marked as "seen" (no sound)
+        // - On subsequent polls: only NEW signals (not in seenSet) trigger the sound
         const currentSignals = get().signals;
-        if (currentSignals.length > 0 && parsedSignals.length > 0) {
-          const currentIds = new Set(currentSignals.map((s: Signal) => s.id));
-          const newSignals = parsedSignals.filter((s: Signal) => !currentIds.has(s.id));
+        const seenIds = get()._seenSignalIds || new Set<string>();
+
+        // If this is the first load (currentSignals is empty but parsedSignals has data),
+        // mark all existing signals as "seen" without playing a sound
+        if (currentSignals.length === 0 && parsedSignals.length > 0) {
+          parsedSignals.forEach((s: Signal) => seenIds.add(s.id));
+          set({ _seenSignalIds: seenIds });
+        } else if (parsedSignals.length > 0) {
+          // Subsequent poll — check for NEW signals not in seenIds
+          const newSignals = parsedSignals.filter((s: Signal) => !seenIds.has(s.id));
           if (newSignals.length > 0) {
-            // New signal(s) detected — play sound
+            // Mark the new signals as seen
+            newSignals.forEach((s: Signal) => seenIds.add(s.id));
+            set({ _seenSignalIds: seenIds });
+
+            // Play sound
             const sound = typeof window !== 'undefined'
               ? localStorage.getItem('a2sniper_notification_sound') || 'bell'
               : 'bell';

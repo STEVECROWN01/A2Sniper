@@ -163,11 +163,20 @@ export default function SignalsPage() {
     };
   }, [signals, totalSignals, totalActive, totalWon, totalLost]);
 
-  // Load resetTimestamp from localStorage on mount — this makes the reset
-  // persist across page reloads and Railway redeploys. Without this, the
-  // resetTimestamp in the Zustand store gets wiped on page reload, and all
-  // old signals come back.
+  // Load resetTimestamp from localStorage AND fetch signals — in a SINGLE
+  // useEffect to prevent a race condition.
+  //
+  // RACE CONDITION (previous code):
+  // Two separate useEffects ran on mount. React doesn't guarantee their order.
+  // If the fetchSignals effect ran BEFORE the localStorage effect, resetTimestamp
+  // was still null → sinceParam was empty → backend returned ALL signals (old
+  // data). This is why old data flashed on screen after reset/refresh.
+  //
+  // FIX: Load resetTimestamp first (synchronously from localStorage), THEN
+  // start the polling interval. This guarantees the since parameter is always
+  // sent on the first poll.
   useEffect(() => {
+    // Step 1: Load resetTimestamp from localStorage BEFORE any API call
     if (typeof window !== 'undefined') {
       const saved = localStorage.getItem('a2sniper_reset_timestamp');
       if (saved) {
@@ -177,20 +186,17 @@ export default function SignalsPage() {
         }
       }
     }
-  }, []);
 
-  useEffect(() => {
+    // Step 2: Now fetch signals (resetTimestamp is set, so sinceParam will be sent)
     const store = useAppStore.getState();
     if (store.fetchSignals) store.fetchSignals();
     if (store.fetchMarketStatus) store.fetchMarketStatus();
 
-    // Real-time refresh every 5s (was 1s — caused event-loop contention
-    // with the backend trading loop, delaying signal delivery by 60+s).
-    // 5s is fast enough for countdown accuracy (the card itself ticks
-    // every 1s client-side) while keeping the backend responsive.
+    // Real-time refresh every 5s
     const apiTimer = setInterval(() => {
-      if (store.fetchSignals) store.fetchSignals();
-      if (store.fetchMarketStatus) store.fetchMarketStatus();
+      const s = useAppStore.getState();
+      if (s.fetchSignals) s.fetchSignals();
+      if (s.fetchMarketStatus) s.fetchMarketStatus();
     }, 5000);
 
     return () => clearInterval(apiTimer);
