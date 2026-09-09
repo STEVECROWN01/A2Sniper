@@ -1859,6 +1859,35 @@ async def resolution_loop():
                                     f"exit@expiry={exit_price} (stored_entry={s.entry_price})"
                                 )
 
+                                # ─── SANITY CHECK: reject corrupted M1 data ───────
+                                # If the "real entry" price differs from the stored entry
+                                # by more than 2%, the M1 candle data is likely corrupted
+                                # (non-OTC data mixed in, REST API returning wrong pair, etc).
+                                # In this case, fall back to the stored entry price — which
+                                # is the price the engine actually analyzed and is trustworthy.
+                                if real_entry_price and s.entry_price:
+                                    price_diff_pct = abs(real_entry_price - float(s.entry_price)) / float(s.entry_price) * 100
+                                    if price_diff_pct > 2.0:
+                                        logger.warning(
+                                            f"[RESULT-CHECK] {s.id} {s.pair} — real entry {real_entry_price:.5f} "
+                                            f"is {price_diff_pct:.1f}% off from stored entry {s.entry_price:.5f} — "
+                                            f"M1 data likely corrupted, falling back to stored entry"
+                                        )
+                                        real_entry_price = float(s.entry_price)
+
+                                # Same sanity check for exit price
+                                if exit_price and s.entry_price:
+                                    exit_diff_pct = abs(exit_price - float(s.entry_price)) / float(s.entry_price) * 100
+                                    if exit_diff_pct > 5.0:
+                                        logger.warning(
+                                            f"[RESULT-CHECK] {s.id} {s.pair} — exit price {exit_price:.5f} "
+                                            f"is {exit_diff_pct:.1f}% off from entry {s.entry_price:.5f} — "
+                                            f"exit price likely corrupted, falling back to live tick"
+                                        )
+                                        live_exit = await po_scanner.get_current_price(s.pair)
+                                        if live_exit and live_exit > 0:
+                                            exit_price = live_exit
+
                             # If M1 data unavailable, fall back to live tick
                             if not exit_price or exit_price <= 0:
                                 exit_price = await po_scanner.get_current_price(s.pair)
