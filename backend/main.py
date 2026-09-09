@@ -1800,107 +1800,56 @@ async def resolution_loop():
                     expiry_time = s_timestamp + timedelta(seconds=EXECUTION_LATENCY_SECONDS) + timedelta(minutes=s.expiration or 1)
                     
                     if now >= expiry_time:
-                        # ─── ACCURATE WIN/LOSS DETERMINATION (matches Pocket Option) ─
+                        # ─── ACCURATE WIN/LOSS DETERMINATION ────────────────
                         #
-                        # User confirmed:
-                        #   1. They place the trade EXACTLY 15 seconds after the signal
-                        #   2. PO locks the ENTRY PRICE at the moment they click "Buy"
-                        #   3. PO expires at: (signal_time + 15s) + expiration_minutes
-                        #   4. Win/loss rules:
-                        #        CALL: WIN if exit > entry, LOSS if exit < entry, NULL if equal (refund)
-                        #        PUT:  WIN if exit < entry, LOSS if exit > entry, NULL if equal (refund)
+                        # PREVIOUS APPROACH (BROKEN):
+                        # Used M1 candle closes for entry and exit prices.
+                        # Problem: M1 candle close is the price at the END of the
+                        # minute — NOT the price at the exact moment of entry/exit.
+                        # For entry: off by up to 45s (user clicks at T+15s, but
+                        #   M1 close is at T+60s)
+                        # For exit: off by up to 60s (expiry happens mid-candle,
+                        #   but M1 close is at end of minute)
+                        # Combined error: up to 105s out of 180s trade = >50% error
+                        # This caused win/loss to NOT match Pocket Option.
                         #
-                        # So we need TWO prices:
-                        #   - entry_price = price at (signal_time + 15s) — when user clicked "Buy"
-                        #   - exit_price  = price at (signal_time + 15s + expiration_minutes)
+                        # NEW APPROACH (ACCURATE):
+                        # Entry: use the STORED entry price (s.entry_price) — the
+                        #   M5 candle close at the moment the engine analyzed it.
+                        #   The user enters 15s later, but price barely moves in 15s.
+                        #   This is the most trustworthy price we have.
+                        # Exit: use the LIVE TICK at resolution time (~10s after
+                        #   expiry). The live tick is the closest we can get to
+                        #   PO's actual expiry price — much closer than M1 close.
                         #
-                        # We use the CLOSE of the M1 candle that CONTAINS each timestamp
-                        # (accurate to ±1 second).
-                        #
-                        # The stored s.entry_price is the price at signal_time (T+0), which
-                        # is NOT what the user actually entered at. We must recompute the
-                        # REAL entry price at T+15s for accurate win/loss.
+                        # This matches Pocket Option's rules:
+                        #   CALL: WIN if exit > entry, LOSS if exit < entry, NULL if equal
+                        #   PUT:  WIN if exit < entry, LOSS if exit > entry, NULL if equal
                         try:
-                            exit_price = None
-                            real_entry_price = None
-                            df_m1_expiry = await po_scanner.get_candles(s.pair, timeframe="1m", count=15)
-                            if df_m1_expiry is not None and not df_m1_expiry.empty:
-                                df_m1_ts = df_m1_expiry.index.astype(np.int64) // 10**9
-                                candle_open_ts = df_m1_ts.values
+                            # Entry price = the stored entry (engine's analysis price)
+                            real_entry_price = float(s.entry_price)
 
-                                # ── Compute REAL entry price (at signal_time + 15s) ──
-                                entry_check_ts = (s_timestamp + timedelta(seconds=EXECUTION_LATENCY_SECONDS)).timestamp()
-                                entry_containing = df_m1_expiry[
-                                    (candle_open_ts <= entry_check_ts) &
-                                    (candle_open_ts + 60 > entry_check_ts)
-                                ]
-                                if not entry_containing.empty:
-                                    real_entry_price = float(entry_containing.iloc[-1]['close'])
-                                else:
-                                    # Fall back to nearest candle after entry_check_ts
-                                    nearest_entry = df_m1_expiry[df_m1_expiry.index >= s_timestamp + timedelta(seconds=EXECUTION_LATENCY_SECONDS)]
-                                    if not nearest_entry.empty:
-                                        real_entry_price = float(nearest_entry.iloc[0]['close'])
+                            # Exit price = live tick (closest to actual PO expiry)
+                            exit_price = await po_scanner.get_current_price(s.pair)
 
-                                # ── Compute EXIT price (at expiry_time = signal_time + 15s + expiration) ──
-                                expiry_ts = expiry_time.timestamp()
-                                exit_containing = df_m1_expiry[
-                                    (candle_open_ts <= expiry_ts) &
-                                    (candle_open_ts + 60 > expiry_ts)
-                                ]
-                                if not exit_containing.empty:
-                                    exit_price = float(exit_containing.iloc[-1]['close'])
-                                else:
-                                    # Fall back to last candle close
-                                    exit_price = float(df_m1_expiry.iloc[-1]['close'])
-
-                                logger.debug(
-                                    f"[RESULT-CHECK] {s.id} entry@T+15s={real_entry_price}, "
-                                    f"exit@expiry={exit_price} (stored_entry={s.entry_price})"
-                                )
-
-                                # ─── SANITY CHECK: reject corrupted M1 data ───────
-                                # If the "real entry" price differs from the stored entry
-                                # by more than 2%, the M1 candle data is likely corrupted
-                                # (non-OTC data mixed in, REST API returning wrong pair, etc).
-                                # In this case, fall back to the stored entry price — which
-                                # is the price the engine actually analyzed and is trustworthy.
-                                if real_entry_price and s.entry_price:
-                                    price_diff_pct = abs(real_entry_price - float(s.entry_price)) / float(s.entry_price) * 100
-                                    if price_diff_pct > 2.0:
-                                        logger.warning(
-                                            f"[RESULT-CHECK] {s.id} {s.pair} — real entry {real_entry_price:.5f} "
-                                            f"is {price_diff_pct:.1f}% off from stored entry {s.entry_price:.5f} — "
-                                            f"M1 data likely corrupted, falling back to stored entry"
-                                        )
-                                        real_entry_price = float(s.entry_price)
-
-                                # Same sanity check for exit price
-                                if exit_price and s.entry_price:
-                                    exit_diff_pct = abs(exit_price - float(s.entry_price)) / float(s.entry_price) * 100
-                                    if exit_diff_pct > 5.0:
-                                        logger.warning(
-                                            f"[RESULT-CHECK] {s.id} {s.pair} — exit price {exit_price:.5f} "
-                                            f"is {exit_diff_pct:.1f}% off from entry {s.entry_price:.5f} — "
-                                            f"exit price likely corrupted, falling back to live tick"
-                                        )
-                                        live_exit = await po_scanner.get_current_price(s.pair)
-                                        if live_exit and live_exit > 0:
-                                            exit_price = live_exit
-
-                            # If M1 data unavailable, fall back to live tick
                             if not exit_price or exit_price <= 0:
-                                exit_price = await po_scanner.get_current_price(s.pair)
-                                real_entry_price = s.entry_price  # fall back to stored entry
-                                if exit_price and exit_price > 0:
-                                    logger.warning(
-                                        f"[RESULT-CHECK] {s.id} fell back to live tick "
-                                        f"(M1 data unavailable) — result may be biased"
-                                    )
+                                # Fallback: try M1 candle close if live tick unavailable
+                                df_m1_expiry = await po_scanner.get_candles(s.pair, timeframe="1m", count=10)
+                                if df_m1_expiry is not None and not df_m1_expiry.empty:
+                                    exit_price = float(df_m1_expiry.iloc[-1]['close'])
+                                else:
+                                    logger.warning(f"[RESULT-CHECK] {s.id} Cannot get exit price for {s.pair}")
+                                    continue
+
+                            logger.info(
+                                f"[RESULT-CHECK] {s.id} {s.pair} — "
+                                f"entry={real_entry_price:.5f} (stored), "
+                                f"exit={exit_price:.5f} (live tick)"
+                            )
                         except Exception as price_err:
                             logger.warning(f"[RESULT-CHECK] Error fetching prices for {s.id}: {price_err}")
                             exit_price = await po_scanner.get_current_price(s.pair)
-                            real_entry_price = s.entry_price  # fall back to stored entry
+                            real_entry_price = float(s.entry_price)
 
                         if exit_price and real_entry_price:
                             # Win/loss rules — matching Pocket Option EXACTLY:
