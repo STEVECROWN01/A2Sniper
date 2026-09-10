@@ -2665,6 +2665,55 @@ async def delete_signal(signal_id: str, admin_payload = Depends(require_admin)):
     return {"status": "success"}
 
 
+@app.post("/api/signals/{signal_id}/override-result")
+async def override_signal_result(
+    signal_id: str,
+    request: Request,
+    credentials: HTTPAuthorizationCredentials = Security(security),
+):
+    """Manually override a signal's win/loss result.
+
+    Used when the system's auto-resolution doesn't match Pocket Option's
+    actual result. The user clicks 'Won' or 'Lost' on the signal card,
+    and this endpoint updates the database.
+
+    Body: { "is_win": true/false }
+    """
+    payload = decode_access_token(credentials.credentials)
+    _jti = payload.get("jti")
+    if _jti and await is_token_revoked(_jti):
+        raise HTTPException(status_code=401, detail="Token has been revoked")
+
+    try:
+        data = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid request body")
+
+    is_win = data.get("is_win")
+    if is_win is None:
+        raise HTTPException(status_code=400, detail="is_win is required (true or false)")
+
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(SignalRecord).where(SignalRecord.id == signal_id)
+        )
+        signal = result.scalar_one_or_none()
+        if not signal:
+            raise HTTPException(status_code=404, detail="Signal not found")
+
+        old_result = signal.is_win
+        signal.is_win = bool(is_win)
+        await session.commit()
+
+        logger.info(
+            f"[OVERRIDE] {signal_id} ({signal.pair}) — "
+            f"result changed from {'WON' if old_result else 'LOST' if old_result is not None else 'UNRESOLVED'} "
+            f"to {'WON' if is_win else 'LOST'} (manual override by user)"
+        )
+
+    return {"status": "success", "signal_id": signal_id, "is_win": bool(is_win)}
+
+
 @app.delete("/api/admin/signals")
 async def delete_all_signals(admin_payload = Depends(require_admin)):
     """Bulk delete ALL signals from the database.

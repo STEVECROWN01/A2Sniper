@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { TrendingUp, TrendingDown, Clock, Copy, ExternalLink, X, Target, AlertTriangle, Zap } from 'lucide-react';
 import { toast } from 'sonner';
@@ -26,7 +26,9 @@ export function SignalCard({ signal }: SignalCardProps) {
   // Track when this signal FIRST appeared on the user's screen.
   // The countdown always starts from 5:00 (or whatever the expiration is)
   // from the moment the user sees it — NOT from the backend's emission time.
-  const firstSeenRef = useRef<number | null>(null);
+  // Removed firstSeenRef — the countdown now uses the signal's actual timestamp
+  // instead of the moment the user first saw it. This ensures the countdown
+  // doesn't reset on page reload.
 
   // Effective status: backend status wins once it's not ACTIVE; otherwise
   // fall back to clientExpired to drive the expired UI.
@@ -39,21 +41,18 @@ export function SignalCard({ signal }: SignalCardProps) {
     setClientExpired(false);
 
     if (signal.status === 'ACTIVE') {
-      // On first render of this ACTIVE signal, record the "first seen" time.
-      // The countdown ALWAYS starts from 5:00 (or whatever the expiration is)
-      // from the moment the user sees it — NOT from the backend's emission time.
-      // This eliminates the polling delay (up to 5s) that made the countdown
-      // start at 4:55 instead of 5:00.
-      if (firstSeenRef.current === null) {
-        firstSeenRef.current = Date.now();
-      }
-
+      // Calculate remaining time from the SIGNAL'S TIMESTAMP (not from when
+      // the user first saw the signal). This ensures the countdown is
+      // consistent across page reloads — a signal that was emitted 2 minutes
+      // ago shows 1:00 remaining, not 3:00.
       const calculateRemaining = () => {
         const now = Date.now();
         const expMinutes = Number(signal.expiration) || 1;
-        // Countdown = expiration - time elapsed since the user FIRST saw the signal
-        const elapsed = now - (firstSeenRef.current || now);
-        const remaining = (expMinutes * 60 * 1000) - elapsed;
+        // Expiry = signal timestamp + expiration minutes + 15s execution latency
+        // (matches the backend resolution loop which uses signal_time + 15s + expiry)
+        const signalTime = signal.timestamp.getTime();
+        const expiryTime = signalTime + (expMinutes * 60 * 1000) + (15 * 1000);
+        const remaining = expiryTime - now;
         return remaining <= 0 ? 0 : remaining;
       };
 
@@ -382,6 +381,61 @@ Timestamp: ${signal.timestamp.toLocaleString('en-US')}
                     <p className={`text-md font-black ${signal.profit_loss > 0 ? 'text-green-400' : 'text-red-400'}`}>
                       {signal.profit_loss > 0 ? '+' : ''}${signal.profit_loss.toFixed(2)}
                     </p>
+                  </div>
+                )}
+
+                {/* Manual Win/Loss Override — for when the system's auto-resolution
+                    doesn't match Pocket Option's actual result. */}
+                {effectiveStatus !== 'ACTIVE' && (
+                  <div className="p-3 bg-[#050507] rounded-xl border border-white/5">
+                    <p className="text-[9px] text-gray-500 font-bold uppercase tracking-wider mb-2">
+                      Manual Result Override
+                    </p>
+                    <p className="text-[10px] text-gray-600 mb-3">
+                      If the system's result doesn't match PO, click the correct one:
+                    </p>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={async () => {
+                          try {
+                            const url = useAppStore.getState().getApiUrl();
+                            await fetch(`${url}/api/signals/${signal.id}/override-result`, {
+                              method: 'POST',
+                              credentials: 'include',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({ is_win: true }),
+                            });
+                            toast.success('Result updated to WON');
+                            useAppStore.getState().fetchSignals();
+                          } catch {
+                            toast.error('Failed to update result');
+                          }
+                        }}
+                        className="flex-1 bg-green-500/10 text-green-500 border border-green-500/20 px-3 py-2 rounded-lg text-xs font-bold uppercase hover:bg-green-500/20 transition-colors"
+                      >
+                        ✓ Won
+                      </button>
+                      <button
+                        onClick={async () => {
+                          try {
+                            const url = useAppStore.getState().getApiUrl();
+                            await fetch(`${url}/api/signals/${signal.id}/override-result`, {
+                              method: 'POST',
+                              credentials: 'include',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({ is_win: false }),
+                            });
+                            toast.success('Result updated to LOST');
+                            useAppStore.getState().fetchSignals();
+                          } catch {
+                            toast.error('Failed to update result');
+                          }
+                        }}
+                        className="flex-1 bg-red-500/10 text-red-500 border border-red-500/20 px-3 py-2 rounded-lg text-xs font-bold uppercase hover:bg-red-500/20 transition-colors"
+                      >
+                        ✗ Lost
+                      </button>
+                    </div>
                   </div>
                 )}
 
