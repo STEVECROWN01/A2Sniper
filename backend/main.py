@@ -54,6 +54,13 @@ try:
 except ImportError:
     generate_momentum_signal = None
     validate_momentum_data = None
+
+try:
+    from engine.bear_engine import generate_bear_signal
+    logger.info("[BEAR] Bear Sniper downtrend engine loaded — PUT signals enabled for testing")
+except ImportError as e:
+    generate_bear_signal = None
+    logger.warning(f"[BEAR] Could not import Bear engine: {e}")
     logger.warning("momentum_engine not available — using sniper engine only")
 from engine.compliance import ComplianceManager, geographic_restriction_dependency
 from bot.telegram_bot import TelegramSignalBot
@@ -961,38 +968,45 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False, return_can
     # Reverted to ACE → Sniper (3-min expiry) which gave the user consistent
     # wins before the C5 fix. Momentum engine remains imported and available
     # for future A/B testing behind a feature flag, but is NOT called by default.
-    # ═══ ENGINE SELECTION: ACE ONLY (Sniper fallback REMOVED) ════════
-    # The Sniper fallback was REMOVED because it produced fake/low-quality
-    # signals that lost 80% of trades (proven by backtest: 18.9% win rate
-    # over 1,611 signals). When ACE finds nothing, the system returns NO
-    # signal — this is correct behavior. Better to have no signal than a
-    # bad signal that loses money.
+    # ═══ ENGINE SELECTION: ACE (CALL) → Bear (PUT) fallback ════════
+    # ACE produces CALL signals (uptrend reversal + continuation).
+    # Bear produces PUT signals (downtrend continuation + support breakdown).
+    # When ACE finds no CALL setup, the Bear engine checks for PUT setups.
+    # This covers BOTH market directions — uptrend AND downtrend.
     #
-    # The momentum_engine was also briefly tested and caused catastrophic
-    # live trading losses — it is NOT called.
-    if strict_mode:
-        # Signals page → ACE only
-        engine_result = generate_ace_signal(df_with_indicators, payout)
-        if engine_result is not None:
-            logger.info(f"[{pair}] ACE signal found — using ACE (3m expiry, reversal setup)")
-        else:
-            logger.info(
-                f"[{pair}] No ACE signal — no signal emitted (Sniper fallback removed). "
-                f"candles={len(df_with_indicators)}, mode=signals page"
-            )
-            return None
+    # NOTE: Bear engine backtest showed 31.2% win rate on EURUSD_otc.
+    # The user has requested to test it live — they are aware of the risk.
+    # The "OTC bullish bias" may make PUT signals underperform, but the
+    # user wants to verify this with their own live trading.
+
+    # Step 1: Try ACE (CALL signals)
+    engine_result = generate_ace_signal(df_with_indicators, payout)
+    if engine_result is not None:
+        logger.info(f"[{pair}] ACE signal found — using ACE (3m expiry, CALL setup)")
     else:
-        # Bot → ACE only
-        engine_result = generate_ace_signal(df_with_indicators, payout)
-        if engine_result is not None:
-            logger.info(f"[{pair}] ACE signal found — using ACE (3m expiry, reversal setup)")
+        # Step 2: ACE found nothing — try Bear (PUT signals)
+        if generate_bear_signal is not None:
+            engine_result = generate_bear_signal(df_with_indicators, payout)
+            if engine_result is not None:
+                logger.info(
+                    f"[{pair}] BEAR signal found — using Bear (2m expiry, PUT setup) "
+                    f"— direction={engine_result['direction']}, "
+                    f"strategy={engine_result.get('factors', {}).get('strategy', 'unknown')}"
+                )
+            else:
+                logger.info(
+                    f"[{pair}] No ACE (CALL) and no Bear (PUT) — no signal emitted. "
+                    f"candles={len(df_with_indicators)}"
+                )
+                return None
         else:
             logger.info(
-                f"[{pair}] No ACE signal — no signal emitted (Sniper fallback removed). "
-                f"candles={len(df_with_indicators)}, mode=bot"
+                f"[{pair}] No ACE signal and Bear engine not available — no signal emitted. "
+                f"candles={len(df_with_indicators)}"
             )
             return None
-    engine_result.setdefault('engine_source', 'ace')
+
+    engine_result.setdefault('engine_source', 'ace' if engine_result.get('direction') == 'CALL' else 'bear')
 
     sniper_result = engine_result
 
