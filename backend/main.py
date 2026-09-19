@@ -1703,21 +1703,20 @@ async def trading_loop():
                     logger.debug(f"[SNIPER-ERROR] pair={pair} err={e}")
 
                 # Save completed candles to database (for persistence across redeploys)
-                # FIX 5: Throttle to once per minute per pair. Was running every 5s
-                # (12 writes/min/pair × 20 pairs = 240 DB writes/min) — saturating
-                # the DB pool and delaying signal saves by 1-5s. Since candles
-                # only complete once per minute, saving every 5s writes the same
-                # data 12 times.
+                # Throttle to once per 5 MINUTES per pair (was 1 minute).
+                # Saving every minute for 30+ pairs = 43,200 rows/day = fills Supabase
+                # free tier (500MB) in 2 days. Saving every 5 minutes = 8,640 rows/day
+                # = 5x less storage, still enough for warmup after container restart.
                 try:
                     if not hasattr(trading_loop, '_last_candle_save_ts'):
                         trading_loop._last_candle_save_ts = {}
                     last_save = trading_loop._last_candle_save_ts.get(pair, 0)
                     now_save_ts = datetime.now(timezone.utc).timestamp()
-                    if now_save_ts - last_save >= 60:  # Once per minute per pair
+                    if now_save_ts - last_save >= 300:  # Every 5 minutes per pair
                         asset = po_scanner.get_asset_symbol(pair)
                         cached_df = po_scanner._candles_cache.get(f"{asset}_1m")
                         if cached_df is not None and not cached_df.empty and len(cached_df) > 1:
-                            await save_candles_to_db(asset, cached_df.tail(10))
+                            await save_candles_to_db(asset, cached_df.tail(5))
                             trading_loop._last_candle_save_ts[pair] = now_save_ts
                 except Exception:
                     pass
@@ -2075,6 +2074,7 @@ async def lifespan(app):
         asyncio.create_task(resolution_loop())
         asyncio.create_task(telegram_bot.start_polling())
         asyncio.create_task(daily_report_loop())
+        asyncio.create_task(db_cleanup_loop())  # Prevents database from filling up
     except Exception as e:
         logger.warning(f"[STARTUP] Background task creation issue: {e}")
 
@@ -2265,10 +2265,35 @@ async def load_all_candles_from_db() -> dict:
 
 
 async def cleanup_old_candles():
-    """Delete candles older than 500 per pair to prevent database bloat."""
+    """Delete candles older than 3 days AND limit to 200 per pair.
+    
+    This runs EVERY HOUR (not once a day) to prevent the database from
+    filling up and going read-only. The Supabase free tier has 500MB disk,
+    and without aggressive cleanup, the database fills up in ~2 days.
+    
+    Rules:
+    1. Delete candles older than 3 days (timestamp < NOW - 3 days)
+    2. Keep max 200 candles per pair (for warmup + indicators)
+    3. Delete old resolved signals (keep last 7 days)
+    4. Delete old system_logs (keep last 3 days)
+    5. VACUUM to reclaim disk space (PostgreSQL doesn't auto-reclaim)
+    """
     try:
         async with AsyncSessionLocal() as session:
             from sqlalchemy import text
+            now_ts = int(datetime.now(timezone.utc).timestamp())
+            three_days_ago = now_ts - (3 * 24 * 60 * 60)
+            seven_days_ago_dt = datetime.now(timezone.utc) - timedelta(days=7)
+            three_days_ago_dt = datetime.now(timezone.utc) - timedelta(days=3)
+            
+            # 1. Delete candles older than 3 days (by timestamp)
+            result = await session.execute(
+                text("DELETE FROM candles WHERE timestamp < :cutoff"),
+                {"cutoff": three_days_ago}
+            )
+            old_candles_deleted = result.rowcount
+            
+            # 2. Keep max 200 per pair (delete oldest beyond 200)
             await session.execute(
                 text("""
                     DELETE FROM candles
@@ -2277,14 +2302,90 @@ async def cleanup_old_candles():
                             SELECT id, ROW_NUMBER() OVER (PARTITION BY pair ORDER BY timestamp DESC) as rn
                             FROM candles WHERE timeframe = '1m'
                         ) sub
-                        WHERE rn <= 500
+                        WHERE rn <= 200
                     )
                 """)
             )
+            
+            # 3. Delete old resolved signals (keep last 7 days, keep unresolved)
+            result = await session.execute(
+                text("DELETE FROM signals WHERE timestamp < :cutoff AND is_win IS NOT NULL"),
+                {"cutoff": seven_days_ago_dt}
+            )
+            old_signals_deleted = result.rowcount
+            
+            # 4. Delete old system_logs (keep last 3 days)
+            try:
+                result = await session.execute(
+                    text("DELETE FROM system_logs WHERE timestamp < :cutoff"),
+                    {"cutoff": three_days_ago_dt}
+                )
+                old_logs_deleted = result.rowcount
+            except Exception:
+                old_logs_deleted = 0
+            
+            # 5. Delete old OTP entries (expired)
+            try:
+                await session.execute(
+                    text("DELETE FROM password_reset_otps WHERE expires_at < :now"),
+                    {"now": datetime.now(timezone.utc)}
+                )
+            except Exception:
+                pass
+            
             await session.commit()
-            logger.info("[CANDLE-DB] Old candles cleaned up (max 500 per pair)")
+            
+            logger.info(
+                f"[DB-CLEANUP] Cleanup complete — "
+                f"old_candles={old_candles_deleted}, "
+                f"old_signals={old_signals_deleted}, "
+                f"old_logs={old_logs_deleted}"
+            )
     except Exception as e:
-        logger.warning(f"[CANDLE-DB] Cleanup error: {e}")
+        logger.warning(f"[DB-CLEANUP] Error: {e}")
+
+
+async def db_cleanup_loop():
+    """Run database cleanup EVERY HOUR to prevent disk space exhaustion.
+    
+    This is the permanent fix for the recurring 'read-only transaction' error
+    caused by Supabase free tier (500MB) running out of disk space.
+    
+    The cleanup deletes:
+    - Candles older than 3 days (keeps ~200 per pair for warmup)
+    - Resolved signals older than 7 days (keeps unresolved + recent history)
+    - System logs older than 3 days
+    - Expired OTP entries
+    
+    After deleting, it runs VACUUM ANALYZE to reclaim disk space (PostgreSQL
+    doesn't auto-reclaim deleted rows until VACUUM runs).
+    
+    Runs every 60 minutes — frequent enough to prevent disk filling up,
+    infrequent enough to not impact performance.
+    """
+    logger.info("[DB-CLEANUP-LOOP] Database cleanup loop started — runs every 60 minutes")
+    # Wait 5 minutes after startup before first cleanup (give the system time to warm up)
+    await asyncio.sleep(300)
+    
+    while True:
+        try:
+            await cleanup_old_candles()
+        except Exception as e:
+            logger.error(f"[DB-CLEANUP-LOOP] Cleanup error: {e}")
+        
+        # Run VACUUM ANALYZE to reclaim disk space
+        # VACUUM cannot run inside a transaction, so use raw connection
+        try:
+            async with engine.connect() as conn:
+                await conn.execute(text("VACUUM ANALYZE"))
+                logger.info("[DB-CLEANUP-LOOP] VACUUM ANALYZE complete — disk space reclaimed")
+        except Exception as e:
+            # VACUUM may not work with PgBouncer pooler — that's OK, the DELETEs
+            # still free space for new inserts (PostgreSQL reuses dead tuple space)
+            logger.debug(f"[DB-CLEANUP-LOOP] VACUUM skipped: {e}")
+        
+        # Sleep 60 minutes
+        await asyncio.sleep(3600)
 
 
 
