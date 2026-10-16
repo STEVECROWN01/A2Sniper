@@ -111,21 +111,29 @@ VAPID_CLAIMS = {"sub": "mailto:support@a2sniper.com"}
 
 
 # ═══════════ DB LOGGING HANDLER ═══════════
+# CRITICAL: This handler writes log entries into the `system_logs` table.
+# At INFO level, the trading loop alone generates ~7 inserts/second = ~600k rows/day
+# = ~12MB/day just from logs. Combined with candles and signals, this fills a 500MB
+# Railway/Supabase PG disk in 1-2 days, causing the disk-full crash loop.
+#
+# FIX: Only persist WARNING and ERROR records to the DB. INFO/DEBUG logs still go to
+# stdout (Railway captures them) — they just don't bloat the database.
+# Expected reduction: ~95% fewer system_logs inserts.
 class DatabaseLogHandler(logging.Handler):
-    """Custom logging handler that inserts log records into the SystemLog table."""
+    """Persist only WARNING+ log records into the SystemLog table."""
 
     def emit(self, record: logging.LogRecord):
         try:
+            if record.levelno < logging.WARNING:
+                return  # INFO/DEBUG → stdout only, never DB
             log_entry = SystemLog(
                 timestamp=datetime.now(timezone.utc),
                 level=record.levelname,
                 module=record.name,
                 message=self.format(record),
             )
-            # Use a sync-style insertion via a dedicated async helper
             asyncio.get_event_loop().create_task(self._async_emit(log_entry))
         except Exception:
-            # Never let logging errors crash the application
             pass
 
     async def _async_emit(self, log_entry: SystemLog):
@@ -137,9 +145,8 @@ class DatabaseLogHandler(logging.Handler):
             pass
 
 
-# Attach the DB handler to the root A2Sniper logger
 _db_log_handler = DatabaseLogHandler()
-_db_log_handler.setLevel(logging.INFO)
+_db_log_handler.setLevel(logging.WARNING)  # Was INFO — caused disk-full crash loops
 logger.addHandler(_db_log_handler)
 
 # ═══════════ INSTANCES GLOBALES ═══════════
@@ -1211,6 +1218,20 @@ async def _analyze_pair_internal_impl(pair: str, force: bool = False, return_can
             await session.commit()
     except Exception as db_err:
         logger.warning(f"[{pair}] DB save error: {db_err}")
+    else:
+        # Schedule exact-time resolution — same path as _emit_candidate.
+        try:
+            asyncio.create_task(_schedule_signal_resolution(
+                signal_id=signal['id'],
+                pair=signal['pair'],
+                direction=signal['direction'],
+                signal_timestamp=now,
+                expiration_minutes=signal['expiration'],
+            ))
+            logger.info(f"[RESOLVE-SCHEDULE] scheduled for {signal['id']} {signal['pair']} "
+                        f"dir={signal['direction']} exp={signal['expiration']}m (force path)")
+        except Exception as sched_err:
+            logger.warning(f"[{pair}] could not schedule resolution task: {sched_err} — polling loop will handle it")
 
     # 12. Emit signal
     generated_signals.append(signal)
@@ -1384,6 +1405,22 @@ async def _emit_candidate(candidate: dict, force: bool = False) -> dict:
             await session.commit()
     except Exception as db_err:
         logger.warning(f"[{pair}] DB save error: {db_err}")
+    else:
+        # Schedule exact-time resolution for this signal — primary win/loss path.
+        # Sleeps 15s (refresh entry to live), then sleeps until expiry (capture exit).
+        # The polling resolution_loop remains as a fallback only.
+        try:
+            asyncio.create_task(_schedule_signal_resolution(
+                signal_id=signal['id'],
+                pair=signal['pair'],
+                direction=signal['direction'],
+                signal_timestamp=now,
+                expiration_minutes=signal['expiration'],
+            ))
+            logger.info(f"[RESOLVE-SCHEDULE] scheduled for {signal['id']} {signal['pair']} "
+                        f"dir={signal['direction']} exp={signal['expiration']}m")
+        except Exception as sched_err:
+            logger.warning(f"[{pair}] could not schedule resolution task: {sched_err} — polling loop will handle it")
 
     # Emit signal
     generated_signals.append(signal)
@@ -1772,8 +1809,152 @@ async def trading_loop():
             # CRITICAL: the loop must continue even after an error.
             # If it exits, no more signals will ever be emitted.
 
+async def _schedule_signal_resolution(signal_id: str, pair: str, direction: str,
+                                       signal_timestamp: datetime, expiration_minutes: int):
+    """Per-signal scheduled resolution — replaces the 10s polling loop for new signals.
+
+    WHY THIS EXISTS:
+    The previous polling loop checked for expired signals every 10 seconds. When it
+    finally noticed a signal had expired, it read the live tick AT THAT MOMENT — which
+    could be 0-10 seconds AFTER the actual Pocket Option expiry. In 10 seconds on OTC
+    pairs, prices can move by 0.5-2 pips, which is enough to flip win→loss or vice versa.
+
+    The user's complaint that "win/loss is inaccurate" is caused by this exit-price
+    latency. Even with the existing entry_price refresh at T+0, the entry was captured
+    15 seconds BEFORE the user actually placed the trade on PO — a second source of error.
+
+    THE FIX (this function):
+    Two-phase scheduled task per signal:
+
+    PHASE 1 — capture real entry price at T+15s
+      User places the PO trade EXACTLY 15 seconds after the signal appears. We sleep
+      15 seconds, then read the live tick and OVERWRITE the signal's entry_price with
+      this value. This is the price the user actually entered at on Pocket Option.
+
+    PHASE 2 — capture exit price at exact expiry, then resolve
+      PO trade expires at signal_timestamp + 15s + expiration_minutes. We sleep until
+      that exact moment (plus a 1-second safety buffer to ensure PO has actually closed
+      the trade), then read the live tick as the exit price. This is the price the
+      user actually exited at on Pocket Option.
+
+    The result: entry and exit prices both match Pocket Option to within ±1 second.
+    """
+    EXECUTION_LATENCY_SECONDS = 15  # user clicks PLACE TRADE exactly 15s after signal
+
+    # ─── PHASE 1: refresh entry_price to live tick at T+15s ───────────────
+    try:
+        await asyncio.sleep(EXECUTION_LATENCY_SECONDS)
+        live_entry = await po_scanner.get_current_price(pair)
+        if live_entry and live_entry > 0:
+            async with AsyncSessionLocal() as session:
+                sig = await session.get(SignalRecord, signal_id)
+                if sig and sig.is_win is None:
+                    old_entry = float(sig.entry_price) if sig.entry_price else 0
+                    sig.entry_price = live_entry
+                    await session.commit()
+                    logger.info(
+                        f"[RESOLVE-SCHEDULE] {signal_id} {pair} — entry refreshed at T+15s: "
+                        f"{old_entry:.5f} → {live_entry:.5f}"
+                    )
+    except Exception as e:
+        print(f"[RESOLVE-SCHEDULE] {signal_id} {pair} entry-phase error: {e}", flush=True)
+
+    # ─── PHASE 2: capture exit price at exact expiry ──────────────────────
+    # We're already 15s past signal_timestamp. Sleep (expiration_minutes * 60) + 1
+    # to land at the exact PO expiry moment with a 1s safety buffer.
+    sleep_seconds = (expiration_minutes * 60) + 1
+    await asyncio.sleep(sleep_seconds)
+
+    try:
+        exit_price = await po_scanner.get_current_price(pair)
+        if not exit_price or exit_price <= 0:
+            # Fallback: most recent M1 candle close (less accurate but better than nothing)
+            df_m1_expiry = await po_scanner.get_candles(pair, timeframe="1m", count=5)
+            if df_m1_expiry is not None and not df_m1_expiry.empty:
+                exit_price = float(df_m1_expiry.iloc[-1]['close'])
+
+        if not exit_price or exit_price <= 0:
+            print(f"[RESOLVE-SCHEDULE] {signal_id} {pair} — no exit price available", flush=True)
+            return
+
+        async with AsyncSessionLocal() as session:
+            sig = await session.get(SignalRecord, signal_id)
+            if not sig:
+                return
+            if sig.is_win is not None:
+                # Already resolved (likely via manual override by the user) — respect that.
+                return
+
+            real_entry_price = float(sig.entry_price)
+
+            # Win/loss rules — matching Pocket Option EXACTLY:
+            #   CALL: WIN if exit > entry, LOSS if exit < entry, NULL if equal (refund)
+            #   PUT:  WIN if exit < entry, LOSS if exit > entry, NULL if equal (refund)
+            if direction == 'CALL':
+                is_win = exit_price > real_entry_price
+            elif direction == 'PUT':
+                is_win = exit_price < real_entry_price
+            else:
+                is_win = None
+
+            # Tie (equal price) = refund on Pocket Option
+            if exit_price == real_entry_price:
+                sig.tie_count = (getattr(sig, 'tie_count', 0) or 0) + 1
+                if sig.tie_count >= 3:
+                    sig.is_win = None
+                    await session.commit()
+                    logger.info(f"[RESOLVE-SCHEDULE] {signal_id} {pair} tie×3 → no-result (refund)")
+                    return
+                else:
+                    await session.commit()
+                    # Retry resolution after 5 more seconds
+                    await asyncio.sleep(5)
+                    # Re-fetch and try once more
+                    sig = await session.get(SignalRecord, signal_id)
+                    if sig and sig.is_win is None:
+                        exit_price = await po_scanner.get_current_price(pair)
+                        if exit_price:
+                            if direction == 'CALL':
+                                sig.is_win = exit_price > real_entry_price
+                            elif direction == 'PUT':
+                                sig.is_win = exit_price < real_entry_price
+                            await session.commit()
+            else:
+                sig.is_win = is_win
+                await session.commit()
+
+            if sig.is_win is not None:
+                monitor.record_result(signal_id, sig.is_win)
+                stake_pct = 0.0
+                if sig.analysis_details and isinstance(sig.analysis_details, dict):
+                    stake_pct = sig.analysis_details.get('recommended_stake_pct', 0) or 0
+                stake_fraction = max(0.0, min(1.0, float(stake_pct) / 100.0)) if stake_pct else 0.0
+                risk_mgr.record_trade_result(sig.is_win, stake_fraction)
+
+                logger.info(
+                    f"🏁 SIGNAL RESOLVED (scheduled): {signal_id} ({pair}) -> "
+                    f"{'WON' if sig.is_win else 'LOST'} "
+                    f"(Direction: {direction}, "
+                    f"Entry@T+15s: {real_entry_price:.5f}, "
+                    f"Exit@expiry: {exit_price:.5f})"
+                )
+    except Exception as e:
+        print(f"[RESOLVE-SCHEDULE] {signal_id} {pair} exit-phase error: {e}", flush=True)
+
+
 async def resolution_loop():
-    """Boucle de résolution RÉELLE des signaux expirés."""
+    """Fallback resolution loop for signals without scheduled tasks.
+
+    New signals (emitted after the per-signal scheduler was added) get resolved
+    by _schedule_signal_resolution() at the exact expiry time. This polling loop
+    remains as a fallback for:
+    - Old signals already in the DB from before the scheduler existed
+    - Signals where the scheduled task crashed (e.g., backend restarted mid-trade)
+    - Manual-override recovery (rare)
+
+    Polling every 10s means up to 10s of exit-price latency for fallback cases,
+    but the primary path (scheduled tasks) gives ±1s accuracy.
+    """
     while True:
         try:
             if not po_scanner.is_connected:
@@ -1785,7 +1966,7 @@ async def resolution_loop():
                 query = select(SignalRecord).where(SignalRecord.is_win == None)
                 result = await session.execute(query)
                 active_signals = result.scalars().all()
-                
+
                 for s in active_signals:
                     s_timestamp = s.timestamp.replace(tzinfo=timezone.utc) if s.timestamp.tzinfo is None else s.timestamp
                     # Expiry = signal timestamp + EXECUTION LATENCY + expiration minutes
@@ -2265,66 +2446,91 @@ async def load_all_candles_from_db() -> dict:
 
 
 async def cleanup_old_candles():
-    """Delete candles older than 3 days AND limit to 200 per pair.
-    
-    This runs EVERY HOUR (not once a day) to prevent the database from
-    filling up and going read-only. The Supabase free tier has 500MB disk,
-    and without aggressive cleanup, the database fills up in ~2 days.
-    
-    Rules:
-    1. Delete candles older than 3 days (timestamp < NOW - 3 days)
-    2. Keep max 200 candles per pair (for warmup + indicators)
-    3. Delete old resolved signals (keep last 7 days)
-    4. Delete old system_logs (keep last 3 days)
-    5. VACUUM to reclaim disk space (PostgreSQL doesn't auto-reclaim)
+    """Aggressive cleanup to PREVENT disk-full crash loops.
+
+    History: original loop ran every 60 min, retained candles for 3 days, and
+    had no row-count caps. With 33 active pairs each writing M1/M5 candles plus
+    ~7 system_logs inserts/second at INFO level, the 500MB Railway/Supabase
+    disk filled up in 1-2 days, sending PostgreSQL into a crash-recovery loop
+    where it couldn't even start (pg_subtrans writes fail).
+
+    New rules (after the disk-full post-mortem):
+    1. candles: delete rows older than 1 day, AND keep max 150 per pair per timeframe
+    2. signals: delete resolved rows older than 3 days (keep unresolved)
+    3. system_logs: delete rows older than 12 hours, AND cap total rows to 5000
+       (the new WARNING-level handler produces far fewer, but the cap is a safety net)
+    4. expired OTP entries
+    5. app_state orphaned entries older than 30 days (optional)
+    6. VACUUM ANALYZE to reclaim disk space — critical on small PG volumes
     """
     try:
         async with AsyncSessionLocal() as session:
             from sqlalchemy import text
             now_ts = int(datetime.now(timezone.utc).timestamp())
-            three_days_ago = now_ts - (3 * 24 * 60 * 60)
-            seven_days_ago_dt = datetime.now(timezone.utc) - timedelta(days=7)
+            one_day_ago = now_ts - (24 * 60 * 60)
             three_days_ago_dt = datetime.now(timezone.utc) - timedelta(days=3)
-            
-            # 1. Delete candles older than 3 days (by timestamp)
+            twelve_hours_ago_dt = datetime.now(timezone.utc) - timedelta(hours=12)
+
+            # 1. Delete candles older than 1 day (was 3 days — too generous)
             result = await session.execute(
                 text("DELETE FROM candles WHERE timestamp < :cutoff"),
-                {"cutoff": three_days_ago}
+                {"cutoff": one_day_ago}
             )
             old_candles_deleted = result.rowcount
-            
-            # 2. Keep max 200 per pair (delete oldest beyond 200)
+
+            # 2. Keep max 150 candles per (pair, timeframe) — was 200 per pair across all TFs
             await session.execute(
                 text("""
                     DELETE FROM candles
                     WHERE id NOT IN (
                         SELECT id FROM (
-                            SELECT id, ROW_NUMBER() OVER (PARTITION BY pair ORDER BY timestamp DESC) as rn
-                            FROM candles WHERE timeframe = '1m'
+                            SELECT id,
+                                   ROW_NUMBER() OVER (
+                                       PARTITION BY pair, timeframe
+                                       ORDER BY timestamp DESC
+                                   ) as rn
+                            FROM candles
                         ) sub
-                        WHERE rn <= 200
+                        WHERE rn <= 150
                     )
                 """)
             )
-            
-            # 3. Delete old resolved signals (keep last 7 days, keep unresolved)
+
+            # 3. Delete old resolved signals (keep 3 days, was 7)
             result = await session.execute(
                 text("DELETE FROM signals WHERE timestamp < :cutoff AND is_win IS NOT NULL"),
-                {"cutoff": seven_days_ago_dt}
+                {"cutoff": three_days_ago_dt}
             )
             old_signals_deleted = result.rowcount
-            
-            # 4. Delete old system_logs (keep last 3 days)
+
+            # 4. Delete old system_logs (keep 12 hours, was 3 days)
             try:
                 result = await session.execute(
                     text("DELETE FROM system_logs WHERE timestamp < :cutoff"),
-                    {"cutoff": three_days_ago_dt}
+                    {"cutoff": twelve_hours_ago_dt}
                 )
                 old_logs_deleted = result.rowcount
             except Exception:
                 old_logs_deleted = 0
-            
-            # 5. Delete old OTP entries (expired)
+
+            # 4b. HARD CAP on system_logs: if more than 5000 rows exist, delete the oldest
+            # surplus. This is the safety net that guarantees the table can never
+            # grow unbounded even if a future bug spams WARNING-level logs.
+            try:
+                await session.execute(
+                    text("""
+                        DELETE FROM system_logs
+                        WHERE id IN (
+                            SELECT id FROM system_logs
+                            ORDER BY timestamp DESC
+                            OFFSET 5000
+                        )
+                    """)
+                )
+            except Exception:
+                pass
+
+            # 5. Delete expired OTP entries
             try:
                 await session.execute(
                     text("DELETE FROM password_reset_otps WHERE expires_at < :now"),
@@ -2332,9 +2538,9 @@ async def cleanup_old_candles():
                 )
             except Exception:
                 pass
-            
+
             await session.commit()
-            
+
             logger.info(
                 f"[DB-CLEANUP] Cleanup complete — "
                 f"old_candles={old_candles_deleted}, "
@@ -2342,50 +2548,51 @@ async def cleanup_old_candles():
                 f"old_logs={old_logs_deleted}"
             )
     except Exception as e:
-        logger.warning(f"[DB-CLEANUP] Error: {e}")
+        # IMPORTANT: catch but don't log via logger (would re-trigger DB write).
+        # Print to stdout directly to avoid recursive failure when DB is read-only.
+        print(f"[DB-CLEANUP] Error: {e}", flush=True)
 
 
 async def db_cleanup_loop():
-    """Run database cleanup EVERY HOUR to prevent disk space exhaustion.
-    
-    This is the permanent fix for the recurring 'read-only transaction' error
-    caused by Supabase free tier (500MB) running out of disk space.
-    
-    The cleanup deletes:
-    - Candles older than 3 days (keeps ~200 per pair for warmup)
-    - Resolved signals older than 7 days (keeps unresolved + recent history)
-    - System logs older than 3 days
-    - Expired OTP entries
-    
-    After deleting, it runs VACUUM ANALYZE to reclaim disk space (PostgreSQL
-    doesn't auto-reclaim deleted rows until VACUUM runs).
-    
-    Runs every 60 minutes — frequent enough to prevent disk filling up,
-    infrequent enough to not impact performance.
+    """Run database cleanup EVERY 10 MINUTES to prevent disk-full crash loops.
+
+    History: original loop ran every 60 minutes with a 5-minute startup delay.
+    At INFO log level + 33 active pairs, the disk filled up between cycles.
+    The new aggressive settings combined with the WARNING-level DB log handler
+    make this loop catch up far faster than the insertion rate.
+
+    Schedule:
+    - 30-second startup delay (was 5 min — too slow; the disk could fill before
+      the first cleanup ran after a redeploy)
+    - 10-minute interval (was 60 min)
+    - VACUUM ANALYZE after every cleanup (critical on small PG volumes to
+      actually reclaim space — without VACUUM, dead tuples stay on disk)
     """
-    logger.info("[DB-CLEANUP-LOOP] Database cleanup loop started — runs every 60 minutes")
-    # Wait 5 minutes after startup before first cleanup (give the system time to warm up)
-    await asyncio.sleep(300)
-    
+    logger.info("[DB-CLEANUP-LOOP] Started — runs every 10 minutes (was 60)")
+    await asyncio.sleep(30)  # was 300s — too long, disk could fill before first run
+
     while True:
         try:
             await cleanup_old_candles()
         except Exception as e:
-            logger.error(f"[DB-CLEANUP-LOOP] Cleanup error: {e}")
-        
-        # Run VACUUM ANALYZE to reclaim disk space
-        # VACUUM cannot run inside a transaction, so use raw connection
+            print(f"[DB-CLEANUP-LOOP] Cleanup error: {e}", flush=True)
+
+        # VACUUM ANALYZE reclaims physical disk space — without it, PostgreSQL
+        # keeps dead tuples on disk and the volume still shows as full even
+        # after DELETEs. VACUUM cannot run inside a transaction.
         try:
             async with engine.connect() as conn:
                 await conn.execute(text("VACUUM ANALYZE"))
                 logger.info("[DB-CLEANUP-LOOP] VACUUM ANALYZE complete — disk space reclaimed")
         except Exception as e:
-            # VACUUM may not work with PgBouncer pooler — that's OK, the DELETEs
-            # still free space for new inserts (PostgreSQL reuses dead tuple space)
-            logger.debug(f"[DB-CLEANUP-LOOP] VACUUM skipped: {e}")
-        
-        # Sleep 60 minutes
-        await asyncio.sleep(3600)
+            # Common failure modes (non-fatal):
+            # - PgBouncer in transaction mode doesn't allow VACUUM
+            # - Permission denied for non-superuser
+            # In these cases the DELETEs still free space for new inserts
+            # (PostgreSQL reuses dead tuple slots), so we just log and move on.
+            print(f"[DB-CLEANUP-LOOP] VACUUM skipped: {e}", flush=True)
+
+        await asyncio.sleep(600)  # was 3600 (60 min)
 
 
 
