@@ -110,44 +110,29 @@ if VAPID_PRIVATE_KEY == _COMPROMISED_VAPID_PRIVATE or VAPID_PUBLIC_KEY == _COMPR
 VAPID_CLAIMS = {"sub": "mailto:support@a2sniper.com"}
 
 
-# ═══════════ DB LOGGING HANDLER ═══════════
-# CRITICAL: This handler writes log entries into the `system_logs` table.
-# At INFO level, the trading loop alone generates ~7 inserts/second = ~600k rows/day
-# = ~12MB/day just from logs. Combined with candles and signals, this fills a 500MB
-# Railway/Supabase PG disk in 1-2 days, causing the disk-full crash loop.
+# ═══════════ LOGGING (stdout-only — NO database writes) ═══════════
+# HISTORY (why this is here):
+#   This app used to have a `DatabaseLogHandler` that wrote every log record
+#   into the `system_logs` table. At INFO level, that produced ~600k rows/day
+#   (~12 MB/day just from logs), which filled the 500 MB Railway/Supabase
+#   PostgreSQL disk in 1-2 days, sending Postgres into a crash-recovery loop
+#   where it couldn't even start (pg_subtrans writes failed with
+#   "No space left on device").
 #
-# FIX: Only persist WARNING and ERROR records to the DB. INFO/DEBUG logs still go to
-# stdout (Railway captures them) — they just don't bloat the database.
-# Expected reduction: ~95% fewer system_logs inserts.
-class DatabaseLogHandler(logging.Handler):
-    """Persist only WARNING+ log records into the SystemLog table."""
-
-    def emit(self, record: logging.LogRecord):
-        try:
-            if record.levelno < logging.WARNING:
-                return  # INFO/DEBUG → stdout only, never DB
-            log_entry = SystemLog(
-                timestamp=datetime.now(timezone.utc),
-                level=record.levelname,
-                module=record.name,
-                message=self.format(record),
-            )
-            asyncio.get_event_loop().create_task(self._async_emit(log_entry))
-        except Exception:
-            pass
-
-    async def _async_emit(self, log_entry: SystemLog):
-        try:
-            async with AsyncSessionLocal() as session:
-                session.add(log_entry)
-                await session.commit()
-        except Exception:
-            pass
-
-
-_db_log_handler = DatabaseLogHandler()
-_db_log_handler.setLevel(logging.WARNING)  # Was INFO — caused disk-full crash loops
-logger.addHandler(_db_log_handler)
+#   We tried raising the level to WARNING (cut ~95% of writes), but the truly
+#   permanent fix is to STOP writing logs to the database entirely. Railway
+#   captures all stdout/stderr logs in the dashboard (searchable, filterable,
+#   retained by Railway), so there is zero business value in also storing
+#   them in Postgres.
+#
+# RESULT: `system_logs` table stays empty forever. The /api/admin/logs
+#   endpoint and the admin Logs page now direct users to the Railway
+#   dashboard. The table itself is NOT dropped (no migration needed) — it
+#   just sits there empty, costing zero disk space.
+#
+# If you ever re-introduce DB logging for some reason, you MUST also add a
+# hard row cap (see cleanup_old_candles() for the pattern) AND run VACUUM
+# frequently. Without those, the disk will fill up again.
 
 # ═══════════ INSTANCES GLOBALES ═══════════
 # 8 paires OTC obligatoires CDC
@@ -3123,23 +3108,27 @@ async def delete_all_signals(admin_payload = Depends(require_admin)):
 
 @app.get("/api/admin/logs")
 async def admin_get_logs(limit: int = 100, level: str = None, admin_payload = Depends(require_admin)):
-    """Retourne les entrées de log système récentes (CDC Section 11.4)."""
-    async with AsyncSessionLocal() as session:
-        query = select(SystemLog).order_by(SystemLog.timestamp.desc()).limit(limit)
-        if level:
-            query = query.where(SystemLog.level == level.upper())
-        result = await session.execute(query)
-        logs = result.scalars().all()
-        return {"logs": [
-            {
-                "id": l.id,
-                "timestamp": l.timestamp.isoformat() if l.timestamp else None,
-                "level": l.level,
-                "module": l.module,
-                "message": l.message
-            }
-            for l in logs
-        ]}
+    """Return recent system log entries (DEPRECATED — always returns empty).
+
+    History: this endpoint used to read from the `system_logs` table, which was
+    populated by DatabaseLogHandler at INFO level. That handler was removed
+    because it caused the Railway/Supabase PostgreSQL disk to fill up in 1-2
+    days (see commit message for the disk-full post-mortem).
+
+    All logging now goes to stdout only — Railway captures and retains all
+    stdout/stderr in the dashboard. To view logs, open Railway → A2Sniper
+    service → Deployments → latest deployment → Logs tab.
+    """
+    return {
+        "logs": [],
+        "deprecated": True,
+        "message": (
+            "Database log storage has been removed to prevent disk-full crashes. "
+            "All logs are now streamed to stdout — view them in the Railway dashboard: "
+            "A2Sniper service → Deployments → Logs."
+        ),
+        "railway_logs_hint": "Railway → A2Sniper service → Deployments → latest → Logs",
+    }
 
 
 # ═══════════ SYSTEM CONFIG ═══════════
