@@ -66,7 +66,7 @@ from engine.compliance import ComplianceManager, geographic_restriction_dependen
 from bot.telegram_bot import TelegramSignalBot
 from db import (init_db, SignalRecord, CandleRecord, AsyncSessionLocal, User, UserSubscription,
                   PasswordResetOTP, SystemLog, RefreshToken, RevokedToken, RateLimitEntry, PushSubscription,
-                  MarketSession, AppState,
+                  MarketSession, AppState, engine as db_engine,
                   save_market_session, get_market_session, get_latest_market_session,
                   has_market_session, delete_market_session,
                   get_app_state, set_app_state, delete_app_state)
@@ -2566,7 +2566,7 @@ async def db_cleanup_loop():
         # keeps dead tuples on disk and the volume still shows as full even
         # after DELETEs. VACUUM cannot run inside a transaction.
         try:
-            async with engine.connect() as conn:
+            async with db_engine.connect() as conn:
                 await conn.execute(text("VACUUM ANALYZE"))
                 logger.info("[DB-CLEANUP-LOOP] VACUUM ANALYZE complete — disk space reclaimed")
         except Exception as e:
