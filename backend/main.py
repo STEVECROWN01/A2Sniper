@@ -18,6 +18,7 @@ from datetime import datetime, timezone, timedelta
 from time import time
 from typing import Optional
 from fastapi import FastAPI, HTTPException, Request, Security, Depends
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import select
 from dotenv import load_dotenv
@@ -2627,74 +2628,106 @@ async def request_live_signal(request: Request, credentials: HTTPAuthorizationCr
     # active pairs (30+) and returns the highest-scoring price action setup.
     # This is how professional systems work — always respond with a signal.
     if pair == 'SCAN_ALL':
-        logger.info(f"[SIGNAL-REQUEST] SCAN_ALL mode — scanning all active pairs for best signal...")
+        # Wrap the entire scan in a try/except to GUARANTEE a response is
+        # always returned. Previously, if asyncio.wait_for cancelled an inner
+        # task (timeout), the CancelledError could escape through the
+        # rate_limit_middleware → Starlette raised "No response returned" →
+        # user got a 500 error in the bot UI. Now we always return a
+        # JSONResponse, never let exceptions escape.
+        try:
+            logger.info(f"[SIGNAL-REQUEST] SCAN_ALL mode — scanning all active pairs for best signal...")
 
-        all_pairs = list(po_scanner.find_pairs_above_payout(
-            min_payout=70.0, pair_filter="OTC", active_only=True, forex_only=True
-        ).keys())
+            all_pairs = list(po_scanner.find_pairs_above_payout(
+                min_payout=70.0, pair_filter="OTC", active_only=True, forex_only=True
+            ).keys())
 
-        if not all_pairs:
-            raise HTTPException(status_code=404, detail="No active pairs with payout >= 70% available right now.")
+            if not all_pairs:
+                return JSONResponse(
+                    status_code=404,
+                    content={"detail": "No active pairs with payout >= 70% available right now."}
+                )
 
-        # Filter out pairs that don't exist on PO (stale cache entries like IRR/USD)
-        # by verifying each pair has a valid, current payout from the scanner
-        valid_pairs = []
-        for p in all_pairs:
-            p_payout = po_scanner.get_payout(p)
-            if p_payout is not None and p_payout >= 70:
-                valid_pairs.append(p)
-        all_pairs = valid_pairs
+            # Filter out pairs that don't exist on PO (stale cache entries like IRR/USD)
+            # by verifying each pair has a valid, current payout from the scanner
+            valid_pairs = []
+            for p in all_pairs:
+                p_payout = po_scanner.get_payout(p)
+                if p_payout is not None and p_payout >= 70:
+                    valid_pairs.append(p)
+            all_pairs = valid_pairs
 
-        logger.info(f"[SIGNAL-REQUEST] SCAN_ALL — scanning {len(all_pairs)} valid pairs (20s limit)...")
+            logger.info(f"[SIGNAL-REQUEST] SCAN_ALL — scanning {len(all_pairs)} valid pairs (20s limit)...")
 
-        best_signal = None
-        best_score = 0
-        scan_start = datetime.now(timezone.utc).timestamp()
-        MAX_SCAN_SECONDS = 20  # Must finish well before Vercel's 30s proxy timeout
+            best_signal = None
+            best_score = 0
+            scan_start = datetime.now(timezone.utc).timestamp()
+            MAX_SCAN_SECONDS = 20  # Must finish well before Vercel's 30s proxy timeout
 
-        for scan_pair in all_pairs:
-            # Stop if overall time limit reached
-            elapsed = datetime.now(timezone.utc).timestamp() - scan_start
-            if elapsed > MAX_SCAN_SECONDS:
-                logger.info(f"[SIGNAL-REQUEST] SCAN_ALL — {MAX_SCAN_SECONDS}s limit reached, returning best so far (scanned {elapsed:.1f}s)")
-                break
-            if not po_scanner.is_connected:
-                break
-            try:
-                scan_signal = await asyncio.wait_for(force_analyze_pair(scan_pair), timeout=2.0)
-                if scan_signal and scan_signal.get('score', 0) > best_score:
-                    best_signal = scan_signal
-                    best_score = scan_signal.get('score', 0)
-                    logger.info(f"[SIGNAL-REQUEST] SCAN_ALL — found signal on {scan_pair} (score={best_score})")
-            except Exception:
-                pass
-            await asyncio.sleep(0)  # Yield to event loop
+            for scan_pair in all_pairs:
+                # Stop if overall time limit reached
+                elapsed = datetime.now(timezone.utc).timestamp() - scan_start
+                if elapsed > MAX_SCAN_SECONDS:
+                    logger.info(f"[SIGNAL-REQUEST] SCAN_ALL — {MAX_SCAN_SECONDS}s limit reached, returning best so far (scanned {elapsed:.1f}s)")
+                    break
+                if not po_scanner.is_connected:
+                    break
+                try:
+                    scan_signal = await asyncio.wait_for(force_analyze_pair(scan_pair), timeout=2.0)
+                    if scan_signal and scan_signal.get('score', 0) > best_score:
+                        best_signal = scan_signal
+                        best_score = scan_signal.get('score', 0)
+                        logger.info(f"[SIGNAL-REQUEST] SCAN_ALL — found signal on {scan_pair} (score={best_score})")
+                except asyncio.TimeoutError:
+                    # wait_for cancelled the inner task — this is normal for
+                    # slow pairs (e.g. uncached USDRUB). Just move on to the next.
+                    pass
+                except asyncio.CancelledError:
+                    # Rare: the SCAN_ALL request itself was cancelled (client
+                    # closed the connection). Re-raise so Starlette can clean up.
+                    raise
+                except Exception as scan_err:
+                    # Log but don't crash the whole scan for one pair's error.
+                    logger.warning(f"[SIGNAL-REQUEST] SCAN_ALL — error scanning {scan_pair}: {scan_err}")
+                await asyncio.sleep(0)  # Yield to event loop
 
-        if best_signal:
-            # Update the timestamp to NOW so the countdown starts from when
-            # the user RECEIVES the signal, not from when it was found during
-            # the scan. Without this, the signal could arrive already expired
-            # because the scan took 1-3 minutes to check all 30+ pairs.
-            fresh_ts = datetime.now(timezone.utc)
-            best_signal['timestamp'] = fresh_ts.isoformat()
-            best_signal['time'] = fresh_ts.strftime('%H:%M:%S')
+            if best_signal:
+                # Update the timestamp to NOW so the countdown starts from when
+                # the user RECEIVES the signal, not from when it was found during
+                # the scan. Without this, the signal could arrive already expired
+                # because the scan took 1-3 minutes to check all 30+ pairs.
+                fresh_ts = datetime.now(timezone.utc)
+                best_signal['timestamp'] = fresh_ts.isoformat()
+                best_signal['time'] = fresh_ts.strftime('%H:%M:%S')
 
-            # Refresh the payout from the scanner's LATEST data — PO updates
-            # payouts dynamically and the cached value from when the scan
-            # started may be stale (e.g., bot shows 82% but PO UI shows 90%).
-            fresh_payout = po_scanner.get_payout(best_signal.get('pair', ''))
-            if fresh_payout and fresh_payout > 0:
-                best_signal['payout'] = fresh_payout
-                logger.info(f"[SIGNAL-REQUEST] SCAN_ALL — payout refreshed: {best_signal.get('pair')} = {fresh_payout}%")
+                # Refresh the payout from the scanner's LATEST data — PO updates
+                # payouts dynamically and the cached value from when the scan
+                # started may be stale (e.g., bot shows 82% but PO UI shows 90%).
+                fresh_payout = po_scanner.get_payout(best_signal.get('pair', ''))
+                if fresh_payout and fresh_payout > 0:
+                    best_signal['payout'] = fresh_payout
+                    logger.info(f"[SIGNAL-REQUEST] SCAN_ALL — payout refreshed: {best_signal.get('pair')} = {fresh_payout}%")
 
-            logger.info(f"[SIGNAL-REQUEST] SCAN_ALL — returning best signal: {best_signal.get('pair')} (score={best_score}), timestamp={fresh_ts.strftime('%H:%M:%S')}, payout={best_signal.get('payout')}%")
-            return {"status": "success", "signal": best_signal, "mode": best_signal.get('mode', 'price_action')}
+                logger.info(f"[SIGNAL-REQUEST] SCAN_ALL — returning best signal: {best_signal.get('pair')} (score={best_score}), timestamp={fresh_ts.strftime('%H:%M:%S')}, payout={best_signal.get('payout')}%")
+                return {"status": "success", "signal": best_signal, "mode": best_signal.get('mode', 'price_action')}
 
-        logger.info(f"[SIGNAL-REQUEST] SCAN_ALL — no signal found on any of {len(all_pairs)} pairs")
-        raise HTTPException(
-            status_code=404,
-            detail="No signal opportunity found right now. Try again in 1-2 minutes."
-        )
+            logger.info(f"[SIGNAL-REQUEST] SCAN_ALL — no signal found on any of {len(all_pairs)} pairs")
+            return JSONResponse(
+                status_code=404,
+                content={"detail": "No signal opportunity found right now. Try again in 1-2 minutes."}
+            )
+        except asyncio.CancelledError:
+            # Client closed the connection. Re-raise so Starlette can clean up
+            # gracefully without producing a 500.
+            raise
+        except Exception as scan_all_err:
+            # Catch-all: NEVER let an unhandled exception escape this endpoint.
+            # Previously these escaped as 500s via the middleware's "No response
+            # returned" path. Now we return a clean 500 with a useful message.
+            logger.error(f"[SIGNAL-REQUEST] SCAN_ALL — unhandled error: {scan_all_err}", exc_info=True)
+            return JSONResponse(
+                status_code=500,
+                content={"detail": f"Signal engine error: {str(scan_all_err)}. Please try again in a few seconds."}
+            )
 
     real_payout = po_scanner.get_payout(pair)
     logger.info(f"[SIGNAL-REQUEST] pair={pair} payout={real_payout} — payout lookup result")
@@ -6581,33 +6614,59 @@ async def debug_verify_payouts(
 async def rate_limit_middleware(request, call_next):
     # CDC Section 8: Measure request latency
     start_time = time()
-    
+
     client_ip = request.client.host if request.client else "unknown"
     now = datetime.now(timezone.utc).timestamp()
-    
+
     # Skip rate limiting for health check endpoints
     if request.url.path in ["/", "/health", "/api/status", "/api/market/status", "/api/market/debug", "/api/market/balance-debug", "/api/debug/schema"]:
-        response = await call_next(request)
+        try:
+            response = await call_next(request)
+        except Exception as mw_err:
+            logger.error(f"[MW] call_next failed for {request.url.path}: {mw_err}")
+            return JSONResponse(
+                status_code=500,
+                content={"detail": f"Internal error: {str(mw_err)}"}
+            )
         latency_ms = (time() - start_time) * 1000
         _latency_samples.append(latency_ms)
         return response
-    
+
     if client_ip not in rate_limit_data:
         rate_limit_data[client_ip] = []
-    
+
     # Clean old entries
     rate_limit_data[client_ip] = [t for t in rate_limit_data[client_ip] if now - t < RATE_LIMIT_WINDOW]
-    
+
     if len(rate_limit_data[client_ip]) >= RATE_LIMIT_REQUESTS:
         raise HTTPException(status_code=429, detail="Rate limit exceeded. Please try again later.")
-    
+
     rate_limit_data[client_ip].append(now)
-    response = await call_next(request)
-    
+
+    # Defensive: wrap call_next in try/except to GUARANTEE a response is
+    # always returned. Starlette's BaseHTTPMiddleware has a known issue where
+    # if the downstream handler raises an unhandled exception (e.g.
+    # CancelledError from asyncio.wait_for timeouts, or any exception that
+    # bypasses FastAPI's exception handlers), call_next raises
+    # RuntimeError("No response returned.") which then becomes a 500 with
+    # a confusing stack trace. We catch it here and return a clean 500
+    # with a useful message instead.
+    try:
+        response = await call_next(request)
+    except asyncio.CancelledError:
+        # Client closed the connection — this is normal, don't log as error.
+        raise
+    except Exception as mw_err:
+        logger.error(f"[MW] call_next failed for {request.url.path}: {mw_err}", exc_info=True)
+        return JSONResponse(
+            status_code=500,
+            content={"detail": f"Signal engine error: {str(mw_err)}. Please try again in a few seconds."}
+        )
+
     # Record latency
     latency_ms = (time() - start_time) * 1000
     _latency_samples.append(latency_ms)
-    
+
     return response
 
 
