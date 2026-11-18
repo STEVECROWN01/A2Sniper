@@ -2464,7 +2464,22 @@ async def cleanup_old_candles():
             )
             old_candles_deleted = result.rowcount
 
-            # 2. Keep max 150 candles per (pair, timeframe) — was 200 per pair across all TFs
+            # 2. Keep max 500 candles per (pair, timeframe).
+            # CRITICAL MATH (was 150 — caused engine to NEVER warm up):
+            #   - Engine needs >= 35 M5 candles minimum to run analysis
+            #   - Each M5 candle = 5 M1 candles (resampled from M1 cache)
+            #   - So engine needs >= 175 M1 candles minimum
+            #   - At WebSocket rate (1 M1 candle/min/pair), accumulating 175 M1
+            #     candles takes ~3 hours
+            #   - The OLD cap of 150 deleted M1 candles older than 150 minutes
+            #     (~2.5 hours), so the engine was permanently stuck at ~30 M5
+            #     candles — never enough to run.
+            #   - The NEW cap of 500 keeps ~8.3 hours of M1 data per pair,
+            #     giving the engine 100 M5 candles to work with. Plenty of
+            #     headroom for indicator calculations (EMA200 needs 200, but the
+            #     engine gracefully degrades when fewer are available).
+            # Disk impact: 500 candles × 33 pairs × 2 timeframes (M1 + M5)
+            # = ~33,000 rows = ~7 MB. Well within the 500MB Railway PG limit.
             await session.execute(
                 text("""
                     DELETE FROM candles
@@ -2477,7 +2492,7 @@ async def cleanup_old_candles():
                                    ) as rn
                             FROM candles
                         ) sub
-                        WHERE rn <= 150
+                        WHERE rn <= 500
                     )
                 """)
             )
